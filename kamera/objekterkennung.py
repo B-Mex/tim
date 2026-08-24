@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# Lizenz: GNU AGPL-3.0 - siehe kamera/LICENSE. ABWEICHEND vom uebrigen
+# Projekt (MIT), weil diese Datei Ultralytics einbindet, das unter
+# AGPL-3.0 steht. Begruendung und Auswirkungen: kamera/README.md
+#
 """Objekte im Kamerabild erkennen - was Tim sieht, und was die Lampensuche stoert.
 
 Zwei Aufgaben, die verschieden streng sein muessen:

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# Lizenz: GNU AGPL-3.0 - siehe kamera/LICENSE. ABWEICHEND vom uebrigen
+# Projekt (MIT), weil dieser Dienst ueber objekterkennung.py Ultralytics
+# einbindet, das unter AGPL-3.0 steht. Naeheres: kamera/README.md
+#
 """Kameradienst - Tims Auge auf die Lampen.
 
 Warum es diesen Dienst gibt: Beim Einstellen der Lampenfarben muss

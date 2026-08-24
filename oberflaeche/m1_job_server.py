@@ -308,6 +308,29 @@ AKTIONEN = {
         lambda arg: [_py(), str(HARNESS_DIR / "benchmark_faelle_pflegen.py")],
         False,
     ),
+    # Die Diagnose-Trias vom 24.08.2026 - Tim uebernimmt, was in den
+    # Nacht-Sitzungen von Hand geprueft wurde. Alle drei sind NUR
+    # LESEND: Sie melden Befunde und veraendern nichts. Beheben bleibt
+    # Handarbeit an der Tastatur - genau die Grenze, die auch sonst
+    # zwischen "nachsehen" und "veraendern" gilt.
+    "ha_diagnose": (
+        "Home Assistant pruefen (nur lesend): Kacheln, BRMesh-Lampen, "
+        "Fehlermeldungen, Geister-Entitaeten",
+        lambda arg: [_py(), str(HARNESS_DIR / "ha_diagnose.py")],
+        False,
+    ),
+    "doppelablage_pruefen": (
+        "Quelle gegen Betrieb abgleichen: abweichende Dateien und "
+        "Dienste mit veralteter Fassung (nur lesend)",
+        lambda arg: [_py(), str(HARNESS_DIR / "doppelablage_pruefen.py")],
+        False,
+    ),
+    "datenschutz_pruefen": (
+        "Repos vor dem Veroeffentlichen auf private Angaben pruefen: "
+        "Arbeitskopie, Historie, Identitaeten (nur lesend)",
+        lambda arg: [_py(), str(HARNESS_DIR / "datenschutz_pruefen.py")],
+        False,
+    ),
     "autonomie_modus": (
         "Autonomie-Modus setzen (Argument: safe, assist oder autonom)",
         None,  # Sonderfall, siehe aktion_ausfuehren()
@@ -612,8 +635,26 @@ def _selbsttest() -> int:
                          "autonomie_modus", "autonomie_normal",
                          "modell_benchmark_neue", "modell_benchmark_modell",
                          "modell_benchmark_status", "modell_benchmark_vergleich",
-                         "benchmark_faelle_uebernehmen"):
+                         "benchmark_faelle_uebernehmen",
+                         "ha_diagnose", "doppelablage_pruefen",
+                         "datenschutz_pruefen"):
             pruefe(erwartet in liste, f"Aktion gemeldet: {erwartet}")
+
+        # --- Die Diagnose-Trias (24.08.2026): nur lesend, nur sie selbst ---
+        # Die drei Aktionen versprechen in ihrer Beschreibung "nur
+        # lesend". Das Versprechen wohnt in den Skripten (deren
+        # Selbsttests belegen es: Baum-Stand vorher/nachher, git status,
+        # GET-Zaehler) - hier wird festgehalten, dass wirklich NUR diese
+        # Skripte laufen, ohne Zusatzargumente und ohne Shell.
+        for _name in ("ha_diagnose", "doppelablage_pruefen",
+                      "datenschutz_pruefen"):
+            _befehl = [str(t) for t in AKTIONEN[_name][1](None)]
+            pruefe(_befehl[-1].endswith(_name + ".py") and len(_befehl) == 2,
+                   f"'{_name}' ruft genau das eigene Pruefskript",
+                   str(_befehl))
+            pruefe(not any(";" in t or "&&" in t or "|" in t
+                           for t in _befehl),
+                   f"'{_name}' enthaelt keine Shell-Verkettung")
 
         # --- Benchmark-Aktionen: nur ueber den Starter, nie direkt ---
         # Der Starter haelt das Lock (kein Doppellauf) und den Kill-Switch-

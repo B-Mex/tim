@@ -205,10 +205,23 @@ die privaten Angaben.
 - Die eingesetzten „abliterated/uncensored“-Modelle haben keine eingebauten
   Ablehnungen. Das ist eine bewusste Entscheidung für ein privates, lokales
   System — die Verantwortung für die Nutzung liegt beim Betreiber.
-- Modell-Lizenzen stehen in den Modelfiles (u. a. Apache-2.0); Ultralytics/YOLOE
-  ist AGPL-3.0. Für private Nutzung unkritisch, bei Weiterverbreitung beachten.
+- Modell-Lizenzen stehen in den Modelfiles: Die Qwen-Modelle sind Apache-2.0,
+  das Llama-Mini-Modell unterliegt der Llama-Community-Lizenz. Die
+  Modelldateien selbst werden hier nicht mitgeliefert.
 - Getestet mit Python 3.12 (venv) und Ollama ≥ 0.12.
 
 ## Lizenz
 
-MIT — siehe [LICENSE](LICENSE).
+**MIT** ([LICENSE](LICENSE)) für das gesamte Projekt — mit einer Ausnahme:
+
+**`kamera/` steht unter AGPL-3.0** ([kamera/LICENSE](kamera/LICENSE)), weil
+der Kameradienst Ultralytics/YOLOE einbindet und dieses selbst AGPL-3.0 ist.
+Copyleft wirkt ansteckend, deshalb kann dieser Teil nicht MIT sein. Der
+Kameradienst ist ein **eigenständiges Programm**: Die Zentrale importiert
+ihn nicht, sondern spricht über HTTP (Port 8781) mit ihm — die AGPL greift
+deshalb nicht auf den Rest über. Einzelheiten in
+[kamera/README.md](kamera/README.md).
+
+Praktisch heißt das: privat nutzen und ändern ist überall frei. Wer den
+Kamerateil weitergibt oder als Netzdienst betreibt, muss dessen Quelltext
+offenlegen — was hier ohnehin geschieht.

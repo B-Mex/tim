@@ -1215,6 +1215,31 @@ MODELLTEST (Benchmark) - fester Ablauf, wenn Mexla Modelle testen will:
 Neue Modelle INSTALLIEREN kannst du nicht - ollama pull macht Mexla
 selbst; danach findet modell_benchmark_neue das Modell automatisch.
 
+PRUEFEN STATT RATEN - deine Diagnose-Werkzeuge (seit 24.08.2026):
+Wenn Mexla wissen will, ob etwas kaputt ist, ob alles laeuft oder ob
+zwei Staende zueinander passen, dann PRUEFE mit aktion_starten, statt
+zu vermuten:
+- funkbruecke_wlan: lebt die Funkbruecke, was wurde zuletzt geschaltet.
+- ha_diagnose: der Blick auf Home Assistant von aussen - Kacheln,
+  BRMesh-Lampen, Fehlermeldungen, Geister-Entitaeten. Merke: Die
+  Shelly-Kacheln sind Puls-Geber, ihr Zustand "aus" ist RICHTIG; und
+  BRMesh-Lampen sind waehrend der ~10 s Hochlaufzeit des Pico ehrlich
+  "nicht verfuegbar".
+- doppelablage_pruefen: weichen Quelle (M1_DEPLOYMENT) und Betrieb
+  (/opt/ki-server) voneinander ab, und faehrt ein Dienst eine
+  veraltete Fassung? Nach jeder Aenderung an Dienstdateien ist das
+  die richtige Gegenprobe.
+- datenschutz_pruefen: muss VOR JEDER VEROEFFENTLICHUNG laufen und
+  sauber sein - prueft Arbeitskopie, Historie und Commit-Identitaeten
+  beider Repos auf private Angaben. Veroeffentlichen (Commit, Push)
+  kannst du selbst NICHT - das macht Mexla; du lieferst das Urteil.
+- selbsttests: die ganze Pruefsuite, wenn Zweifel am Code bestehen.
+Diese Werkzeuge LESEN nur. Befunde behebst du nicht selbst - du
+meldest sie, nennst den naechsten Schritt und ueberlaesst Mexla die
+Aenderung. Die Fallen und Arbeitsregeln hinter diesen Pruefungen
+stehen in docs/TIM_HANDWERK.md - lies sie mit projektdatei_lesen,
+bevor du bei solchen Fragen aus dem Gedaechtnis antwortest.
+
 WAS DU WEITERHIN NICHT KANNST - ohne Ausnahme:
 - Keine freien Befehle, keine Shell, nichts ausserhalb der Positivliste
 - Keine Dateien anlegen, aendern oder loeschen
@@ -2546,6 +2571,26 @@ def _selbsttest() -> int:
                        "benchmark_faelle_uebernehmen"):
             pruefe(aktion in SYSTEM_PROMPT,
                    f"Prompt nennt die Aktion {aktion}")
+        # --- Diagnose-Dialog im Prompt (24.08.2026) ---
+        # Tim soll bei "ist etwas kaputt?" pruefen statt raten und vor
+        # jeder Veroeffentlichung die Datenschutz-Pruefung verlangen.
+        # Ein Tippfehler in den Aktionsnamen hiesse: Tim ruft eine
+        # Aktion auf, die es nicht gibt, und der Dialog stirbt.
+        for aktion in ("ha_diagnose", "doppelablage_pruefen",
+                       "datenschutz_pruefen"):
+            pruefe(aktion in SYSTEM_PROMPT,
+                   f"Prompt nennt die Diagnose-Aktion {aktion}")
+        pruefe("PRUEFE mit aktion_starten, statt" in SYSTEM_PROMPT,
+               "Prompt verlangt Pruefen statt Vermuten")
+        pruefe("docs/TIM_HANDWERK.md" in SYSTEM_PROMPT,
+               "Prompt verweist auf das Handwerks-Heft")
+        pruefe("Puls-Geber" in SYSTEM_PROMPT,
+               "Prompt kennt die Puls-Geber-Kacheln (aus ist richtig)")
+        pruefe("VOR JEDER VEROEFFENTLICHUNG" in SYSTEM_PROMPT,
+               "Prompt macht die Datenschutz-Pruefung zur Pflicht")
+        pruefe("Veroeffentlichen (Commit, Push)" in SYSTEM_PROMPT
+               and "kannst du selbst NICHT" in SYSTEM_PROMPT,
+               "Prompt zieht die Grenze: pruefen ja, veroeffentlichen nein")
         # --- Selbstauskunft ueber die eigene Anlage (23.08.2026) ---
         # Tim erklaerte Mexla, die Lampen-Transportlogik stehe in
         # harness/jobs/*.json, und der Weg zur Lampe liege "ausserhalb
