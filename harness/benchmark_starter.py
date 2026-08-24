@@ -10,6 +10,7 @@ mit Logdatei und kehrt sofort zurueck. Den Fortschritt zeigt --status.
 Aufruf (so stehen sie in der Positivliste des Job-Servers):
   python3 benchmark_starter.py --neue           # alle ungetesteten Modelle
   python3 benchmark_starter.py --modell NAME    # ein bestimmtes Modell
+  python3 benchmark_starter.py --abitur NAME    # Vollpruefung (Stunden)
   python3 benchmark_starter.py --vergleich NAME__NAME[__NAME ...]
                                                 # Auswahl gegeneinander,
                                                 # EIN Lauf, EIN Bericht
@@ -24,6 +25,7 @@ der INSTALLIERTEN Modelle aufgeloest - eine Positivliste, kein Filter.
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -190,9 +192,64 @@ def starten(argumente: list, beschreibung: str) -> int:
     ram = freier_ram_gb()
     if 0 <= ram < RAM_WARNGRENZE_GB:
         zeilen.append(
-            f"ACHTUNG: nur {ram} GB Speicher frei - laeuft Odysseus noch? "
-            f"Erst 'odysseus_stoppen', sonst werden die Messwerte schlechter.")
+            f"ACHTUNG: nur {ram} GB Speicher frei. Was den Speicher haelt, "
+            f"zeigt die Aktion 'status'; ein noch geladenes Modell gibt "
+            f"'ollama stop <name>' frei. Sonst werden die Messwerte "
+            f"schlechter.")
     print("\n".join(zeilen))
+    return 0
+
+
+def stoppen() -> int:
+    """Einen laufenden Benchmark- oder Abiturlauf beenden.
+
+    Warum es das gibt (24.08.2026): Ein Abitur belegt die GPU stundenlang,
+    und bis heute gab es KEINEN Weg, es zu beenden. Der Kill-Switch hilft
+    nicht - autonomie.killswitch_aktiv() wird in starten() geprueft, also
+    VOR dem Start; ein laufender Lauf sieht ihn nie wieder. Wer sich
+    vertippt hatte, konnte nur warten oder von Hand im Terminal suchen.
+
+    Warum die ganze GRUPPE beendet wird: starten() setzt
+    start_new_session=True, der Lauf ist also Anfuehrer einer eigenen
+    Prozessgruppe. Nur den Elternprozess zu beenden liesse seine Kinder
+    (die Modellaufrufe) weiterlaufen - der Speicher bliebe belegt und die
+    Sperrdatei verwaist.
+
+    Erst freundlich (SIGTERM), dann bestimmt (SIGKILL): Ein Messlauf soll
+    die Gelegenheit bekommen, seinen Bericht noch zu schliessen.
+    """
+    laufend = lauf_laeuft()
+    if not laufend:
+        print("Es laeuft gerade kein Benchmark- oder Abiturlauf.")
+        return 0
+    pid = int(laufend["pid"])
+    was = laufend.get("beschreibung", "?")
+    seit = laufend.get("start", "?")
+    try:
+        gruppe = os.getpgid(pid)
+    except ProcessLookupError:
+        LOCK.unlink(missing_ok=True)
+        print("Der Lauf war schon beendet; Sperrdatei geraeumt.")
+        return 0
+
+    os.killpg(gruppe, signal.SIGTERM)
+    for _ in range(20):                      # bis zu 5 s Zeit zum Aufraeumen
+        time.sleep(0.25)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+    else:
+        os.killpg(gruppe, signal.SIGKILL)
+        print("Der Lauf reagierte nicht auf SIGTERM und wurde hart beendet.")
+
+    LOCK.unlink(missing_ok=True)
+    print(f"Lauf beendet: {was} (lief seit {seit}).")
+    print("Der bis dahin geschriebene Teil des Logs bleibt erhalten: "
+          f"{laufend.get('log', '?')}")
+    print("ACHTUNG: Ein abgebrochener Lauf liefert KEINEN vollstaendigen "
+          "Bericht. Halbe Messwerte sind keine Messwerte - der Lauf "
+          "gehoert spaeter ganz wiederholt.")
     return 0
 
 
@@ -345,6 +402,8 @@ def main() -> int:
         return _selbsttest()
     if "--status" in args:
         return status()
+    if "--stoppen" in args:
+        return stoppen()
     if "--neue" in args:
         # Vorab pruefen statt blind starten: Sonst meldet der Knopf
         # "Benchmark gestartet", obwohl der Lauf eine Sekunde spaeter
@@ -370,6 +429,32 @@ def main() -> int:
             print(meldung)
             return 1
         return starten([name], f"Einzeltest {name}")
+    if args and args[0] == "--abitur":
+        # Die Vollpruefung: schriftlich UND praktisch, ein Bericht.
+        # Laeuft ueber denselben Hintergrundstart wie jeder Benchmark -
+        # sie dauert Stunden und wuerde die Zeitgrenze des Job-Servers
+        # sonst sprengen.
+        wunsch = args[1] if len(args) > 1 else ""
+        if not wunsch:
+            # Ohne Namen: ALLE noch nie gemessenen Modelle durchpruefen.
+            # Das ist der Regelfall nach "ollama pull" - jedes neue
+            # Modell muss durch dieselbe Pruefung, nacheinander.
+            offene = ungetestete_modelle()
+            if not offene:
+                print("Alle installierten Modelle sind bereits vermessen - "
+                      "nichts zu tun. Ein bestimmtes Modell erneut pruefen: "
+                      "--abitur NAME.")
+                return 0
+            return starten(["--neue", "--abitur"],
+                           "Abitur fuer alle neuen Modelle: "
+                           + ", ".join(offene[:6])
+                           + ("..." if len(offene) > 6 else ""))
+        name, meldung = modell_aufloesen(wunsch, installierte_modelle())
+        if not name:
+            print(meldung)
+            return 1
+        return starten([name, "--abitur"],
+                       f"Abitur {name} (schriftlich + praktisch)")
     if args and args[0] == "--vergleich":
         wunsch = args[1] if len(args) > 1 else ""
         namen, meldung = vergleich_aufloesen(wunsch, installierte_modelle())

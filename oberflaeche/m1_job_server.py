@@ -45,9 +45,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # launchd startet Dienste mit minimalem PATH (/usr/bin:/bin:...). ollama
-# liegt unter /opt/homebrew/bin, docker unter /usr/local/bin - ohne diese
-# Zeile scheitern "modelle" und die Odysseus-Aktionen genau dann, wenn der
-# Server als Dienst laeuft, waehrend sie im Terminal funktionieren.
+# liegt unter /opt/homebrew/bin - ohne diese Zeile scheitert "modelle"
+# genau dann, wenn der Server als Dienst laeuft, waehrend es im Terminal
+# funktioniert. (/usr/local/bin bleibt drin: dort landen Homebrew-Formeln
+# auf Intel-Macs und spaeter nachinstallierte Werkzeuge.)
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 
 # ----------------------------------------------------------------------
@@ -59,10 +60,6 @@ HARNESS_DIR = Path("/opt/ki-server/harness")
 VENV_PY = Path("/opt/ki-server/venv/bin/python")
 JOBS_DIR = HARNESS_DIR / "jobs"
 TOKEN_DATEI = HOME / ".m1_job_token"
-# Odysseus laeuft als Docker-Compose-Stapel in diesem Ordner. Stoppen und
-# Starten laufen ueber compose, damit immer der ganze Stapel gemeint ist
-# (odysseus, searxng, chromadb, ntfy) und nie einzelne Container haengen.
-ODYSSEUS_DIR = HOME / "Desktop" / "odysseus"
 # Hardware-Anbindung: die Funkbruecke auf dem Pico W und der Kameradienst.
 # In der Positivliste stehen bewusst nur die LESENDEN Aufrufe - Status,
 # Scannen, Schauen. Rundrufe senden gehoert zur Lampensteuerung und kommt
@@ -142,18 +139,6 @@ AKTIONEN = {
     "notaus": (
         "Kill-Switch setzen - stoppt alle autonomen Ablaeufe",
         None,  # Sonderfall, siehe _notaus()
-        False,
-    ),
-    "odysseus_stoppen": (
-        "Odysseus anhalten - gibt Speicher frei, Tim laeuft weiter",
-        lambda arg: ["docker", "compose",
-                     "--project-directory", str(ODYSSEUS_DIR), "stop"],
-        False,
-    ),
-    "odysseus_starten": (
-        "Odysseus wieder starten (alle Container des Stapels)",
-        lambda arg: ["docker", "compose",
-                     "--project-directory", str(ODYSSEUS_DIR), "up", "-d"],
         False,
     ),
     # Der Sprachassistent laeuft als launchd-Dienst. Die Befehle sind
@@ -291,6 +276,40 @@ AKTIONEN = {
                      "--vergleich", str(arg or "")],
         True,
     ),
+    "modell_abitur": (
+        "Vollpruefung eines Modells: schriftlicher Teil (Benchmark) UND "
+        "praktischer Teil in der Werkstatt - dauert Stunden (Argument: "
+        "Modellname, Punkt statt Doppelpunkt)",
+        lambda arg: [_py(), str(HARNESS_DIR / "benchmark_starter.py"),
+                     "--abitur", str(arg or "")],
+        True,
+    ),
+    # Der Pruefungsausschuss - aber nur die VORSCHLAGENDE Haelfte.
+    # Eintragen (--pruefung-uebernehmen) steht bewusst NICHT in dieser
+    # Liste: Was Massstab fuer alle kuenftigen Modelle wird, entscheidet
+    # Mexla an der Tastatur. Ein Pruefling, der seine eigenen Pruefungen
+    # eintraegt, prueft am Ende nur noch das, was er ohnehin kann.
+    "pruefung_vorschlagen": (
+        "Aus einer BESTANDENEN Werkstattarbeit einen Pruefungs-Entwurf "
+        "ableiten (Argument: dateiname.py aus dem Sandkasten) - schlaegt "
+        "nur vor, traegt nichts ein",
+        lambda arg: [_py(), str(HARNESS_DIR / "abitur.py"),
+                     "--pruefung-vorschlagen",
+                     str(arg or "").rsplit(".py", 1)[0], str(arg or "")],
+        True,
+    ),
+    "modell_abitur_neue": (
+        "Vollpruefung fuer ALLE noch nie gemessenen Modelle - "
+        "schriftlich und praktisch, nacheinander (dauert Stunden)",
+        lambda arg: [_py(), str(HARNESS_DIR / "benchmark_starter.py"),
+                     "--abitur"],
+        False,
+    ),
+    "modell_benchmark_stoppen": (
+        "Laufenden Benchmark- oder Abiturlauf abbrechen (gibt die GPU frei)",
+        lambda arg: [_py(), str(HARNESS_DIR / "benchmark_starter.py"), "--stoppen"],
+        False,
+    ),
     "modell_benchmark_status": (
         "Stand des laufenden Modelltests/Benchmarks zeigen "
         "(letzte Logzeilen, juengster Bericht)",
@@ -331,6 +350,50 @@ AKTIONEN = {
         lambda arg: [_py(), str(HARNESS_DIR / "datenschutz_pruefen.py")],
         False,
     ),
+    # Tims Werkstatt (24.08.2026) - der einzige Weg, auf dem Tim
+    # SCHREIBEN darf. Die Grenze steckt nicht in dieser Liste, sondern
+    # in werkstatt.py selbst (pfad_erlaubt): geschrieben wird nur
+    # innerhalb von ~/Desktop/Tim-Werkstatt/sandkasten, jeder Ausbruch
+    # ueber .., ~, / oder Symlink wird abgewiesen. Ausrollen kann die
+    # Werkstatt nicht - kein Kopieren nach /opt, kein SSH, kein
+    # Dienst-Neustart. Das bleibt Handarbeit.
+    "werkstatt_aufgabe": (
+        "Eine Uebungsaufgabe der Werkstatt lesen (Argument: Name, z.B. "
+        "lampen_zeitplan)",
+        lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "neu",
+                     str(arg or "")],
+        True,
+    ),
+    "werkstatt_liste": (
+        "Zeigen, was im Werkstatt-Sandkasten liegt",
+        lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "liste"],
+        False,
+    ),
+    "werkstatt_lesen": (
+        "Eine Datei aus dem Werkstatt-Sandkasten lesen (Argument: Pfad)",
+        lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "lesen",
+                     str(arg or "")],
+        True,
+    ),
+    "werkstatt_gelernt": (
+        "Tims Lernprotokoll aus der Werkstatt lesen - was er bei "
+        "frueheren Uebungen gelernt hat",
+        lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "gelernt"],
+        False,
+    ),
+    "werkstatt_testen": (
+        "Eine Python-Datei im Sandkasten kompilieren und ihren "
+        "--selbsttest fahren (Argument: Pfad)",
+        lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "testen",
+                     str(arg or "")],
+        True,
+    ),
+    # Schreiben laeuft NICHT ueber diese Liste: Der Inhalt einer Datei
+    # passt weder durch den Argument-Riegel der Zentrale
+    # ([A-Za-z0-9_.-]) noch waere er in einer Kommandozeile gut
+    # aufgehoben. Der Chat der Zentrale ruft dafuer werkstatt.schreiben
+    # direkt auf (Werkzeug "werkstatt_schreiben") - dieselbe Pfadsperre,
+    # nur ohne Umweg ueber die Shell.
     "autonomie_modus": (
         "Autonomie-Modus setzen (Argument: safe, assist oder autonom)",
         None,  # Sonderfall, siehe aktion_ausfuehren()
@@ -426,13 +489,13 @@ def aktion_ausfuehren(schluessel: str, argument: str | None) -> dict:
     beschreibung, bauen, braucht_arg = AKTIONEN[schluessel]
 
     # Kill-Switch vor allem anderen - ausser beim Not-Aus selbst und beim
-    # Anhalten von Odysseus oder Sprachassistent: Abschalten muss auch im
-    # Notfall noch gehen, nur das Wieder-Einschalten bleibt gesperrt.
+    # Anhalten des Sprachassistenten: Abschalten muss auch im Notfall
+    # noch gehen, nur das Wieder-Einschalten bleibt gesperrt.
     # "autonomie_normal" gehoert dazu: Zurueck auf sicher ist ein
     # Abschalt-Vorgang. Wer bei gesetztem Kill-Switch aufraeumen will,
     # soll das koennen - gesperrt ist nur das Hochstufen (weiter unten).
-    if schluessel not in ("notaus", "odysseus_stoppen",
-                          "sprachassistent_stoppen", "autonomie_normal"):
+    if schluessel not in ("notaus", "sprachassistent_stoppen",
+                          "modell_benchmark_stoppen", "autonomie_normal"):
         stop = killswitch_aktiv()
         if stop:
             return {"ok": False, "aktion": schluessel,
@@ -574,8 +637,8 @@ def _selbsttest() -> int:
 
     Wie beim Selbsttest der Zentrale bewusst ueber HTTP statt gegen die
     Funktionen: geprueft wird die Verdrahtung, nicht die Absicht. Es wird
-    dabei KEINE echte Aktion ausgefuehrt - gerade die Odysseus-Befehle
-    duerfen im Test keinen laufenden Container anfassen.
+    dabei KEINE echte Aktion ausgefuehrt - gerade die Stopp-Befehle
+    duerfen im Test keinen laufenden Dienst anfassen.
     """
     fehler = 0
 
@@ -627,18 +690,89 @@ def _selbsttest() -> int:
         except ValueError:
             liste = {}
         for erwartet in ("status", "ablaeufe", "ablauf_starten", "notaus",
-                         "modelle", "odysseus_stoppen", "odysseus_starten",
+                         "modelle",
                          "sprachassistent_stoppen", "sprachassistent_starten",
                          "autonomie_setzen", "funkbruecke", "funk_scannen",
                          "kamera_schauen", "kamera_starten", "kamera_stoppen",
                          "lampen", "lampen_raeume",
                          "autonomie_modus", "autonomie_normal",
                          "modell_benchmark_neue", "modell_benchmark_modell",
-                         "modell_benchmark_status", "modell_benchmark_vergleich",
-                         "benchmark_faelle_uebernehmen",
+                         "modell_benchmark_status", "modell_benchmark_stoppen",
+                         "modell_benchmark_vergleich",
+                         "benchmark_faelle_uebernehmen", "modell_abitur",
+                         "modell_abitur_neue", "pruefung_vorschlagen",
                          "ha_diagnose", "doppelablage_pruefen",
-                         "datenschutz_pruefen"):
+                         "datenschutz_pruefen",
+                         "werkstatt_aufgabe", "werkstatt_liste",
+                         "werkstatt_lesen", "werkstatt_testen",
+                         "werkstatt_gelernt"):
             pruefe(erwartet in liste, f"Aktion gemeldet: {erwartet}")
+
+        # --- Die Werkstatt-Grenze (24.08.2026) ---
+        # Tim darf hier schreiben - aber nur im Sandkasten. Zwei Dinge
+        # muessen deshalb gelten und werden hier festgehalten:
+        # 1. Alle Werkstatt-Aktionen laufen ueber werkstatt.py, das die
+        #    Pfadsperre traegt. Eine Aktion, die am Modul vorbei
+        #    schreibt (cp, mv, tee), waere ein zweiter Weg ohne Sperre.
+        # 2. Kein Ausrollen: nichts in der Positivliste darf aus dem
+        #    Sandkasten heraus kopieren oder ihn per SSH verlassen.
+        for _name in ("werkstatt_aufgabe", "werkstatt_liste",
+                      "werkstatt_lesen", "werkstatt_testen",
+                      "werkstatt_gelernt"):
+            _befehl = [str(t) for t in AKTIONEN[_name][1]("probe")]
+            pruefe(any(t.endswith("werkstatt.py") for t in _befehl),
+                   f"'{_name}' laeuft ueber werkstatt.py", str(_befehl))
+            pruefe(not any(";" in t or "&&" in t or "|" in t
+                           for t in _befehl),
+                   f"'{_name}' enthaelt keine Shell-Verkettung")
+        # Eintragen von Pruefungen gehoert NICHT in die Positivliste.
+        _eintragend = []
+        for _name, (_besch, _bauen, _arg) in AKTIONEN.items():
+            if _bauen is None:
+                continue
+            try:
+                _befehl = [str(x) for x in _bauen("PRUEFWERT")]
+            except Exception:
+                continue
+            if any("--pruefung-uebernehmen" in x for x in _befehl):
+                _eintragend.append(_name)
+        pruefe(not _eintragend,
+               "keine Aktion traegt Pruefungen selbst ein",
+               ", ".join(_eintragend))
+
+        _ausrollend = []
+        for _name, (_besch, _bauen, _arg) in AKTIONEN.items():
+            if _bauen is None:
+                continue
+            try:
+                _befehl = [str(t) for t in _bauen("PRUEFWERT")]
+            except Exception:
+                continue
+            if any("Tim-Werkstatt" in t for t in _befehl) and \
+                    any(t in ("cp", "mv", "rsync", "scp", "ssh")
+                        or t.endswith("/cp") or t.endswith("/scp")
+                        for t in _befehl):
+                _ausrollend.append(_name)
+        pruefe(not _ausrollend,
+               "keine Aktion rollt aus der Werkstatt aus",
+               ", ".join(_ausrollend))
+        # Und die Gegenprobe zur Pfadsperre selbst: sie muss im Modul
+        # wirklich greifen, nicht nur im Kommentar stehen.
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "_werkstatt_probe", str(HARNESS_DIR / "werkstatt.py"))
+        if _spec and _spec.loader:
+            _w = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_w)
+            for _boese in ("../raus.py", "/etc/passwd", "~/.ssh/id_rsa"):
+                _ziel, _grund = _w.pfad_erlaubt(_boese)
+                pruefe(_ziel is None,
+                       f"werkstatt.py weist '{_boese}' ab", str(_grund))
+            _ziel, _ = _w.pfad_erlaubt("uebung/datei.py")
+            pruefe(_ziel is not None,
+                   "werkstatt.py laesst den Sandkasten-Pfad zu")
+        else:
+            pruefe(False, "werkstatt.py ladbar")
 
         # --- Die Diagnose-Trias (24.08.2026): nur lesend, nur sie selbst ---
         # Die drei Aktionen versprechen in ihrer Beschreibung "nur
@@ -662,7 +796,8 @@ def _selbsttest() -> int:
         # wuerde beides umgehen und nach 30 Minuten mitten in der Messung
         # abgebrochen (ZEITGRENZE) - halbe JSONs, kein Bericht.
         for _name in ("modell_benchmark_neue", "modell_benchmark_modell",
-                      "modell_benchmark_status", "modell_benchmark_vergleich"):
+                      "modell_benchmark_status", "modell_benchmark_vergleich",
+                      "modell_abitur", "modell_abitur_neue"):
             _befehl = [str(t) for t in AKTIONEN[_name][1]("x")]
             pruefe(any("benchmark_starter.py" in t for t in _befehl),
                    f"'{_name}' laeuft ueber den Starter", str(_befehl))
@@ -754,7 +889,7 @@ def _selbsttest() -> int:
         pruefe(code == 404, "unbekannter Pfad abgewiesen", f"HTTP {code}")
 
         # --- Befehle auffindbar ---
-        # Faengt den Fall, dass ollama oder docker im Dienst-PATH fehlen:
+        # Faengt den Fall, dass ollama im Dienst-PATH fehlt:
         # unter launchd ist der PATH minimal, im Terminal nicht. Ohne diese
         # Pruefung scheitert die Aktion erst beim Klick in Tim.
         for name in sorted(AKTIONEN):
@@ -768,16 +903,18 @@ def _selbsttest() -> int:
         # --- Kill-Switch ---
         # killswitch_aktiv wird ersetzt statt eine echte STOP-Datei
         # anzulegen: der Test darf den laufenden Betrieb nicht stoppen.
-        # odysseus_stoppen bekommt fuer den Test einen harmlosen Befehl,
-        # damit die Ausnahme geprueft wird, ohne Container anzufassen.
+        # sprachassistent_stoppen bekommt fuer den Test einen harmlosen
+        # Befehl, damit die Ausnahme geprueft wird, ohne den laufenden
+        # Dienst anzufassen.
         global killswitch_aktiv
         echt = killswitch_aktiv
-        echter_eintrag = AKTIONEN.get("odysseus_stoppen")
+        echter_eintrag = AKTIONEN.get("sprachassistent_stoppen")
         killswitch_aktiv = lambda: "/opt/ki-server/STOP"
         try:
             code, _ = anfrage("/start", methode="POST",
-                              koerper={"aktion": "odysseus_starten", "argument": ""})
-            pruefe(code == 400, "bei Kill-Switch kein Odysseus-Start",
+                              koerper={"aktion": "sprachassistent_starten",
+                                       "argument": ""})
+            pruefe(code == 400, "bei Kill-Switch kein Sprachassistent-Start",
                    f"HTTP {code}")
             code, _ = anfrage("/start", methode="POST",
                               koerper={"aktion": "status", "argument": ""})
@@ -793,19 +930,19 @@ def _selbsttest() -> int:
                        f"bei Kill-Switch kein Hochstufen auf {hoch}",
                        f"HTTP {code}")
             if echter_eintrag:
-                AKTIONEN["odysseus_stoppen"] = (
+                AKTIONEN["sprachassistent_stoppen"] = (
                     echter_eintrag[0], lambda arg: ["/usr/bin/true"], False)
                 code, _ = anfrage("/start", methode="POST",
-                                  koerper={"aktion": "odysseus_stoppen",
+                                  koerper={"aktion": "sprachassistent_stoppen",
                                            "argument": ""})
                 pruefe(code == 200, "Anhalten trotz Kill-Switch erlaubt",
                        f"HTTP {code}")
             else:
-                pruefe(False, "odysseus_stoppen in der Positivliste")
+                pruefe(False, "sprachassistent_stoppen in der Positivliste")
         finally:
             killswitch_aktiv = echt
             if echter_eintrag:
-                AKTIONEN["odysseus_stoppen"] = echter_eintrag
+                AKTIONEN["sprachassistent_stoppen"] = echter_eintrag
     finally:
         server.shutdown()
         server.server_close()

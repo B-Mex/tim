@@ -143,7 +143,18 @@ def _start_aus_lstart(text: str) -> float | None:
 
 
 def dienst_frische() -> tuple[list, list]:
-    """(probleme, zeilen) - laeuft jeder Dienst mit der aktuellen Datei?"""
+    """(probleme, zeilen) - laeuft jeder Dienst mit der aktuellen Datei?
+
+    Genau genommen: Neustart noetig macht eine INHALTSAENDERUNG, nicht
+    jedes frische mtime. Der Vergleich hier sieht nur den Zeitstempel -
+    schreibt etwas die Datei inhaltsgleich neu (z.B. 'git checkout --'
+    in einer Gegenprobe, so geschehen am 24.08.2026), meldet er
+    VERALTET, obwohl der Prozess denselben Stand faehrt. Das ist
+    hingenommen: Der empfohlene Neustart schadet dann nicht, waehrend
+    die Gegenrichtung (echte Aenderung nicht gemeldet) teuer waere -
+    und was der laufende Prozess WIRKLICH geladen hat, laesst sich von
+    aussen nicht nachlesen.
+    """
     probleme, zeilen = [], []
     uid = os.getuid()
     for label, datei in DIENSTE.items():

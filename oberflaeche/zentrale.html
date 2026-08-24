@@ -108,6 +108,17 @@ pre{background:#0e1013;border:1px solid var(--rand);border-radius:8px;padding:12
 .blase.ich{background:#24395e;margin-left:auto}
 .blase.es{background:var(--flaeche)}
 .blase.warte{color:var(--leise);font-style:italic}
+/* Denkweg des Modells: bewusst zurueckhaltend - er ist Beiwerk zur
+   Antwort, nicht die Antwort. Zugeklappt bis zum Klick. */
+.denken{margin:0 0 9px 0;border-left:2px solid var(--rand);padding-left:9px}
+.denken summary{color:var(--leise);font-size:13px;cursor:pointer;
+  list-style:none;user-select:none}
+.denken summary::-webkit-details-marker{display:none}
+.denken summary::before{content:"\25B8 ";color:var(--leise)}
+.denken[open] summary::before{content:"\25BE "}
+.denken summary:hover{color:var(--text)}
+.denktext{white-space:pre-wrap;color:var(--leise);font-size:13px;
+  line-height:1.5;margin-top:7px;max-height:420px;overflow-y:auto}
 .canary{font-size:11px;margin-top:7px;padding-top:6px;
         border-top:1px solid rgba(255,255,255,.07)}
 .canary.gut{color:var(--gut)}
@@ -176,6 +187,7 @@ code{background:var(--flaeche2);padding:2px 6px;border-radius:4px;font-size:13px
     <button class="reiter" data-ansicht="berichte">Berichte</button>
     <button class="reiter" data-ansicht="metriken">Metriken</button>
     <button class="reiter" data-ansicht="benchmark">Benchmark</button>
+    <button class="reiter" data-ansicht="werkstatt">Werkstatt</button>
     <div id="seitefuss">
       <button id="notaus" onclick="notAus()">NOT-AUS</button>
     </div>
@@ -275,6 +287,7 @@ function zeichne() {
   if (ANSICHT === "berichte")   return zeigeBerichte(ziel);
   if (ANSICHT === "metriken")   return zeigeMetriken(ziel);
   if (ANSICHT === "benchmark")  return zeigeBenchmark(ziel);
+  if (ANSICHT === "werkstatt")  return zeigeWerkstatt(ziel);
 }
 
 /* ---------- Übersicht ---------- */
@@ -338,6 +351,12 @@ async function zeigeUebersicht(ziel) {
         ${MODELLE.map(m => `<div class="zeile"><span>${esc(m.name)}</span>
            <span class="wert">${m.groesse_gb} GB · ${esc(m.geaendert)}</span></div>`).join("")
            || `<div class="hinweis">Ollama antwortet nicht.</div>`}
+        <div class="unterzeile">Neu installiert (<code>ollama pull …</code>)?
+          Dann gehört das Modell durchs <b>Abitur</b>, bevor es Tim fährt:
+          schriftlicher Teil (Benchmark) und praktischer Teil (Werkstatt)
+          in einem Lauf, mit Urteil am Ende.
+          <a href="#" onclick="reiterOeffnen('benchmark');return false"
+             style="color:var(--akzent)">Im Reiter Benchmark starten →</a></div>
       </div>
       <div class="karte" style="grid-column:1/-1">
         <h3>Werkzeuge</h3>
@@ -1020,7 +1039,8 @@ async function zeigeChat(ziel) {
     try {
       const d = await hole("/api/verlauf?chat=" + encodeURIComponent(CHAT_AKTIV));
       VERLAUF = (d.nachrichten || []).map(n =>
-        ({role: n.role, content: n.content, ts: n.ts, bildName: n.bild}));
+        ({role: n.role, content: n.content, ts: n.ts, bildName: n.bild,
+          gedanken: n.gedanken || null}));
     } catch (e) {}
   }
   const chatListe = CHATS.map(c => `
@@ -1079,7 +1099,13 @@ function zeichneVerlauf() {
     if (n.role === "user")
       return `<div class="blase ich">${esc(n.content)}${stempel}</div>`;
     const anker = n.content.trimStart().startsWith("Mexla,");
-    return `<div class="blase es">${esc(n.content)}
+    // Der Denkweg des Modells - zugeklappt, damit er die Antwort nicht
+    // erschlaegt, aber jederzeit nachlesbar. Er steht VOR der Antwort,
+    // weil er zeitlich davor liegt.
+    const denk = n.gedanken ? `<details class="denken">
+        <summary>Gedankengang anzeigen (${n.gedanken.length} Zeichen)</summary>
+        <div class="denktext">${esc(n.gedanken)}</div></details>` : "";
+    return `<div class="blase es">${denk}${esc(n.content)}
       ${n.bildName ? `<img src="${esc(chatBildAdresse(n.bildName))}" alt="Kamerabild"
         style="max-width:100%;border-radius:8px;margin-top:8px;display:block">
         <div class="hinweis">Aufnahme von ${zeit || "unbekannt"}</div>` : ""}
@@ -1127,6 +1153,7 @@ async function sende() {
   }
   VERLAUF.push({role: "assistant", bildName: d.bild || null,
                 ts: d.ts || new Date().toISOString(),
+                gedanken: d.gedanken || null,
                 content: (d.antwort ? d.antwort + hinweis
                                     : "Fehler: " + (d.fehler || "?"))});
   zeichneVerlauf();
@@ -1399,6 +1426,123 @@ async function zeigeMetriken(ziel) {
   if (protokoll) protokoll.scrollTop = protokoll.scrollHeight;
 }
 
+/* ---------- Werkstatt ----------
+   Nachsehen, was Tim gebaut und gelernt hat. Nur lesend: Gebaut wird
+   ueber die Werkstatt-Aktionen, uebernommen wird von Hand. */
+function kbGroesse(n) {
+  return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " kB";
+}
+
+async function zeigeWerkstatt(ziel) {
+  ziel.innerHTML = `<h1>Werkstatt</h1><div class="unterzeile">lädt …</div>`;
+  let d;
+  try { d = await hole("/api/werkstatt"); }
+  catch (e) { ziel.innerHTML = `<h1>Werkstatt</h1>
+    <div class="hinweis">nicht erreichbar</div>`; return; }
+
+  const baum = (liste, leer) => liste.length
+    ? liste.map(f => `<div class="zeile">
+        <span><code>${esc(f.pfad)}</code></span>
+        <span class="wert">${kbGroesse(f.bytes)} · ${
+          esc(zeitKurz(f.geaendert) || f.geaendert)}</span></div>`).join("")
+    : `<div class="hinweis">${leer}</div>`;
+
+  const wie = {schreiben: "geschrieben", testen: "getestet",
+               lernnotiz: "gelernt"};
+
+  ziel.innerHTML = `<h1>Werkstatt</h1>
+    <div class="unterzeile">${esc(d.ordner)} — Tim darf ausschließlich im
+      Sandkasten schreiben. Nichts davon wirkt im echten System;
+      übernommen wird von Hand.</div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Aufgaben</h3>
+      ${d.aufgaben.length
+        ? d.aufgaben.map(a => `<div class="zeile"><span><code>${esc(a)}</code></span>
+            <span class="wert">aufgaben/${esc(a)}.md</span></div>`).join("")
+        : `<div class="hinweis">Noch keine Aufgaben hinterlegt.</div>`}
+      <div class="unterzeile">Eine Aufgabe ist eine Markdown-Datei in
+        <code>aufgaben/</code>. Im Chat: „Nimm dir die Aufgabe … vor.“</div>
+    </div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Sandkasten — Tims Arbeitsplatz</h3>
+      ${baum(d.sandkasten, "Leer — Tim hat noch nichts gebaut.")}
+      <div style="margin-top:11px;display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+        <button class="knopf klein" onclick="werkstattAufraeumen()"
+                ${d.sandkasten.length ? "" : "disabled"}>Sandkasten aufräumen</button>
+        <span class="hinweis" id="aufraeum_stand">Verschiebt alles nach
+          <code>_alt/</code> — löscht nichts, jederzeit zurückholbar.</span>
+      </div>
+      <div class="unterzeile">Vor einer neuen Aufgabe aufräumen, sonst
+        mischen sich alte und neue Entwürfe. Das Lernprotokoll und
+        <code>geschafft/</code> bleiben unberührt. Tim kann das nicht
+        selbst — das ist bewusst deine Entscheidung.</div>
+    </div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Geschafft — von dir abgenommen</h3>
+      ${baum(d.geschafft, "Noch nichts abgelegt. Verschieben machst du selbst.")}
+    </div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Lernprotokoll</h3>
+      ${d.gelernt
+        ? `<div class="denktext" style="max-height:460px">${esc(d.gelernt)}</div>`
+        : `<div class="hinweis">Noch keine Lernnotiz.</div>`}
+      <div class="unterzeile">Schreibt Tim selbst nach jeder Übung
+        (<code>gelernt/LERNPROTOKOLL.md</code>) — wird angehängt, nie
+        ersetzt, und überlebt das Leeren des Sandkastens.</div>
+    </div>
+
+    <div class="karte"><h3>Protokoll — jüngste zuerst</h3>
+      ${d.protokoll.length
+        ? d.protokoll.map(e => `<div class="zeile">
+            <span>${esc(zeitKurz(e.ts) || e.ts || "")} ·
+              ${esc(wie[e.tat] || e.tat || "")}
+              <code>${esc(e.pfad || e.aufgabe || "")}</code></span>
+            <span class="wert">${esc(e.ergebnis
+              || (e.bytes ? kbGroesse(e.bytes) : "")
+              || (e.zeichen ? e.zeichen + " Zeichen" : ""))}</span>
+          </div>`).join("")
+        : `<div class="hinweis">Noch keine Werkstatt-Tätigkeit.</div>`}
+    </div>`;
+}
+
+function reiterOeffnen(name) {
+  // Den echten Reiter-Knopf klicken statt die Ansicht selbst zu setzen:
+  // So laufen Markierung und Inhalt garantiert nicht auseinander.
+  const knopf = document.querySelector(`.reiter[data-ansicht="${name}"]`);
+  if (knopf) knopf.click();
+}
+
+async function abiEinzeln(knopf) {
+  const wahl = document.getElementById("abimodell");
+  if (!wahl || !wahl.value) return;
+  if (!confirm("Abitur für " + wahl.value + " starten?\n\n"
+             + "Schriftlicher und praktischer Teil — das dauert Stunden "
+             + "und belegt die GPU. Der Lauf läuft im Hintergrund weiter.")) return;
+  // Punkt statt Doppelpunkt: der Argument-Riegel der Zentrale lässt
+  // nur [A-Za-z0-9_.-] durch, der Starter löst es wieder auf.
+  benchAktion("modell_abitur", wahl.value.replace(/[:/]/g, "."), knopf, "abiausgabe");
+}
+
+async function werkstattAufraeumen() {
+  if (!confirm("Alles aus dem Sandkasten nach _alt/ verschieben?\n\n"
+             + "Gelöscht wird nichts — du kannst es jederzeit zurückholen.")) return;
+  const stand = document.getElementById("aufraeum_stand");
+  if (stand) stand.textContent = "räumt auf …";
+  try {
+    const d = await hole("/api/werkstatt/aufraeumen", {method: "POST", body: "{}"});
+    if (d.ok) {
+      hoerHinweis(d.verschoben
+        ? `${d.verschoben} Stück nach _alt/ verschoben — nichts gelöscht.`
+        : (d.hinweis || "Nichts zu tun."));
+    } else {
+      hoerHinweis("Aufräumen fehlgeschlagen: " + (d.fehler || "?"), true);
+    }
+  } catch (e) {
+    hoerHinweis("Aufräumen fehlgeschlagen: " + e.message, true);
+  }
+  zeigeWerkstatt(document.getElementById("haupt"));
+}
+
 /* ---------- Benchmark ---------- */
 /* Eigener Reiter fuer den Modelltest (23.08.2026): gemessener Stand je
    Modell, Start der Laeufe, Uebernahme recherchierter Testfaelle und die
@@ -1423,6 +1567,28 @@ async function zeigeBenchmark(ziel) {
     <div class="unterzeile">Die 14 deterministischen Prüfungen
       (<code>modell_benchmark.py</code>) plus recherchierte Zusatzfälle —
       Messwerte statt Bauchgefühl.</div>
+
+    <div class="karte" style="margin-bottom:14px">
+      <h3>Abitur — die Vollprüfung</h3>
+      <div class="unterzeile" style="margin-top:0">Schriftlicher Teil
+        (Benchmark) <b>und</b> praktischer Teil in der Werkstatt: Das Modell
+        baut Tims Aufgaben selbst, und sein eigener Selbsttest wird per
+        Mutation angegriffen. Der praktische Teil läuft nur, wenn der
+        schriftliche bestanden ist. <b>Dauert Stunden je Modell.</b></div>
+      <div style="margin:10px 0 6px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <button class="knopf haupt" onclick="benchAktion('modell_abitur_neue','',this)"
+          ${(d.ungetestet||[]).length ? "" : "disabled"}>Abitur für alle neuen Modelle</button>
+        <select id="abimodell">${(d.installiert||[]).map(m =>
+          `<option value="${esc(m)}">${esc(m)}${(d.ungetestet||[]).includes(m) ? " — nie gemessen" : ""}</option>`).join("")}</select>
+        <button class="knopf" onclick="abiEinzeln(this)">Dieses Modell prüfen</button>
+      </div>
+      <div class="unterzeile">${(d.ungetestet||[]).length
+        ? `Noch nie gemessen: <b>${d.ungetestet.map(esc).join(", ")}</b> — diese
+           kämen beim linken Knopf nacheinander dran.`
+        : "Aktuell ist jedes installierte Modell schon vermessen — der linke Knopf hat nichts zu tun."}
+        Ergebnis und Urteil stehen danach im Benchmark-Bericht.</div>
+      <div class="ausgabe" id="abiausgabe"></div>
+    </div>
 
     <div class="karte" style="margin-bottom:14px"><h3>Lauf</h3>
       <div class="zeile"><span>Zustand</span><span id="benchstatus">${status}</span></div>
@@ -1515,8 +1681,11 @@ async function zeigeBenchmark(ziel) {
   }
 }
 
-async function benchAktion(aktion, argument, knopf) {
-  const feld = document.getElementById("benchausgabe");
+async function benchAktion(aktion, argument, knopf, feldname) {
+  // feldname optional: Das Abitur schreibt in seine eigene Karte,
+  // damit die Ausgabe dort steht, wo der Knopf gedrueckt wurde.
+  const feld = document.getElementById(feldname || "benchausgabe")
+            || document.getElementById("benchausgabe");
   if (knopf) knopf.disabled = true;
   feld.innerHTML = `<pre>startet …</pre>`;
   let d;

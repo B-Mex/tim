@@ -57,6 +57,8 @@ TELEMETRIE = Path("/opt/ki-server/memory/harness_log.jsonl")
 CONFIG_DIR = Path("/opt/ki-server/config")
 TOKEN_DATEI = HOME / ".m1_job_token"
 OBERFLAECHE = Path(__file__).parent / "zentrale.html"
+# Im Bau; fehlt sie, antwortet /neu mit 404 statt zu stolpern.
+OBERFLAECHE_NEU = Path(__file__).parent / "zentrale_neu.html"
 
 JOB_SERVER = os.environ.get("M1_JOB_SERVER", "http://127.0.0.1:8765")
 OLLAMA = os.environ.get("M1_OLLAMA", "http://127.0.0.1:11434")
@@ -248,6 +250,67 @@ def berichte_lesen() -> list:
     return sorted(dateien, key=lambda d: d["geaendert"], reverse=True)
 
 
+WERKSTATT_DIR = HOME / "Desktop" / "Tim-Werkstatt"
+WERKSTATT_LOG = Path("/opt/ki-server/memory/werkstatt_log.jsonl")
+
+
+def werkstatt_uebersicht() -> dict:
+    """Alles Lesende fuer den Werkstatt-Reiter, an einer Stelle.
+
+    Zeigt, was in Tims Werkstatt liegt: die Aufgaben, sein Sandkasten
+    mit Groesse und Aenderungszeit je Datei, das Lernprotokoll und die
+    letzten Eintraege aus dem Werkstatt-Protokoll (wer wann was
+    geschrieben und getestet hat).
+
+    Nur Nachsehen. Gebaut wird ueber die Werkstatt-Aktionen, uebernommen
+    wird von Hand - dieser Endpunkt verschiebt die Sicherheitslinie
+    nicht.
+    """
+    def _baum(ordner: Path, grenze: int = 200) -> list:
+        if not ordner.is_dir():
+            return []
+        raus = []
+        for pfad in sorted(ordner.rglob("*")):
+            if pfad.name.startswith(".") or "__pycache__" in pfad.parts:
+                continue
+            if not pfad.is_file():
+                continue
+            try:
+                stand = pfad.stat()
+            except OSError:
+                continue
+            raus.append({
+                "pfad": str(pfad.relative_to(ordner)),
+                "bytes": stand.st_size,
+                "geaendert": datetime.fromtimestamp(
+                    stand.st_mtime).isoformat(timespec="seconds"),
+            })
+            if len(raus) >= grenze:
+                break
+        return raus
+
+    lern = WERKSTATT_DIR / "gelernt" / "LERNPROTOKOLL.md"
+    protokoll = []
+    if WERKSTATT_LOG.is_file():
+        for zeile in _lies(WERKSTATT_LOG, 400_000).splitlines()[-60:]:
+            zeile = zeile.strip()
+            if not zeile:
+                continue
+            try:
+                protokoll.append(json.loads(zeile))
+            except ValueError:
+                continue
+    return {
+        "ordner": str(WERKSTATT_DIR),
+        "aufgaben": sorted(p.stem for p in (WERKSTATT_DIR / "aufgaben").glob("*.md"))
+                    if (WERKSTATT_DIR / "aufgaben").is_dir() else [],
+        "sandkasten": _baum(WERKSTATT_DIR / "sandkasten"),
+        "geschafft": _baum(WERKSTATT_DIR / "geschafft"),
+        "gelernt": _lies(lern, 60_000) if lern.is_file() else "",
+        "protokoll": list(reversed(protokoll)),
+    }
+
+
 def benchmark_uebersicht() -> dict:
     """Alles Lesende fuer den Benchmark-Reiter, an einer Stelle.
 
@@ -340,6 +403,21 @@ def modelle_lesen() -> list:
     except (urllib.error.URLError, OSError, ValueError):
         return modelle
 
+    # Welches Modell gerade IM SPEICHER liegt, steht nicht in /api/tags
+    # (das listet nur, was installiert ist), sondern in /api/ps. Ohne
+    # diese Abfrage kann die Oberflaeche nicht sagen, was Tim gerade
+    # belegt - und behauptet dann "kein Modell geladen", waehrend 22 GB
+    # im GPU-Speicher liegen. Auf Apple Silicon faellt das besonders auf:
+    # Der Modellspeicher ist "wired" und taucht in KEINER Prozessliste
+    # auf, ps zeigt als groessten Verbraucher irgendetwas mit 0,3 GB.
+    geladen = {}
+    try:
+        with urllib.request.urlopen(OLLAMA + "/api/ps", timeout=5) as antwort:
+            for m in json.loads(antwort.read().decode("utf-8")).get("models", []):
+                geladen[m.get("name", "")] = round((m.get("size") or 0) / 1e9, 1)
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+
     for m in daten.get("models", []):
         name = m.get("name", "?")
         eintrag = {
@@ -347,6 +425,8 @@ def modelle_lesen() -> list:
             "groesse_gb": round((m.get("size") or 0) / 1e9, 1),
             "geaendert": (m.get("modified_at") or "")[:16].replace("T", " "),
             "parameter": "", "quant": "", "kontext": None, "kann": [],
+            "geladen": name in geladen,
+            "geladen_gb": geladen.get(name, 0),
         }
         try:
             a = urllib.request.Request(
@@ -380,8 +460,6 @@ def dienste_pruefen() -> list:
         ("Job-Server", JOB_SERVER + "/aktionen"),
         ("SearXNG", "http://127.0.0.1:8888/"),
         ("Open WebUI", "http://127.0.0.1:8080/"),
-        ("Odysseus", "http://127.0.0.1:7000/"),
-        ("ChromaDB", "http://127.0.0.1:8100/api/v2/heartbeat"),
         ("Tims Auge", KAMERA + "/messung"),
     ]
     ergebnis = []
@@ -774,17 +852,24 @@ def verlauf_lesen(anzahl: int = 60, chat: str = "standard") -> list:
     datei = _chat_datei(chat)
     if datei is None:
         return []
-    zeilen = _lies(datei, 2_000_000).splitlines()
     raus = []
-    for z in zeilen[-anzahl:]:
+    for z in _lies(datei, 2_000_000).splitlines():
         z = z.strip()
         if not z:
             continue
         try:
-            raus.append(json.loads(z))
+            eintrag = json.loads(z)
         except ValueError:
             continue
-    return raus
+        # Verdichtungs-Eintraege gehoeren ins Kontextfenster, nicht in
+        # die Anzeige: Mexla hat das Gespraech ja gefuehrt, er braucht
+        # keine Zusammenfassung davon in der eigenen Blasenliste.
+        # Deshalb wird hier gefiltert und ERST DANACH geschnitten -
+        # sonst frisst eine Verdichtung einen Anzeigeplatz weg.
+        if isinstance(eintrag, dict) and eintrag.get("verdichtung"):
+            continue
+        raus.append(eintrag)
+    return raus[-anzahl:]
 
 
 def verlauf_leeren(chat: str = "standard") -> None:
@@ -798,7 +883,21 @@ def verlauf_leeren(chat: str = "standard") -> None:
 
 
 def verlauf_kuerzen(chat: str = "standard") -> None:
-    """Aeltestes abschneiden, damit die Datei nicht unbegrenzt waechst."""
+    """Aelteste Nachrichten ins Archiv legen, damit die Datei nicht
+    unbegrenzt waechst.
+
+    Bis zum 24.08.2026 stand hier ein hartes write_text(zeilen[-400:]) -
+    die alten Zeilen waren damit endgueltig weg. Das traf nicht nur die
+    Nachrichten selbst, sondern auch den seit dem 24.08. mitgespeicherten
+    Denkweg ("gedanken"), ohne dass es jemandem auffiel: Die Datei sah
+    nach dem Kuerzen voellig normal aus.
+
+    Jetzt wandert das Aelteste in memory/chats/archiv/ und die aktive
+    Datei bekommt einen Verweis darauf. Nichts wird ueberschrieben -
+    dieselbe Ueberlegung wie bei der Verdichtung: Abstammung statt
+    Vernichtung. Die Archivdatei ist gewoehnliches JSONL und laesst sich
+    jederzeit wieder einlesen.
+    """
     datei = _chat_datei(chat)
     if datei is None:
         return
@@ -806,11 +905,314 @@ def verlauf_kuerzen(chat: str = "standard") -> None:
         if not datei.exists():
             return
         zeilen = datei.read_text(encoding="utf-8").splitlines()
-        if len(zeilen) > VERLAUF_GRENZE:
-            datei.write_text("\n".join(zeilen[-VERLAUF_GRENZE:]) + "\n",
-                                     encoding="utf-8")
+        if len(zeilen) <= VERLAUF_GRENZE:
+            return
+        alt, behalten = zeilen[:-VERLAUF_GRENZE], zeilen[-VERLAUF_GRENZE:]
+        archiv_ordner = CHATS_DIR / "archiv"
+        archiv_ordner.mkdir(parents=True, exist_ok=True)
+        stempel = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archiv = archiv_ordner / f"{chat}_{stempel}.jsonl"
+        # Erst schreiben, dann kuerzen: Bricht es dazwischen ab, gibt es
+        # den Inhalt lieber doppelt als gar nicht.
+        archiv.write_text("\n".join(alt) + "\n", encoding="utf-8")
+        verweis = json.dumps({
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "role": "system", "content": "",
+            "verdichtung": True, "archiv": archiv.name,
+            "roh": "", "deckt": 0,
+            "hinweis": f"{len(alt)} aeltere Nachrichten liegen in "
+                       f"archiv/{archiv.name}",
+        }, ensure_ascii=False)
+        datei.write_text(verweis + "\n" + "\n".join(behalten) + "\n",
+                         encoding="utf-8")
     except OSError:
         pass
+
+
+# ----------------------------------------------------------------------
+# Sprachprotokoll (24.08.2026)
+#
+# Das Problem, das es loest: Ein Zuruf wie "Hey Tim, Buero rot" laeuft
+# NICHT durch den Chat. licht_aus_satz() im Sprachassistenten erkennt ihn
+# an einer festen Wortliste und funkt direkt an die Bruecke - kein
+# Modell, kein Kontextfenster. Genau deshalb schaltet das Licht in unter
+# einer Sekunde; ueber den Chat waeren es Sekunden bis Minuten.
+#
+# Diese Geschwindigkeit ist der Grund, warum die Sprachsteuerung im
+# Alltag benutzbar ist. Sie darf nicht angetastet werden. Der Preis war
+# bisher: Der Chat WEISS NICHT, was per Zuruf geschaltet wurde - Mexla
+# sieht im Verlauf eine Luecke, wo in Wirklichkeit etwas passiert ist.
+#
+# Also ANZEIGEN STATT UMLEITEN: Der schnelle Weg bleibt, meldet sein
+# Ergebnis aber hinterher hier herein. Wichtig ist die Reihenfolge - erst
+# schalten, dann melden. Faellt das Melden aus, ist das Licht trotzdem an.
+#
+# Bewusst KEIN allgemeiner Schreibzugriff auf Verlaeufe: Der Aufrufer
+# liefert nur Texte, die Eintraege baut diese Funktion selbst. Eine Rolle
+# oder ein Verdichtungs-Kennzeichen laesst sich von aussen nicht setzen.
+# ----------------------------------------------------------------------
+SPRACH_WEGE = {
+    "licht": "sofort geschaltet (ohne Modell)",
+    "befehl": "fester Befehl (ohne Modell)",
+    "chat": "ueber den Chat (mit Modell)",
+}
+SPRACH_BEREICHE = {"licht", "kamera", "funk", "system", "ablauf", "sonstiges"}
+SPRACH_TEXT_GRENZE = 2000
+
+
+def sprachprotokoll_anhaengen(koerper: dict) -> dict:
+    """Haelt einen Zuruf samt Ergebnis im Chatverlauf fest."""
+    zuruf = str(koerper.get("zuruf", "")).strip()[:SPRACH_TEXT_GRENZE]
+    antwort = str(koerper.get("antwort", "")).strip()[:SPRACH_TEXT_GRENZE]
+    weg = str(koerper.get("weg", "")).strip()
+    bereich = str(koerper.get("bereich", "sonstiges")).strip()
+    chat = str(koerper.get("chat", "standard")).strip()
+
+    if not zuruf:
+        return {"ok": False, "fehler": "kein Zuruf angegeben"}
+    if weg not in SPRACH_WEGE:
+        return {"ok": False, "fehler": "unbekannter Weg",
+                "erlaubt": sorted(SPRACH_WEGE)}
+    if bereich not in SPRACH_BEREICHE:
+        bereich = "sonstiges"
+    if not CHAT_ID_MUSTER.match(chat):
+        return {"ok": False, "fehler": "unzulaessige Chat-Kennung"}
+
+    kennzeichen = {"sprache": True, "weg": weg, "bereich": bereich}
+    verlauf_anhaengen("user", zuruf, chat=chat, zusatz=dict(kennzeichen))
+    if antwort:
+        verlauf_anhaengen("assistant", antwort, chat=chat,
+                          zusatz=dict(kennzeichen))
+    verlauf_kuerzen(chat)
+    return {"ok": True, "chat": chat, "weg": weg, "bereich": bereich,
+            "erklaerung": SPRACH_WEGE[weg]}
+
+
+# ----------------------------------------------------------------------
+# Kontext-Verdichtung (24.08.2026)
+#
+# Das Problem: Bis heute gingen die letzten CHAT_VERLAUF_GRENZE
+# Nachrichten ans Modell und alles davor fiel ersatzlos weg. Nach einem
+# langen Arbeitstag war der Anfang des Gespraechs weg - einschliesslich
+# dessen, worum es ueberhaupt ging. Zusaetzlich schnitt verlauf_kuerzen
+# die DATEI hart ab; damit verschwand auch der gespeicherte Denkweg.
+#
+# Der Umbau folgt dem, was Hermes Agent (Nous Research) macht, mit drei
+# Punkten, die dort teuer erkauft und hier uebernommen sind:
+#
+#  1. Ausgeloest wird nach TOKENLAST, nicht nach Anzahl Nachrichten.
+#     Zwanzig kurze Zurufe sind kein volles Fenster, zwei gelesene
+#     Webseiten schon.
+#  2. Kopf UND Schwanz bleiben woertlich stehen, verdichtet wird nur die
+#     Mitte. Der Kopf ist wertvoll: dort steht, worum es geht. Genau den
+#     warf die alte Regel als Erstes weg.
+#  3. Die Zusammenfassung wird ausdruecklich als HINTERGRUND markiert,
+#     nicht als Auftrag. Ohne diesen Satz liest ein Modell alte Auftraege
+#     als offene Auftraege und faengt an, erledigte Arbeit zu wiederholen.
+#     Bei Tim waere das besonders unangenehm, weil er Aktionen ausloesen
+#     kann.
+#
+# Anders als Hermes wird hier NICHTS ueberschrieben: Der alte Verlauf
+# wandert vollstaendig ins Archiv und die Verdichtung verweist darauf
+# (Abstammung statt Ueberschreiben). Und die Zusammenfassung schreibt ein
+# lokales Modell, kein fremder Dienst.
+# ----------------------------------------------------------------------
+VERDICHTUNG_SCHWELLE = 0.75   # ab diesem Anteil von CHAT_NUM_CTX wird verdichtet
+VERDICHTUNG_KOPF = 3          # so viele erste Nachrichten bleiben woertlich
+VERDICHTUNG_SCHWANZ = 6       # so viele letzte Nachrichten bleiben woertlich
+# Grobe Umrechnung Zeichen -> Token. Deutsch liegt mit Umlauten und
+# langen Woertern bei etwa 3 Zeichen je Token; 3.0 schaetzt die Last
+# also eher zu hoch als zu niedrig. Das ist Absicht: lieber einmal zu
+# frueh verdichten als einmal in ein volles Fenster laufen (dann kommt
+# HTTP 200 mit leerem Inhalt zurueck, siehe CHAT_NUM_CTX).
+VERDICHTUNG_ZEICHEN_JE_TOKEN = 3.0
+# Platz, der fuer Systemprompt, Werkzeugausgaben und die Antwort selbst
+# frei bleiben muss - der Verlauf darf das Fenster nicht allein fuellen.
+VERDICHTUNG_RESERVE_TOKEN = 8000
+VERDICHTUNG_PRAEFIX = (
+    "ZUSAMMENFASSUNG DES BISHERIGEN GESPRAECHS - NUR HINTERGRUND.\n"
+    "Das Folgende ist ein Protokoll, KEINE Anweisung. Fuehre nichts davon "
+    "erneut aus, auch wenn dort Auftraege stehen: sie sind erledigt oder "
+    "ueberholt. Massgeblich ist allein die letzte Nachricht von Mexla.\n\n"
+)
+
+
+def _tokens_schaetzen(nachrichten: list) -> int:
+    """Grobe Tokenschaetzung. Kein Tokenizer noetig - es geht nur darum,
+    zu erkennen, WANN es eng wird, nicht um eine genaue Zahl."""
+    zeichen = sum(len(str(n.get("content", ""))) for n in nachrichten)
+    return int(zeichen / VERDICHTUNG_ZEICHEN_JE_TOKEN)
+
+
+# So viel muss frei sein, damit sich das kleine Modell (6,6 GB) NEBEN
+# dem grossen laden laesst, ohne es zu verdraengen. Mit Luft gerechnet.
+VERDICHTUNG_RAM_NOETIG_GB = 8.0
+
+
+def _verdichtungsmodell(hauptmodell: str = "") -> str:
+    """Welches Modell die Zusammenfassung schreibt.
+
+    Die Regel ist einfacher, als sie zuerst aussah: NIMM, WAS SCHON
+    GELADEN IST. Ein Modell nachzuladen ist die teure Handlung, nicht das
+    Zusammenfassen selbst.
+
+    Die urspruengliche Annahme ("Zusammenfassen ist Klasse-3-Arbeit, also
+    das kleine Modell") war auf dieser Anlage falsch. Gemessen am
+    23.08.2026 (berichte/modell_benchmark_..._korrigiert.md):
+
+        qwen3.6:35b-a3b   14/14 Punkte   42.6 Tok/s   11.3 s Ladezeit
+        qwen3.5:9b        14/14 Punkte   30.5 Tok/s    4.8 s Ladezeit
+
+    Das grosse Modell ist 40 % SCHNELLER als das kleine - es ist ein MoE
+    mit wenigen aktiven Parametern. Gleiche Punktzahl. Sein einziger
+    Nachteil ist der Speicher. Ist es also ohnehin geladen, gibt es
+    keinen einzigen Grund, daneben ein kleineres zu laden: langsamer,
+    nicht besser, und es kostet entweder Speicher oder - wenn der knapp
+    wird - das Nachladen des grossen beim naechsten Zug (11 s, und in den
+    Kennzahlen des Abiturs sieht das wie Langsamkeit des Prueflings aus,
+    obwohl es Nebenwirkung ist).
+
+    Das kleine Modell ist deshalb kein "guenstigeres" Modell, sondern nur
+    der Rueckfall fuer den Fall, dass das grosse nicht da ist oder nicht
+    passt.
+    """
+    try:
+        if str(HARNESS_DIR) not in sys.path:
+            sys.path.insert(0, str(HARNESS_DIR))
+        from model_router import (get_model_for_job, modell_geladen,
+                                  freier_ram_gb)
+        klein = get_model_for_job(3)
+        # 1. Was der Chat gerade benutzt, ist geladen -> nehmen.
+        if hauptmodell and modell_geladen(hauptmodell):
+            return hauptmodell
+        # 2. Sonst: ist das kleine schon da, nimm das.
+        if modell_geladen(klein):
+            return klein
+        # 3. Es ist nichts geladen. Bei Enge das Modell nehmen, das der
+        #    Chat gleich ohnehin braucht - kein zweites danebenlegen.
+        if hauptmodell and freier_ram_gb() < VERDICHTUNG_RAM_NOETIG_GB:
+            return hauptmodell
+        # 4. Genug Platz und nichts geladen: das kleine ist schneller
+        #    GELADEN (4.8 s statt 11.3 s). Nur darum geht es hier - beim
+        #    Rechnen ist es das langsamere.
+        return klein
+    except Exception:                                # pragma: no cover
+        return hauptmodell or "qwen3.5:9b"
+
+
+def verdichtung_lesen(chat: str = "standard") -> dict:
+    """Die zuletzt gespeicherte Verdichtung einer Unterhaltung."""
+    datei = _chat_datei(chat)
+    if datei is None or not datei.exists():
+        return {}
+    letzte = {}
+    for zeile in _lies(datei, 2_000_000).splitlines():
+        zeile = zeile.strip()
+        if not zeile or '"verdichtung"' not in zeile:
+            continue
+        try:
+            eintrag = json.loads(zeile)
+        except ValueError:
+            continue
+        # Archiv-Verweise tragen dasselbe Kennzeichen, aber keinen Text.
+        # Ohne diese Bedingung wuerde ein Verweis die letzte echte
+        # Zusammenfassung verdecken und die Fortschreibung liefe leer.
+        if eintrag.get("verdichtung") and str(eintrag.get("roh", "")).strip():
+            letzte = eintrag
+    return letzte
+
+
+def _verdichtung_erzeugen(mitte: list, vorige: str,
+                          hauptmodell: str = "") -> str:
+    """Laesst das kleine Modell die Mitte des Gespraechs zusammenfassen.
+
+    vorige: die vorherige Zusammenfassung. Sie wird FORTGESCHRIEBEN statt
+    verworfen - sonst verliert jede Verdichtung, was die vorige schon
+    eingedampft hatte, und der Anfang des Gespraechs zerfaellt Runde um
+    Runde weiter.
+    """
+    protokoll = []
+    for n in mitte:
+        wer = "Mexla" if n.get("role") == "user" else "Tim"
+        text = " ".join(str(n.get("content", "")).split())
+        # Lange Antworten vorher stutzen: Sie sind fast immer
+        # Werkzeugausgaben oder Code und wuerden das kleine Modell
+        # erschlagen, bevor es zum Zusammenfassen kommt.
+        protokoll.append(f"{wer}: {text[:2000]}")
+    auftrag = (
+        "Fasse das folgende Gespraechsprotokoll zusammen. Schreibe "
+        "Deutsch, hoechstens 250 Woerter, in ganzen Saetzen.\n"
+        "Halte fest: worum es ging, welche Entscheidungen gefallen sind, "
+        "welche Zahlen, Namen und Dateipfade genannt wurden, und was noch "
+        "offen ist. Lass Hoeflichkeitsfloskeln weg.\n"
+        "Schreibe NUR die Zusammenfassung, keine Einleitung.\n\n")
+    if vorige:
+        auftrag += ("BISHERIGE ZUSAMMENFASSUNG (fortschreiben, nicht "
+                    "wegwerfen):\n" + vorige + "\n\n")
+    auftrag += "PROTOKOLL:\n" + "\n".join(protokoll)
+
+    koerper = {
+        "model": _verdichtungsmodell(hauptmodell),
+        "messages": [{"role": "user", "content": auftrag}],
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0.2, "num_ctx": 16384},
+    }
+    try:
+        anfrage = urllib.request.Request(
+            OLLAMA + "/api/chat",
+            data=json.dumps(koerper).encode("utf-8"), method="POST")
+        anfrage.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(anfrage, timeout=180) as antwort:
+            daten = json.loads(antwort.read().decode("utf-8"))
+        text = str((daten.get("message") or {}).get("content", "")).strip()
+    except (urllib.error.URLError, OSError, ValueError):
+        text = ""
+    if not text:
+        # Notnagel: Lieber eine magere, mechanische Zusammenfassung als
+        # ein Gespraech, das abbricht, weil das kleine Modell nicht da
+        # war. Der Chat darf an der Verdichtung NIE scheitern.
+        text = ("(automatisch gekuerzt, ohne Modell) "
+                + " | ".join(z[:200] for z in protokoll[-8:]))
+    return text
+
+
+def verlauf_verdichten(verlauf: list, chat: str = "",
+                       hauptmodell: str = "") -> tuple:
+    """Kopf + Zusammenfassung der Mitte + Schwanz.
+
+    Gibt (nachrichten, bericht) zurueck. bericht ist leer, solange nichts
+    verdichtet wurde - dann bleibt der Verlauf unveraendert.
+    """
+    grenze = int(CHAT_NUM_CTX * VERDICHTUNG_SCHWELLE) - VERDICHTUNG_RESERVE_TOKEN
+    last = _tokens_schaetzen(verlauf)
+    if last <= grenze or len(verlauf) <= VERDICHTUNG_KOPF + VERDICHTUNG_SCHWANZ + 1:
+        return verlauf, {}
+
+    kopf = verlauf[:VERDICHTUNG_KOPF]
+    schwanz = verlauf[-VERDICHTUNG_SCHWANZ:]
+    mitte = verlauf[VERDICHTUNG_KOPF:len(verlauf) - VERDICHTUNG_SCHWANZ]
+    if not mitte:
+        return verlauf, {}
+
+    vorige = verdichtung_lesen(chat) if chat else {}
+    text = _verdichtung_erzeugen(mitte, str(vorige.get("roh", "")),
+                                 hauptmodell)
+    verdichtet = kopf + [{"role": "system",
+                          "content": VERDICHTUNG_PRAEFIX + text}] + schwanz
+    bericht = {
+        "roh": text,
+        "deckt": len(mitte),
+        "vorher_token": last,
+        "nachher_token": _tokens_schaetzen(verdichtet),
+        "modell": _verdichtungsmodell(hauptmodell),
+    }
+    if chat:
+        verlauf_anhaengen("system", VERDICHTUNG_PRAEFIX + text,
+                          bericht["modell"], chat=chat,
+                          zusatz={"verdichtung": True, "roh": text,
+                                  "deckt": bericht["deckt"]})
+    return verdichtet, bericht
 
 
 # ----------------------------------------------------------------------
@@ -1155,6 +1557,25 @@ Dazu zwei Werkzeuge, beide nur LESEND:
   reichen. Nur oeffentliche Adressen; innere Dienste sind gesperrt.
 Nenne die Quelle (Adresse), wenn du etwas Gesuchtes wiedergibst.
 
+DU HAST EIN GEDAECHTNIS - BENUTZE ES ZUERST:
+- gedaechtnis_suchen: durchsucht die Ergebnisse frueher gelaufener
+  Ablaeufe. Fragt Mexla nach etwas, das ihr schon einmal untersucht
+  habt (Bauteile, Modelle, ein Projekt), dann sieh ZUERST dort nach und
+  erst danach im Netz. Was du dort findest, ist der Stand von damals -
+  sag das Datum dazu und pruefe frisch nach, wenn es auf Aktualitaet
+  ankommt.
+
+DU KANNST ARBEIT ABGEBEN:
+- teilaufgabe: gibt EINEN abgegrenzten Rechercheauftrag an einen
+  Zuarbeiter, der in einem eigenen Durchlauf arbeitet und dir nur das
+  Ergebnis zurueckgibt. Nimm das, wenn du sonst mehrere lange Seiten
+  oder Dateien selbst durchlesen muesstest - das Lange bleibt bei ihm,
+  du behaeltst den Kopf frei fuer das Gespraech mit Mexla.
+  Der Zuarbeiter kennt euer Gespraech NICHT: Schreib den Auftrag so, dass
+  er allein daraus arbeiten kann. Er darf nur nachsehen, nichts aendern.
+  Fuer eine einzelne schnelle Suche lohnt er sich nicht - die machst du
+  selbst.
+
 WAS DU AUSFUEHREN KANNST (seit 23.08.2026):
 - aktion_starten: genau EINE Aktion aus der festen Positivliste des
   Job-Servers - Licht schalten, Dienste starten/stoppen, Status pruefen.
@@ -1240,9 +1661,67 @@ Aenderung. Die Fallen und Arbeitsregeln hinter diesen Pruefungen
 stehen in docs/TIM_HANDWERK.md - lies sie mit projektdatei_lesen,
 bevor du bei solchen Fragen aus dem Gedaechtnis antwortest.
 
+DEINE WERKSTATT (seit 24.08.2026) - hier darfst du BAUEN:
+In ~/Desktop/Tim-Werkstatt/sandkasten darfst du Dateien anlegen und
+aendern. Nur dort - ueberall sonst bleibt es beim Lesen. Der Ablauf:
+1. aktion_starten "werkstatt_aufgabe" mit dem Aufgabennamen: lies, was
+   zu bauen ist. Halte dich an die Anforderungen, erfinde keine dazu.
+2. werkstatt_schreiben: leg deinen Entwurf ab (immer die VOLLSTAENDIGE
+   Datei - sie wird ersetzt, nicht ergaenzt).
+3. aktion_starten "werkstatt_testen" mit demselben Pfad: kompilieren +
+   Selbsttest. Ist er rot, LIES DIE FEHLERMELDUNG und bessere nach,
+   statt es nochmal gleich zu versuchen.
+4. Wiederhole 2-3, bis gruen. Dann sag Mexla, was du gebaut hast und
+   welche Faelle dein Selbsttest prueft.
+5. ZUM SCHLUSS IMMER: werkstatt_lernnotiz - halte fest, was du gelernt
+   hast, welchen Fehler du unterwegs gemacht hast und was du naechstes
+   Mal anders angehst. Eine Notiz, in der nichts schiefging, ist keine
+   Notiz. Vor einer neuen Uebung liest du mit aktion_starten
+   "werkstatt_gelernt" nach, was du frueher schon gelernt hast.
+Jede Datei, die du baust, braucht einen eigenen --selbsttest mit dem
+ZWEI-SEITEN-BEWEIS: Der gute Fall muss bestehen UND der schlechte
+durchfallen. Ein Test, der nie rot werden kann, prueft nichts.
+Ausrollen kannst du NICHT - nichts aus der Werkstatt wandert von
+selbst ins echte System. Ob etwas uebernommen wird, entscheidet Mexla.
+
+DU BIST SPAETER PRUEFER (Pruefungsausschuss): Aus einer Arbeit, die du
+BESTANDEN hast, kann eine Pruefung fuer kuenftige Modelle werden -
+aktion_starten "pruefung_vorschlagen" mit dem Dateinamen leitet einen
+Entwurf ab. Zwei Dinge musst du dabei wissen:
+- Nur Bestandenes taugt als Massstab. Ist dein Selbsttest nicht gruen
+  oder faengt er die eingebauten Fehler nicht, entsteht KEINE Pruefung -
+  das ist richtig so, nicht ein Defekt.
+- Du schlaegst nur VOR. Eintragen tut es Mexla. Wer sich seine eigenen
+  Pruefungen schreibt, prueft am Ende nur noch das, was er ohnehin kann.
+Behaupte niemals, etwas sei fertig, bevor werkstatt_testen gruen
+gemeldet hat - das ist dein Beleg, nicht dein Gefuehl.
+BESSERE NACH, STATT NEU ZU SCHREIBEN. Sollst du an einer Datei etwas
+aendern, hol dir zuerst mit aktion_starten "werkstatt_lesen" den
+aktuellen Stand und aendere nur das, was geaendert werden soll. Wer eine
+Datei aus dem Kopf neu schreibt, verliert dabei Teile, die niemand
+gestrichen hat - Funktionen, Testfaelle, Sonderfaelle. Meldet dir
+werkstatt_schreiben "diese Namen sind jetzt weg", dann hast du genau das
+getan: hol den alten Stand und mach es richtig.
+ANKUENDIGEN IST NICHT ARBEITEN. Beende eine Antwort nie mit dem, was du
+tun WIRST ("ich korrigiere jetzt...", "danach schreibe ich..."). Wenn du
+weisst, was zu tun ist, TU ES mit deinen Werkzeugen und berichte erst
+danach. Eine Antwort, die nur einen Plan enthaelt, ist keine erledigte
+Aufgabe.
+SO LAEUFT DAS AB - du musst dich nicht entscheiden: Ruf ein Werkzeug auf.
+Du BEKOMMST sein Ergebnis und darfst danach weiterarbeiten, mehrfach
+hintereinander, bevor du antwortest. Erst lesen, dann bauen, dann testen,
+dann nachbessern ist also genau richtig und kein Widerspruch dazu, alles
+in einem Zug zu erledigen. Du musst nicht raten, was in einer Datei
+steht - lies sie und warte das Ergebnis ab. Was du dir stattdessen
+ausdenkst, ist erfunden und faellt unter Regel 3.
+Und: Ein uebersprungener Test ist eine LUECKE, niemals ein bestandener.
+Konnte eine Pruefung nicht laufen, sag das ausdruecklich und zaehle sie
+nicht als Erfolg - ungeprueft ist nicht dasselbe wie in Ordnung.
+
 WAS DU WEITERHIN NICHT KANNST - ohne Ausnahme:
 - Keine freien Befehle, keine Shell, nichts ausserhalb der Positivliste
-- Keine Dateien anlegen, aendern oder loeschen
+- Keine Dateien anlegen, aendern oder loeschen AUSSERHALB der Werkstatt
+  (dein Sandkasten ist die eine Ausnahme, siehe oben)
 - Nichts installieren, nichts konfigurieren
 - Keine Mails, kein Slack, kein GitHub
 - Nichts zeitgesteuert einrichten
@@ -1293,12 +1772,35 @@ Lampe kommt, steht oben und in den Unterlagen, nicht dort."""
 # dem Modell blieb kein Platz mehr fuer die eigene Antwort, chat_anfragen
 # lieferte HTTP 200 mit leerem content, ohne Fehlermeldung. Reproduziert
 # 5 von 5 Laeufen mit dem echten gespeicherten Verlauf.
-CHAT_NUM_CTX = 16384
-# Nur die juengsten Nachrichten an das Modell schicken: der gespeicherte
-# Verlauf waechst ueber den Tag (bis zu 60 Eintraege), das Kontextfenster
-# nicht mit. Eine feste Obergrenze haelt das unabhaengig von CHAT_NUM_CTX
-# unter Kontrolle.
-CHAT_VERLAUF_GRENZE = 24
+#
+# 24.08.2026 angehoben: qwen3.6:35b-a3b kann laut "ollama show" 262144
+# Token. Bei 16384 fuellten schon ZWEI gelesene Webseiten (je bis 12000
+# Zeichen Werkzeugausgabe) das Fenster. Gemessen wurde, was der groessere
+# Kontext im Speicher kostet - nicht geraten (ollama ps):
+#     num_ctx 16384 -> 22 GB
+#     num_ctx 32768 -> 22 GB
+#     num_ctx 65536 -> 23 GB
+# Warum trotzdem nicht mehr, obwohl das Modell 262144 koennte: Die
+# Kontext-Verdichtung (verlauf_verdichten) laesst qwen3.5:9b als kleines
+# Modell mitlaufen, das noch einmal 6,6 GB belegt. 23 + 6,6 = 29,6 GB von
+# 34,4 GB - darueber wuerfen sich beide gegenseitig aus dem Speicher, und
+# genau das war frueher die Ursache fuer leere Antworten. Wer mehr will,
+# misst erst mit "ollama ps" nach.
+CHAT_NUM_CTX = 65536
+# Notnagel gegen Ausreisser. Seit dem 24.08.2026 ist das NICHT mehr der
+# eigentliche Schutz - der heisst verlauf_verdichten und misst die
+# Tokenlast, statt Nachrichten zu zaehlen. Die Zahl steht trotzdem noch
+# hier: Sollte die Verdichtung je ausfallen (kleines Modell weg, Ollama
+# stumm), faellt der Chat auf dieses Verhalten zurueck statt in ein
+# volles Fenster zu laufen. Von 24 auf 80 angehoben, weil CHAT_NUM_CTX
+# vervierfacht wurde - bei 24 haette die Anzahl-Grenze immer VOR der
+# Verdichtung gegriffen und diese nie zum Zuge kommen lassen.
+CHAT_VERLAUF_GRENZE = 80
+# So viel Denkweg wird hoechstens mitgegeben und gespeichert. Denk-
+# Modelle produzieren davon leicht mehrere tausend Zeichen je Runde -
+# ungebremst blaeht das den gespeicherten Verlauf auf, und der wird bei
+# jeder Anfrage mitgelesen.
+GEDANKEN_GRENZE = 12000
 
 
 # ----------------------------------------------------------------------
@@ -1390,6 +1892,35 @@ CHAT_WERKZEUGE = [
             "argument": {"type": "string",
                          "description": "Argument, falls die Aktion eines braucht"}},
             "required": ["name"]}}},
+    # Seit 24.08.2026: Tims Werkstatt - der einzige Weg, auf dem er
+    # eine Datei ANLEGT. Die Pfadsperre steckt in harness/werkstatt.py
+    # (nur ~/Desktop/Tim-Werkstatt/sandkasten), nicht hier.
+    {"type": "function", "function": {
+        "name": "werkstatt_schreiben",
+        "description": ("Legt eine Datei in deinem Werkstatt-Sandkasten "
+                        "an oder ueberschreibt sie. NUR dort darfst du "
+                        "schreiben. Schreibe immer die VOLLSTAENDIGE "
+                        "Datei, nie nur einen Ausschnitt - es wird "
+                        "ersetzt, nicht ergaenzt."),
+        "parameters": {"type": "object", "properties": {
+            "pfad": {"type": "string",
+                     "description": "Pfad im Sandkasten, z.B. 'zeitplan.py'"},
+            "inhalt": {"type": "string",
+                       "description": "Der vollstaendige Dateiinhalt"}},
+            "required": ["pfad", "inhalt"]}}},
+    {"type": "function", "function": {
+        "name": "werkstatt_lernnotiz",
+        "description": ("Haelt fest, was du aus einer Werkstatt-Uebung "
+                        "gelernt hast - dauerhaft, auch wenn der "
+                        "Sandkasten spaeter geleert wird. Schreib, was "
+                        "du gelernt hast, welchen Fehler du gemacht "
+                        "hast und was du naechstes Mal anders machst."),
+        "parameters": {"type": "object", "properties": {
+            "aufgabe": {"type": "string",
+                        "description": "Name der Uebung, z.B. pfad_riegel"},
+            "text": {"type": "string",
+                     "description": "Was du gelernt hast, in ganzen Saetzen"}},
+            "required": ["aufgabe", "text"]}}},
     {"type": "function", "function": {
         "name": "projektdatei_lesen",
         "description": ("Liest eine Datei aus Mexlas Projekten. Der blosse "
@@ -1401,8 +1932,55 @@ CHAT_WERKZEUGE = [
             "pfad": {"type": "string",
                      "description": "Dateiname oder Pfad, z.B. 'README.md'"}},
             "required": ["pfad"]}}},
+    # Langzeitgedaechtnis. Nur lesend - es wird gesucht, nie geschrieben.
+    # Geschrieben wird ausschliesslich beim Abschluss eines Ablaufs, und
+    # das macht der Harness, nicht der Chat.
+    {"type": "function", "function": {
+        "name": "gedaechtnis_suchen",
+        "description": ("Durchsucht deine ERINNERUNG an frueher gelaufene "
+                        "Ablaeufe (Recherchen, Modell-Scans, Projekt-"
+                        "Reviews). Benutze das ZUERST, wenn Mexla nach "
+                        "etwas fragt, das ihr schon einmal untersucht "
+                        "habt - das ist schneller und billiger als eine "
+                        "neue Websuche. Liefert frueheren Stand, keinen "
+                        "aktuellen."),
+        "parameters": {"type": "object", "properties": {
+            "frage": {"type": "string",
+                      "description": "Wonach in der Erinnerung gesucht wird"},
+            "sammlung": {"type": "string",
+                         "description": "Optional: nur in dieser Sammlung "
+                                        "suchen. Leer = ueberall."}},
+            "required": ["frage"]}}},
+    # Unteragent. Auch das ist ein LESENDES Werkzeug: Der Zuarbeiter
+    # bekommt ausschliesslich die Lese-Freigabe TEILAUFGABE_WERKZEUGE.
+    {"type": "function", "function": {
+        "name": "teilaufgabe",
+        "description": ("Gibt EINEN abgegrenzten Rechercheauftrag an "
+                        "einen Zuarbeiter, der ihn in einem eigenen "
+                        "Durchlauf erledigt und dir nur das Ergebnis "
+                        "zurueckgibt. Nimm das, wenn du viel nachlesen "
+                        "musst (mehrere Seiten, lange Dateien) - dann "
+                        "bleibt dein eigener Kopf frei fuer das "
+                        "Gespraech. Der Zuarbeiter kann NUR nachsehen, "
+                        "nichts aendern und nichts starten. Formuliere "
+                        "den Auftrag vollstaendig: er kennt euer "
+                        "Gespraech nicht."),
+        "parameters": {"type": "object", "properties": {
+            "auftrag": {"type": "string",
+                        "description": "Der vollstaendige, fuer sich "
+                                       "verstaendliche Auftrag"}},
+            "required": ["auftrag"]}}},
 ]
-CHAT_WERKZEUG_RUNDEN = 3          # so oft darf das Modell nacheinander nachsehen
+# So oft darf das Modell nacheinander nachsehen, bevor die
+# Abschlussantwort erzwungen wird. Am 24.08.2026 auf 8 erhoeht, weil
+# die Werkstattarbeit gemessen mehr Schritte braucht als das blosse
+# Nachschlagen: Aufgabe lesen -> Datei schreiben -> testen -> nachbessern
+# -> testen -> Original vergleichen -> Lernnotiz. Mit 3 Runden brach Tim
+# mitten drin ab; sein Denkweg zeigte, dass er die restlichen Schritte
+# kannte und nur nicht mehr ausfuehren durfte. Gesprochen bleibt es bei
+# einer Runde (CHAT_WERKZEUG_RUNDEN_SPRACHE) - dort zaehlt das
+# 300-s-Fenster des Sprachassistenten.
+CHAT_WERKZEUG_RUNDEN = 8
 # Gesprochen gilt eine engere Uhr: Der Sprachassistent wartet 300 s auf
 # /api/chat, jede Werkzeugrunde ist aber ein voller Modelldurchlauf.
 # Am 23.08.2026 gemessen: "büro rot" fiel (vor dem Umlaut-Fix) in den
@@ -1431,6 +2009,136 @@ def _harness_werkzeug(name: str):
         sys.path.insert(0, str(HARNESS_DIR))
     import crew_generic
     return getattr(crew_generic, name)
+
+
+def _harness_modul(name: str):
+    """Ein Harness-Modul als Ganzes (fuer werkstatt.py).
+
+    Auch hier spaet importiert - und bewusst dasselbe Modul, das der
+    Job-Server aufruft: Eine zweite Fassung der Pfadsperre waere genau
+    die Doppelablage, vor der das ganze Haus warnt.
+    """
+    if str(HARNESS_DIR) not in sys.path:
+        sys.path.insert(0, str(HARNESS_DIR))
+    return __import__(name)
+
+
+# Das Langzeitgedaechtnis: ChromaDB. Jeder fertige Ablauf legt sein
+# Ergebnis dort ab (crew_generic.ergebnis_speichern). Bisher war das eine
+# Einbahnstrasse - geschrieben wurde, gelesen nie. Der Pfad wird aus
+# HARNESS_DIR abgeleitet statt ein zweites Mal hingeschrieben; zwei
+# Fassungen desselben Pfades sind genau die Doppelablage, die hier
+# ueberall bekaempft wird.
+GEDAECHTNIS_DB = HARNESS_DIR.parent / "memory" / "chroma_db"
+# Wie viele Treffer hoechstens und wie lang je Treffer. Ein Ablauf-Bericht
+# ist gemessen 3000 bis 8000 Zeichen lang; ungekuerzt fuellen drei Treffer
+# das halbe Kontextfenster.
+GEDAECHTNIS_TREFFER = 4
+GEDAECHTNIS_AUSZUG = 1500
+
+
+def gedaechtnis_suchen(frage: str, sammlung: str = "") -> str:
+    """Semantische Suche in den gespeicherten Ablauf-Ergebnissen.
+
+    Streng lesend: chromadb wird nur abgefragt, nie beschrieben. Die
+    Sammlung kommt aus der Datenbank selbst (list_collections), nicht aus
+    dem Modelltext - ein erfundener Name kann also hoechstens ins Leere
+    laufen, nicht auf eine fremde Datei zeigen.
+    """
+    frage = (frage or "").strip()
+    if not frage:
+        return "Fehler: keine Suchfrage angegeben."
+    try:
+        import chromadb
+    except ImportError:
+        return ("Das Langzeitgedaechtnis ist nicht verfuegbar (chromadb "
+                "fehlt in dieser Umgebung).")
+    # Fehlt der Ordner, gar nicht erst oeffnen: chromadb legt sonst
+    # stillschweigend eine leere Datenbank an, und Tim meldete "nichts
+    # gefunden", wo in Wahrheit "nicht da" die richtige Antwort ist.
+    if not GEDAECHTNIS_DB.is_dir():
+        return ("Das Langzeitgedaechtnis ist nicht eingerichtet "
+                "(kein Ordner memory/chroma_db). Es entsteht, sobald der "
+                "erste Ablauf durchgelaufen ist.")
+    # ACHTUNG, teuer gelernt am 24.08.2026: chromadb rechnet in Rust und
+    # meldet Fehler ueber pyo3 als PanicException - und die ist KEINE
+    # Unterklasse von Exception, sondern haengt direkt an BaseException.
+    # "except Exception" faengt sie also NICHT. Gemessen: eine Datenbank
+    # in unglueklichem Zustand liess den kompletten Anfrage-Faden der
+    # Zentrale sterben, statt eine Fehlermeldung zu liefern. Deshalb hier
+    # ausnahmsweise BaseException - mit ausdruecklichem Durchreichen von
+    # Abbruch und Beenden, die nichts mit der Datenbank zu tun haben.
+    try:
+        client = chromadb.PersistentClient(path=str(GEDAECHTNIS_DB))
+        vorhanden = [c.name for c in client.list_collections()]
+    except (KeyboardInterrupt, SystemExit):          # pragma: no cover
+        raise
+    except BaseException as fehler:                  # pragma: no cover
+        # Aufraeumen, sonst ist der Prozess dauerhaft vergiftet:
+        # chromadb haelt seinen "System"-Aufbau pro Pfad im Speicher
+        # (SharedSystemClient). Nach einem Fehlschlag bleibt ein kaputter
+        # Eintrag stehen - und der naechste Aufruf scheitert dann selbst
+        # dann, wenn die Datenbank inzwischen wieder in Ordnung ist.
+        # Gemessen am 24.08.2026: kaputte DB -> Panic; DB durch eine
+        # gesunde ersetzt; zweiter Aufruf im selben Prozess -> immer noch
+        # Fehler. Ohne diese Zeilen bliebe Tims Gedaechtnis nach EINEM
+        # Aussetzer tot, bis jemand den Dienst neu startet.
+        try:
+            from chromadb.api.shared_system_client import SharedSystemClient
+            SharedSystemClient.clear_system_cache()
+        except BaseException:
+            pass
+        return ("Das Langzeitgedaechtnis antwortet nicht "
+                f"({type(fehler).__name__}: {str(fehler)[:120]}). "
+                "Die Datenbank liegt in memory/chroma_db und laesst sich "
+                "aus den Berichten neu aufbauen; deine uebrigen Werkzeuge "
+                "sind davon nicht betroffen.")
+    if not vorhanden:
+        return ("Im Langzeitgedaechtnis liegt noch nichts. Es fuellt sich, "
+                "sobald Ablaeufe gelaufen sind.")
+
+    gewuenscht = (sammlung or "").strip()
+    if gewuenscht and gewuenscht not in vorhanden:
+        return ("Diese Sammlung gibt es nicht. Vorhanden: "
+                + ", ".join(sorted(vorhanden)))
+    zu_durchsuchen = [gewuenscht] if gewuenscht else vorhanden
+
+    treffer = []
+    for name in zu_durchsuchen:
+        try:
+            col = client.get_collection(name)
+            anzahl = min(GEDAECHTNIS_TREFFER, max(col.count(), 1))
+            ergebnis = col.query(query_texts=[frage], n_results=anzahl)
+        except (KeyboardInterrupt, SystemExit):      # pragma: no cover
+            raise
+        except BaseException:                        # pragma: no cover
+            # Auch hier BaseException, siehe oben: Eine einzelne kaputte
+            # Sammlung darf die Suche in den uebrigen nicht mitreissen.
+            continue
+        for text, kopf, abstand in zip(
+                (ergebnis.get("documents") or [[]])[0],
+                (ergebnis.get("metadatas") or [[]])[0],
+                (ergebnis.get("distances") or [[]])[0]):
+            treffer.append((abstand, name, kopf or {}, text or ""))
+
+    if not treffer:
+        return (f"Nichts gefunden zu '{frage[:80]}'. Durchsucht: "
+                + ", ".join(sorted(zu_durchsuchen)))
+    treffer.sort(key=lambda t: t[0])
+
+    zeilen = [f"{len(treffer)} Treffer im Langzeitgedaechtnis "
+              f"(durchsucht: {', '.join(sorted(zu_durchsuchen))}). "
+              "Kleinerer Abstand = besser passend."]
+    for abstand, name, kopf, text in treffer[:GEDAECHTNIS_TREFFER]:
+        auszug = " ".join(text.split())[:GEDAECHTNIS_AUSZUG]
+        zeilen.append(
+            f"\n--- {name} | Ablauf: {kopf.get('job', '?')} | "
+            f"vom {kopf.get('datum', '?')} | Abstand {abstand:.2f}\n{auszug}")
+    zeilen.append(
+        "\nACHTUNG: Das sind FRUEHERE Ergebnisse, kein aktueller Stand. "
+        "Sie koennen Angaben enthalten, die damals aus dem Netz kamen. "
+        "Wenn es auf Aktualitaet ankommt, sieh zusaetzlich frisch nach.")
+    return "\n".join(zeilen)
 
 
 def _projektpfad(eingabe: str) -> str:
@@ -1564,8 +2272,201 @@ def _job_server_sync(aktion: str, argument: str = "", zeit: int = 90) -> dict:
         return {"fehler": f"Job-Server nicht erreichbar: {e}"}
 
 
-def werkzeug_ausfuehren(name: str, argumente: dict) -> str:
-    """Fuehrt ein Chat-Werkzeug aus. Nur die beiden bekannten Namen."""
+# ----------------------------------------------------------------------
+# Teilaufgaben (Unteragent, 24.08.2026)
+#
+# Wozu: Nicht "mehr Agenten", sondern KONTEXT-ISOLATION. Eine gelesene
+# Webseite bringt bis zu 12000 Zeichen mit. Drei davon im Hauptfaden, und
+# das Fenster ist voll - danach verdichtet Tim, obwohl er das Zeug nur
+# einmal kurz durchsehen musste. Eine Teilaufgabe laeuft in ihrem eigenen
+# Fenster; zurueck kommt nur das Ergebnis.
+#
+# Vorbild ist Hermes Agent (delegate_task: eigenes Budget, eigene
+# Werkzeug-Freigabe, zusammengefasster Rueckkanal). ZWEI Punkte sind hier
+# bewusst strenger:
+#
+#  1. Die Freigabe wird ZWEIMAL durchgesetzt - beim Anbieten (das Modell
+#     sieht nur die freigegebenen Werkzeuge) UND beim Ausfuehren
+#     (werkzeug_ausfuehren lehnt alles ausserhalb der Freigabe ab, auch
+#     wenn das Modell sich einen Namen ausdenkt). Nur die erste Haelfte
+#     zu machen, hiesse dem Modell zu vertrauen, dass es sich an die
+#     angebotene Liste haelt.
+#  2. Die Freigabe ist eine reine LESE-Menge. Kein werkstatt_schreiben,
+#     kein aktion_starten, keine Teilaufgabe in der Teilaufgabe. Ein
+#     Unteragent hat keinen Menschen im Ruecken, der mitliest - also
+#     darf er auch nichts veraendern.
+#
+# Kein zweiter Werkzeug-Verteiler: Ausgefuehrt wird ueber dasselbe
+# werkzeug_ausfuehren wie im Hauptfaden. Die Sperren (SSRF, Pfadriegel,
+# Positivliste) liegen dort und koennen deshalb nicht auseinanderlaufen.
+# Getrennt ist nur die Schleife drumherum.
+# ----------------------------------------------------------------------
+TEILAUFGABE_WERKZEUGE = {
+    "websuche", "webseite_lesen", "gedaechtnis_suchen",
+    "projekte_auflisten", "projektdatei_lesen", "berichte_lesen",
+    "systemzustand", "ablaeufe_zeigen", "aktionen_zeigen",
+}
+TEILAUFGABE_RUNDEN = 4          # eigenes, kleineres Budget
+TEILAUFGABE_ANTWORT = 4000      # so viel kommt hoechstens zurueck
+
+
+def _werkzeuge_anbieten(erlaubt: set) -> list:
+    """Angemeldet ist nicht angeboten.
+
+    CHAT_WERKZEUGE ist die Anmeldung (alles, was es gibt); was ein
+    bestimmter Lauf zu sehen bekommt, ist eine Teilmenge davon. Getrennt
+    zu halten ist der Grund, warum eine Teilaufgabe ueberhaupt eine
+    engere Freigabe haben kann, ohne dass es eine zweite Werkzeugliste
+    gibt, die irgendwann von der ersten abweicht.
+    """
+    return [w for w in CHAT_WERKZEUGE
+            if w["function"]["name"] in erlaubt]
+
+
+# Was ein Zuarbeiter zurueckmeldet, muss BELEGT sein, nicht behauptet.
+#
+# Der Anlass (24.08.2026, gemessen im Trainingslauf): Das grosse Modell
+# geriet in eine Degenerationsschleife - es schrieb den Werkzeugaufruf
+# 14-mal als TEXT in seinen Denkweg, loeste ihn aber kein einziges Mal
+# aus, sah ihn dort stehen und hielt ihn fuer getan. Danach meldete es
+# selbstbewusst: Datei erstellt, Test gruen, Lernnotiz gespeichert.
+# Nachgemessen existierte nichts davon. Alle drei Angaben erfunden.
+#
+# Im Hauptfaden ist das teuer, aber sichtbar: Mexla liest mit, der
+# Denkweg ist aufklappbar. Bei einem Unteragenten sieht niemand den
+# Denkweg - der Aufrufer bekaeme eine plausible Zusammenfassung von
+# Arbeit, die nie stattgefunden hat, und wuerde darauf weiterbauen.
+#
+# Der Riegel ist deshalb keine Ermahnung im Prompt (die gibt es laengst,
+# und sie hat genau diesen Fall NICHT verhindert - sie adressiert die
+# Absicht, nicht die Mechanik), sondern eine Tatsache aus der Messung:
+# Wir zaehlen mit, wie viele Werkzeuge wirklich liefen. Null Aufrufe bei
+# einem Rechercheauftrag heisst, dass nichts nachgesehen wurde - egal wie
+# ueberzeugt der Text klingt.
+def _teilaufgabe_bericht(text: str, benutzte: list) -> str:
+    """Formt das Ergebnis - und kennzeichnet Unbelegtes als unbelegt."""
+    if not text:
+        return ("Die Teilaufgabe hat kein Ergebnis geliefert. Benutzte "
+                "Werkzeuge: " + (", ".join(benutzte) or "keine"))
+    text = text[:TEILAUFGABE_ANTWORT]
+    if not benutzte:
+        # Bewusst VOR dem Text und in klarer Sprache: Ein Hinweis in
+        # Klammern hinter einer selbstbewussten Antwort wird ueberlesen.
+        return ("ACHTUNG - UNBELEGT: Der Zuarbeiter hat KEIN EINZIGES "
+                "Werkzeug aufgerufen (gemessen, nicht vermutet). Er hat "
+                "also nichts nachgesehen. Was folgt, ist behauptet, nicht "
+                "belegt - behandle es NICHT als Rechercheergebnis und gib "
+                "es Mexla nicht als Tatsache weiter. Sieh selbst nach oder "
+                "sag ihm, dass die Teilaufgabe nichts geliefert hat.\n\n"
+                "Behaupteter Text: " + text)
+    return ("Ergebnis der Teilaufgabe (eigener Lauf, tatsaechlich benutzte "
+            "Werkzeuge: " + ", ".join(benutzte) + "):\n" + text)
+
+
+def teilaufgabe_ausfuehren(auftrag: str, modell: str = "") -> str:
+    """Ein eigener kleiner Lauf mit engem Auftrag und enger Freigabe."""
+    auftrag = (auftrag or "").strip()
+    if not auftrag:
+        return "Fehler: kein Auftrag angegeben."
+    if len(auftrag) > 2000:
+        auftrag = auftrag[:2000]
+    # Standardmaessig DASSELBE Modell wie der Hauptfaden. Das kostet
+    # keinen zusaetzlichen Speicher (es ist ohnehin geladen) und die
+    # Recherche ist der schwierigere Teil der Arbeit, nicht der leichtere.
+    # Ein kleineres Modell hier waere eine Ersparnis an der falschen
+    # Stelle - und wuerde einen zweiten Modellwechsel ausloesen.
+    modell = modell or STANDARD_MODELL
+
+    rolle = (
+        "Du bist ein Zuarbeiter fuer Tim und bearbeitest GENAU EINEN "
+        "Auftrag. Du hast nur lesende Werkzeuge - du veraenderst nichts "
+        "und startest nichts.\n"
+        "Arbeite den Auftrag mit deinen Werkzeugen ab und antworte dann "
+        "KURZ und abschliessend: nur das Ergebnis, mit Quellen, ohne "
+        "Vorrede. Was du nicht herausgefunden hast, sagst du ausdruecklich "
+        "- erfinde nichts.\n"
+        "Du fuehrst kein Gespraech. Stelle keine Rueckfragen; wenn etwas "
+        "unklar ist, nenne die Annahme, unter der du gearbeitet hast.")
+    verlauf = [{"role": "system", "content": rolle},
+               {"role": "user", "content": auftrag}]
+    angeboten = _werkzeuge_anbieten(TEILAUFGABE_WERKZEUGE)
+    benutzte = []
+    genudged = False
+    daten = {}
+    try:
+        for runde in range(TEILAUFGABE_RUNDEN + 1):
+            letzte = runde == TEILAUFGABE_RUNDEN
+            koerper = {"model": modell, "messages": verlauf, "stream": False,
+                       "options": {"temperature": 0.3,
+                                   "num_ctx": CHAT_NUM_CTX}}
+            if not letzte:
+                koerper["tools"] = angeboten
+            anfrage = urllib.request.Request(
+                OLLAMA + "/api/chat",
+                data=json.dumps(koerper).encode("utf-8"), method="POST")
+            anfrage.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(anfrage, timeout=600) as antwort:
+                daten = json.loads(antwort.read().decode("utf-8"))
+            nachricht = daten.get("message") or {}
+            rufe = nachricht.get("tool_calls") or []
+            if not rufe:
+                if benutzte or genudged or letzte:
+                    break
+                # Kein einziges Werkzeug, aber schon eine Antwort: genau
+                # das Muster der Degenerationsschleife. EINMAL mit einer
+                # TATSACHE nachfassen, nicht mit einem Appell - was die
+                # Schleife im Trainingslauf gebrochen hat, war der
+                # woertliche Rueckgabewert eines Werkzeugs, nicht eine
+                # Ermahnung.
+                genudged = True
+                verlauf = verlauf + [nachricht, {
+                    "role": "user",
+                    "content": (
+                        "TATSACHE: Bis hierher wurden 0 Werkzeugaufrufe von "
+                        "dir registriert. Ein Aufruf, den du in deine "
+                        "Gedanken schreibst, wird NICHT ausgefuehrt - er "
+                        "muss als Werkzeugaufruf herausgehen, dann bekommst "
+                        "du das Ergebnis zurueck. Rufe jetzt das passende "
+                        "Werkzeug auf. Geht das bei diesem Auftrag nicht, "
+                        "sage in einem Satz, warum.")}]
+                continue
+            verlauf = verlauf + [nachricht]
+            for ruf in rufe[:4]:
+                fn = ruf.get("function") or {}
+                name = str(fn.get("name", ""))
+                argumente = fn.get("arguments") or {}
+                if isinstance(argumente, str):
+                    try:
+                        argumente = json.loads(argumente)
+                    except ValueError:
+                        argumente = {}
+                # Zweite Haelfte der Freigabe: Auch wenn sich das Modell
+                # einen Namen ausdenkt, kommt er hier nicht durch.
+                ergebnis = werkzeug_ausfuehren(
+                    name, argumente, erlaubt=TEILAUFGABE_WERKZEUGE)
+                benutzte.append(name)
+                verlauf.append({"role": "tool", "content": ergebnis[:12000],
+                                "tool_name": name})
+    except (urllib.error.URLError, OSError, ValueError) as fehler:
+        return f"Die Teilaufgabe ist fehlgeschlagen: {fehler}"
+
+    text = str((daten.get("message") or {}).get("content", "")).strip()
+    return _teilaufgabe_bericht(text, benutzte)
+
+
+def werkzeug_ausfuehren(name: str, argumente: dict,
+                        erlaubt: set = None, modell: str = "") -> str:
+    """Fuehrt ein Chat-Werkzeug aus. Nur die bekannten Namen.
+
+    erlaubt: Ist eine Menge angegeben, wird ausschliesslich daraus
+    ausgefuehrt (Teilaufgaben). None heisst Hauptfaden, dort gilt die
+    volle angemeldete Liste.
+    modell: wird an eine Teilaufgabe durchgereicht, damit der Unteragent
+    mit demselben Modell arbeitet wie der Hauptfaden.
+    """
+    if erlaubt is not None and name not in erlaubt:
+        return (f"Werkzeug '{name}' ist in dieser Teilaufgabe nicht "
+                "freigegeben. Erlaubt sind: " + ", ".join(sorted(erlaubt)))
     try:
         if name == "websuche":
             frage = str(argumente.get("frage", "")).strip()
@@ -1579,6 +2480,61 @@ def werkzeug_ausfuehren(name: str, argumente: dict) -> str:
                 return "Fehler: keine Adresse angegeben."
             werkzeug = _harness_werkzeug("_webseite_tool")()
             return werkzeug.run(url=adresse)
+
+        if name == "werkstatt_schreiben":
+            # Der einzige Weg, auf dem Tim eine Datei ANLEGT. Bewusst
+            # nicht ueber den Job-Server: Ein Dateiinhalt passt weder
+            # durch dessen Argument-Riegel ([A-Za-z0-9_.-]) noch in eine
+            # Kommandozeile. Die Grenze bleibt dieselbe - sie steckt in
+            # werkstatt.pfad_erlaubt(), nicht im Aufrufweg.
+            pfad = str(argumente.get("pfad", "")).strip()
+            inhalt = str(argumente.get("inhalt", ""))
+            if not pfad:
+                return "Fehler: kein Pfad angegeben."
+            if not inhalt.strip():
+                return ("Fehler: kein Inhalt angegeben. Schreibe die "
+                        "vollstaendige Datei, nicht nur einen Ausschnitt.")
+            werkstatt = _harness_modul("werkstatt")
+            ergebnis = werkstatt.schreiben(pfad, inhalt)
+            if not ergebnis.get("ok"):
+                return "Abgelehnt: %s" % ergebnis.get("fehler", "unbekannt")
+            hinweis = ("Gespeichert: %s (%d Bytes). Pruefe sie jetzt mit "
+                       "aktion_starten 'werkstatt_testen' und demselben "
+                       "Pfad." % (ergebnis.get("pfad"),
+                                  ergebnis.get("bytes", 0)))
+            if ergebnis.get("warnung"):
+                hinweis += " ACHTUNG: " + ergebnis["warnung"]
+            return hinweis
+
+        if name == "teilaufgabe":
+            # Keine Teilaufgabe in der Teilaufgabe: Ein Unteragent, der
+            # weitere Unteragenten startet, kann in die Breite laufen,
+            # ohne dass jemand mitliest. Die Freigabe oben enthaelt
+            # "teilaufgabe" deshalb nicht - dieser Zweig wird aus einer
+            # Teilaufgabe heraus also nie erreicht. Die Bedingung steht
+            # trotzdem hier, damit die Absicht im Code steht und nicht
+            # nur in der Menge.
+            if erlaubt is not None:
+                return ("Eine Teilaufgabe darf keine weitere Teilaufgabe "
+                        "starten.")
+            return teilaufgabe_ausfuehren(
+                _wert(argumente, "auftrag", "aufgabe", "task", "frage"),
+                modell)
+
+        if name == "gedaechtnis_suchen":
+            return gedaechtnis_suchen(
+                _wert(argumente, "frage", "suche", "query", "text"),
+                _wert(argumente, "sammlung", "collection", "bereich"))
+
+        if name == "werkstatt_lernnotiz":
+            werkstatt = _harness_modul("werkstatt")
+            ergebnis = werkstatt.lernnotiz(
+                str(argumente.get("aufgabe", "")),
+                str(argumente.get("text", "")))
+            if not ergebnis.get("ok"):
+                return "Abgelehnt: %s" % ergebnis.get("fehler", "unbekannt")
+            return ("Im Lernprotokoll festgehalten (%d Zeichen zu '%s')."
+                    % (ergebnis.get("zeichen", 0), ergebnis.get("aufgabe")))
 
         if name == "kamerabild":
             # Das Bild selbst rendert die Oberflaeche (Signal ueber das
@@ -1694,7 +2650,8 @@ DIESE ANTWORT WIRD VORGELESEN:
 - Beginne NICHT mit "Mexla," - die Ankerphrase gilt nur im Textchat."""
 
 
-def chat_anfragen(modell: str, nachrichten: list, stil: str = "text") -> dict:
+def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
+                  chat: str = "") -> dict:
     """Eine Chat-Anfrage an Ollama weiterreichen.
 
     Der Chat darf nachsehen (suchen, Seite lesen), aber nichts
@@ -1707,15 +2664,41 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text") -> dict:
     # Die Rollenanweisung steht immer vorne und wird nie aus dem Verlauf
     # verdraengt - sonst driftet das Modell nach ein paar Runden zurueck
     # in seine erfundene Rolle.
-    verlauf = [n for n in nachrichten
-              if isinstance(n, dict) and n.get("role") != "system"]
+    # Nur Rolle und Inhalt weiterreichen. Die Oberflaeche schickt den
+    # gespeicherten Verlauf zurueck, und darin haengen inzwischen
+    # Zusatzfelder (Zeitstempel, Bildname und seit 24.08.2026 der
+    # DENKWEG mit bis zu GEDANKEN_GRENZE Zeichen je Antwort). Ungefiltert
+    # gingen die alle wieder ans Modell - 24 Nachrichten mal 12000
+    # Zeichen sprengen jedes Kontextfenster, und das Modell soll seinen
+    # eigenen alten Denkweg ohnehin nicht als Gespraechsinhalt lesen.
+    verlauf = [{"role": n.get("role"), "content": str(n.get("content", ""))}
+               for n in nachrichten
+               if isinstance(n, dict) and n.get("role") != "system"]
     if len(verlauf) > CHAT_VERLAUF_GRENZE:
         verlauf = verlauf[-CHAT_VERLAUF_GRENZE:]
+    # Erst jetzt nach Tokenlast verdichten. Die Anzahl-Grenze oben ist
+    # nur noch der Notnagel gegen Ausreisser - die eigentliche Arbeit
+    # macht verlauf_verdichten, weil zwanzig kurze Zurufe eben kein
+    # volles Fenster sind und zwei gelesene Webseiten schon.
+    # Gesprochen wird NICHT verdichtet: Das kleine Modell braucht dafuer
+    # Sekunden, und der Sprachassistent hat nur ein 300-s-Fenster.
+    verdichtungsbericht = {}
+    if stil != "sprache":
+        verlauf, verdichtungsbericht = verlauf_verdichten(
+            verlauf, chat, hauptmodell=modell)
     rolle = (SYSTEM_PROMPT + (SPRECH_ZUSATZ if stil == "sprache" else "")
              + "\n\n" + auge_fuer_chat())
     mit_rolle = [{"role": "system", "content": rolle}] + verlauf
 
     benutzte = []
+    # Der Denkweg des Modells. Qwen3 & Co. liefern ihn in einem eigenen
+    # Feld "thinking" neben der Antwort - bisher wurde er nur im Notfall
+    # benutzt (leere Antwort) und sonst weggeworfen. Auf Mexlas Wunsch
+    # (24.08.2026) wird er jetzt durchgehend gesammelt und mitgegeben,
+    # damit im Chat nachlesbar ist, WIE Tim auf etwas gekommen ist.
+    # Gesammelt wird ueber alle Werkzeugrunden, denn genau dazwischen
+    # entscheidet das Modell, was es nachschlaegt.
+    gedanken = []
     runden = (CHAT_WERKZEUG_RUNDEN_SPRACHE if stil == "sprache"
               else CHAT_WERKZEUG_RUNDEN)
     try:
@@ -1753,6 +2736,9 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text") -> dict:
                 daten = json.loads(antwort.read().decode("utf-8"))
 
             nachricht = daten.get("message") or {}
+            _gedacht = str(nachricht.get("thinking") or "").strip()
+            if _gedacht:
+                gedanken.append(_gedacht)
             rufe = nachricht.get("tool_calls") or []
             if not rufe:
                 break
@@ -1769,7 +2755,8 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text") -> dict:
                         argumente = json.loads(argumente)
                     except ValueError:
                         argumente = {}
-                ergebnis = werkzeug_ausfuehren(name, argumente)
+                ergebnis = werkzeug_ausfuehren(name, argumente,
+                                               modell=modell)
                 benutzte.append(name)
                 mit_rolle.append({"role": "tool", "content": ergebnis[:12000],
                                   "tool_name": name})
@@ -1800,6 +2787,9 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text") -> dict:
                 with urllib.request.urlopen(a2, timeout=600) as r2:
                     d2 = json.loads(r2.read().decode("utf-8"))
                 text = (d2.get("message") or {}).get("content", "")
+                _g2 = str((d2.get("message") or {}).get("thinking") or "").strip()
+                if _g2:
+                    gedanken.append(_g2)
             except (urllib.error.URLError, OSError, ValueError):
                 text = ""
             if not text and gedacht:
@@ -1824,6 +2814,22 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text") -> dict:
             # Sichtbar machen, wann Tim nachgesehen hat - sonst laesst
             # sich Gesuchtes nicht von Erfundenem unterscheiden.
             ergebnis["werkzeuge"] = benutzte
+        if verdichtungsbericht:
+            # Dieselbe Ueberlegung wie bei den Werkzeugen: Eine
+            # Verdichtung veraendert, WAS das Modell gesehen hat. Bleibt
+            # sie unsichtbar, sieht ein Gedaechtnisverlust wie Sturheit
+            # aus - und man sucht den Fehler im Prompt statt im Kontext.
+            ergebnis["verdichtet"] = {
+                "deckt": verdichtungsbericht.get("deckt", 0),
+                "vorher_token": verdichtungsbericht.get("vorher_token", 0),
+                "nachher_token": verdichtungsbericht.get("nachher_token", 0),
+                "modell": verdichtungsbericht.get("modell", ""),
+            }
+        if gedanken and stil != "sprache":
+            # Gesprochen bleibt der Denkweg aussen vor: Er wuerde
+            # vorgelesen und ist dort nur Laerm.
+            ergebnis["gedanken"] = ("\n\n---\n\n".join(gedanken)
+                                    )[:GEDANKEN_GRENZE]
         return ergebnis
     except urllib.error.HTTPError as e:
         return {"fehler": f"Ollama antwortet mit HTTP {e.code}"}
@@ -1891,6 +2897,24 @@ class Handler(BaseHTTPRequestHandler):
         # Die Oberflaeche selbst ist nicht token-geschuetzt: sie enthaelt
         # keine Daten. Das Token gibt der Benutzer im Browser ein, und
         # jede Datenabfrage prueft es.
+        # Die neue Oberflaeche liegt NEBEN der alten, nicht darueber.
+        # Zurueckrudern heisst deshalb nicht "wiederherstellen", sondern
+        # die alte Adresse aufrufen - ohne Neustart, ohne Rueckbau. Erst
+        # wenn die neue die Abnahmeliste Punkt fuer Punkt besteht,
+        # entscheidet Mexla, ob sie auf "/" wandert.
+        if pfad == "/neu":
+            if not OBERFLAECHE_NEU.exists():
+                self._json(404, {"fehler": "%s gibt es (noch) nicht"
+                                           % OBERFLAECHE_NEU.name})
+                return
+            roh = OBERFLAECHE_NEU.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(roh)))
+            self.end_headers()
+            self.wfile.write(roh)
+            return
+
         if pfad in ("/", "/index.html"):
             if not OBERFLAECHE.exists():
                 self._json(500, {"fehler": f"{OBERFLAECHE.name} fehlt"})
@@ -1995,6 +3019,14 @@ class Handler(BaseHTTPRequestHandler):
         if pfad == "/api/zustand":
             stop = killswitch_aktiv()
             self._json(200, {
+                # Das Kontextfenster kommt aus der Konstante, nicht
+                # aus einer Zahl in der Oberflaeche. Sonst behauptet
+                # die Anzeige weiter 65 536, wenn CHAT_NUM_CTX sich
+                # aendert - dieselbe Falle wie ein handgeschriebener
+                # Aktionszaehler.
+                "kontext": CHAT_NUM_CTX,
+                "verdichtung_ab": int(CHAT_NUM_CTX * VERDICHTUNG_SCHWELLE)
+                                  - VERDICHTUNG_RESERVE_TOKEN,
                 "zeit": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "killswitch": stop,
                 "autonomie": autonomie_lesen(),
@@ -2072,6 +3104,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, benchmark_uebersicht())
             return
 
+        if pfad == "/api/werkstatt":
+            self._json(200, werkstatt_uebersicht())
+            return
+
         if pfad == "/api/bericht":
             name = (felder.get("name") or [""])[0]
             if not SICHERER_NAME.match(name) or not name.endswith(".md"):
@@ -2130,6 +3166,14 @@ class Handler(BaseHTTPRequestHandler):
         # den Datenstrom vorher leeren.
         koerper = {} if pfad == "/api/hoeren" else self._koerper()
 
+        if pfad == "/api/sprachprotokoll":
+            # Nur MELDEN, nicht ausfuehren: Was hier hereinkommt, ist
+            # bereits geschehen. Der Kill-Switch spielt deshalb keine
+            # Rolle - ein Protokolleintrag ueber etwas Vergangenes darf
+            # auch dann noch entstehen, wenn nichts mehr laufen soll.
+            self._json(200, sprachprotokoll_anhaengen(koerper))
+            return
+
         if pfad == "/api/auge":
             # Nur an und aus. Der Kill-Switch spielt hier keine Rolle:
             # Hinschauen fuehrt nichts aus, und Ausschalten muss auch
@@ -2173,6 +3217,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, json.loads(roh.decode("utf-8")))
             except ValueError:
                 self._json(502, {"fehler": "unverstaendliche Antwort"})
+            return
+
+        if pfad == "/api/werkstatt/aufraeumen":
+            # Bewusst ein EIGENER Endpunkt und NICHT in der Positivliste
+            # des Job-Servers: Was dort steht, kann Tim ueber
+            # aktion_starten selbst ausloesen. Aufraeumen ist aber Mexlas
+            # Entscheidung - der Knopf ist seine Hand, nicht Tims. Der
+            # Selbsttest haelt fest, dass Tim kein Werkzeug dafuer hat.
+            #
+            # Geloescht wird nichts: werkstatt.aufraeumen() verschiebt
+            # nach _alt/ (NIEMALS_LOESCHEN_OHNE_BACKUP gilt auch hier).
+            try:
+                werkstatt = _harness_modul("werkstatt")
+                self._json(200, werkstatt.aufraeumen())
+            except Exception as fehler:
+                self._json(500, {"ok": False, "fehler": str(fehler)})
             return
 
         if pfad == "/api/start":
@@ -2229,15 +3289,21 @@ class Handler(BaseHTTPRequestHandler):
             if stil not in ("text", "sprache"):
                 self._json(400, {"fehler": "stil muss 'text' oder 'sprache' sein"})
                 return
-            antwort = chat_anfragen(modell, nachrichten, stil=stil)
+            # Die Chat-Kennung wird VOR der Anfrage bestimmt: Die
+            # Verdichtung schreibt ihre Zusammenfassung in genau diese
+            # Unterhaltung und liest die vorherige von dort. Stuende die
+            # Kennung wie frueher erst hinter dem Aufruf, faende jede
+            # Verdichtung eine leere Vorgeschichte vor und schriebe von
+            # vorne - der Anfang des Gespraechs zerfiele Runde um Runde.
+            chat = str(koerper.get("chat", "standard"))
+            if not CHAT_ID_MUSTER.match(chat):
+                chat = "standard"
+            antwort = chat_anfragen(modell, nachrichten, stil=stil, chat=chat)
             if wahl:
                 antwort["gewaehlt"] = modell
                 antwort["grund"] = wahl.get("grund", "")
             # Verlauf auf dem Mac festhalten - der Browser vergisst ihn
             # beim Neuladen, und am Handy soll dasselbe Gespraech stehen.
-            chat = str(koerper.get("chat", "standard"))
-            if not CHAT_ID_MUSTER.match(chat):
-                chat = "standard"
             for n in reversed(nachrichten):
                 if isinstance(n, dict) and n.get("role") == "user":
                     verlauf_anhaengen("user", str(n.get("content", "")),
@@ -2252,6 +3318,13 @@ class Handler(BaseHTTPRequestHandler):
                     if name:
                         zusatz["bild"] = name
                         antwort["bild"] = name
+                # Denkweg und benutzte Werkzeuge mitspeichern, damit
+                # beides nach dem Neuladen und am Handy noch da ist -
+                # sonst waere es nach dem ersten Blick verloren.
+                if antwort.get("gedanken"):
+                    zusatz["gedanken"] = antwort["gedanken"]
+                if antwort.get("werkzeuge"):
+                    zusatz["werkzeuge"] = antwort["werkzeuge"]
                 verlauf_anhaengen("assistant", antwort["antwort"], modell,
                                   chat=chat, zusatz=zusatz)
                 verlauf_kuerzen(chat)
@@ -2494,10 +3567,373 @@ def _selbsttest() -> int:
                "kamerabild nennt die Synonyme (Screenshot, Foto) - sonst "
                "verweigert das Modell bei anderer Wortwahl")
         namen -= {"kamerabild", "aktionen_zeigen", "aktion_starten"}
+        # Seit 24.08.2026 gibt es GENAU EIN schreibendes Chat-Werkzeug:
+        # werkstatt_schreiben, und es schreibt ausschliesslich in Tims
+        # Sandkasten (Pfadsperre in harness/werkstatt.py, oben
+        # gegengeprobt). Diese Liste ist der Waechter darueber, dass
+        # kein zweites hinzukommt, ohne dass es jemandem auffaellt -
+        # deshalb wird das eine hier ausdruecklich abgezogen und nicht
+        # stillschweigend in die Menge aufgenommen.
+        pruefe("werkstatt_schreiben" in namen,
+               "das eine schreibende Werkzeug ist die Werkstatt")
+        pruefe("werkstatt_lernnotiz" in namen,
+               "Tim kann Gelerntes festhalten (werkstatt_lernnotiz)")
+        # Aufraeumen ist Mexlas Knopf, nicht Tims Werkzeug. Kaeme es je
+        # in die Werkzeugliste oder in die Positivliste, koennte Tim
+        # seinen eigenen Sandkasten leerraeumen - auch mitten in einer
+        # Aufgabe, an der Mexla noch gar nicht draufgeschaut hat.
+        pruefe(not any("aufraeum" in n for n in namen),
+               "Tim hat KEIN Werkzeug zum Aufraeumen", str(sorted(namen)))
+
+        # --- Langzeitgedaechtnis (24.08.2026) ---
+        # Es liest nur. Ein Werkzeug, das in die Erinnerung SCHREIBEN
+        # koennte, waere ein Weg, sich selbst etwas einzureden -
+        # geschrieben wird ausschliesslich beim Abschluss eines Ablaufs.
+        pruefe("gedaechtnis_suchen" in namen,
+               "Chat-Werkzeug gedaechtnis_suchen ist angemeldet")
+        _leer = werkzeug_ausfuehren("gedaechtnis_suchen", {"frage": ""})
+        pruefe(_leer.startswith("Fehler:"),
+               "Gedaechtnis ohne Suchfrage wird abgewiesen")
+        # Ab hier NICHT gegen die Betriebsdatenbank. Teuer gelernt am
+        # 24.08.2026: Die erste Fassung dieses Tests oeffnete
+        # memory/chroma_db - also die echten Ablauf-Ergebnisse. Der
+        # Mutationslauf fuhr ihn 119-mal, und danach liess sich die
+        # Datenbank nicht mehr oeffnen (PanicException aus der
+        # Rust-Schicht). Ein Selbsttest darf Betriebsdaten nicht einmal
+        # LESEN - nicht, weil Lesen schadet, sondern weil er dabei
+        # unweigerlich mitschreibt (Chroma legt beim Oeffnen an) und weil
+        # niemand einen Testlauf im Verdacht hat, wenn Daten kaputtgehen.
+        _echte_db = globals()["GEDAECHTNIS_DB"]
+        _tmp_db = tempfile.mkdtemp(prefix="m1_selbsttest_gedaechtnis_")
+        try:
+            globals()["GEDAECHTNIS_DB"] = Path(_tmp_db) / "gibtsnicht"
+            _fehlt = werkzeug_ausfuehren("gedaechtnis_suchen",
+                                         {"frage": "irgendwas"})
+            pruefe("nicht eingerichtet" in _fehlt,
+                   "fehlendes Gedaechtnis wird als FEHLEND gemeldet, nicht "
+                   "als 'nichts gefunden'")
+            pruefe(not (Path(_tmp_db) / "gibtsnicht").exists(),
+                   "bei fehlendem Ordner wird KEINE Datenbank angelegt")
+            # Erfundener Sammlungsname darf nie zu einem Pfad werden.
+            globals()["GEDAECHTNIS_DB"] = Path(_tmp_db)
+            _falsch = werkzeug_ausfuehren("gedaechtnis_suchen",
+                                          {"frage": "x",
+                                           "sammlung": "../../etc/passwd"})
+            pruefe("gibt es nicht" in _falsch or "liegt noch nichts" in _falsch
+                   or "antwortet nicht" in _falsch,
+                   "erfundene Sammlung wird abgewiesen, nicht aufgeloest",
+                   _falsch[:80])
+            pruefe("root:" not in _falsch,
+                   "erfundene Sammlung liefert keinen Dateiinhalt")
+        finally:
+            globals()["GEDAECHTNIS_DB"] = _echte_db
+            shutil.rmtree(_tmp_db, ignore_errors=True)
+
+        # --- Teilaufgabe: die Freigabe muss ZWEIMAL greifen ---
+        pruefe("teilaufgabe" in namen,
+               "Chat-Werkzeug teilaufgabe ist angemeldet")
+        pruefe("teilaufgabe" not in TEILAUFGABE_WERKZEUGE,
+               "eine Teilaufgabe darf keine Teilaufgabe starten")
+        _angeboten = {w["function"]["name"]
+                      for w in _werkzeuge_anbieten(TEILAUFGABE_WERKZEUGE)}
+        pruefe(_angeboten == TEILAUFGABE_WERKZEUGE & namen | (
+                   TEILAUFGABE_WERKZEUGE & {"aktionen_zeigen"}),
+               "angeboten wird genau die Freigabe", str(sorted(_angeboten)))
+        for _verboten in ("werkstatt_schreiben", "werkstatt_lernnotiz",
+                          "aktion_starten", "teilaufgabe", "kamerabild"):
+            pruefe(_verboten not in _angeboten,
+                   f"Teilaufgabe bekommt '{_verboten}' NICHT angeboten")
+            # Der zweite Riegel: Auch ein ausgedachter Aufruf faellt
+            # durch. Nur die Anbieteliste zu filtern hiesse, dem Modell
+            # zu vertrauen, dass es sich daran haelt.
+            pruefe(werkzeug_ausfuehren(
+                       _verboten, {}, erlaubt=TEILAUFGABE_WERKZEUGE)
+                   .startswith(f"Werkzeug '{_verboten}' ist in dieser"),
+                   f"Teilaufgabe kann '{_verboten}' auch nicht aufrufen")
+
+        # --- Sprachprotokoll: anzeigen, nicht umleiten ---
+        # Der Zuruf-Weg schaltet Licht in unter einer Sekunde, weil er
+        # den Chat NICHT benutzt. Diese Schnittstelle traegt das
+        # Ergebnis nachtraeglich ein. Sie darf deshalb nur MELDEN
+        # koennen - nicht schreiben, was jemand will.
+        _sp_chat = "selbsttest_sprache"
+        _sp_datei = _chat_datei(_sp_chat)
+        try:
+            _sp_datei.unlink(missing_ok=True)
+            _gut = sprachprotokoll_anhaengen({
+                "zuruf": "buero rot", "antwort": "Büro, erledigt.",
+                "weg": "licht", "bereich": "licht", "chat": _sp_chat})
+            pruefe(_gut.get("ok") is True, "Zuruf wird protokolliert")
+            _eintraege = verlauf_lesen(chat=_sp_chat)
+            pruefe(len(_eintraege) == 2,
+                   "Zuruf UND Ergebnis landen im Verlauf",
+                   str(len(_eintraege)))
+            pruefe(all(e.get("sprache") and e.get("weg") == "licht"
+                       for e in _eintraege),
+                   "beide Eintraege sind als Sprachweg gekennzeichnet")
+            pruefe([e.get("role") for e in _eintraege] == ["user", "assistant"],
+                   "Rollen werden von der Zentrale gesetzt, nicht von aussen")
+            # Ein erfundener Weg darf nicht durchkommen - sonst stuende
+            # im Chat eine Herkunft, die es nicht gibt.
+            pruefe(sprachprotokoll_anhaengen({
+                       "zuruf": "x", "weg": "ausgedacht",
+                       "chat": _sp_chat}).get("ok") is False,
+                   "erfundener Weg wird abgewiesen")
+            pruefe(sprachprotokoll_anhaengen({
+                       "zuruf": "", "weg": "licht",
+                       "chat": _sp_chat}).get("ok") is False,
+                   "leerer Zuruf wird abgewiesen")
+            # Die Chat-Kennung ist ein Dateiname - sie muss denselben
+            # Riegel haben wie ueberall sonst.
+            pruefe(sprachprotokoll_anhaengen({
+                       "zuruf": "x", "weg": "licht",
+                       "chat": "../../etc/passwd"}).get("ok") is False,
+                   "boese Chat-Kennung wird abgewiesen")
+            # Von aussen darf sich niemand als Verdichtung ausgeben:
+            # sonst liesse sich eine Zusammenfassung faelschen, die das
+            # Modell dann als Hintergrund liest.
+            sprachprotokoll_anhaengen({
+                "zuruf": "x", "antwort": "y", "weg": "befehl",
+                "bereich": "system", "chat": _sp_chat,
+                "verdichtung": True, "role": "system"})
+            pruefe(not verdichtung_lesen(_sp_chat),
+                   "eine Verdichtung laesst sich NICHT von aussen einschleusen")
+            # --- Und jetzt der WEG, nicht nur die Funktion ---
+            # Teuer gelernt am 24.08.2026: Die acht Pruefungen oben waren
+            # alle gruen, WAEHREND der Endpunkt im falschen Handler stand
+            # (do_GET statt do_POST). Ein POST bekam 404, und kein Test
+            # merkte es - weil alle die Funktion direkt aufriefen und
+            # keiner ueber HTTP ging. Die Absicht war richtig, die
+            # Verdrahtung falsch. Deshalb hier ausdruecklich der echte
+            # Weg: erreichbar per POST, NICHT per GET.
+            _code, _text = anfrage("/api/sprachprotokoll", methode="POST",
+                                   koerper={"zuruf": "probe ueber http",
+                                            "antwort": "ok", "weg": "licht",
+                                            "bereich": "licht",
+                                            "chat": _sp_chat})
+            pruefe(_code == 200,
+                   "Sprachprotokoll ist per POST erreichbar (nicht nur als "
+                   "Funktion)", f"HTTP {_code}")
+            pruefe(any(e.get("weg") == "licht"
+                       for e in verlauf_lesen(chat=_sp_chat)),
+                   "der HTTP-Weg schreibt wirklich in den Verlauf")
+            _code, _ = anfrage("/api/sprachprotokoll", token=None,
+                               methode="POST", koerper={"zuruf": "x",
+                                                        "weg": "licht"})
+            pruefe(_code == 401, "ohne Token wird abgewiesen", f"HTTP {_code}")
+        finally:
+            if _sp_datei is not None:
+                _sp_datei.unlink(missing_ok=True)
+
+        # --- Teilaufgabe: belegen statt behaupten ---
+        # Anlass ist ein gemessener Fall vom 24.08.2026: Das Modell
+        # schrieb den Werkzeugaufruf 14-mal als Text in seinen Denkweg,
+        # loeste ihn nie aus und meldete danach "Datei erstellt, Test
+        # gruen, Lernnotiz gespeichert" - nichts davon existierte. Im
+        # Hauptfaden faellt so etwas auf, weil Mexla mitliest. Bei einem
+        # Unteragenten sieht den Denkweg niemand.
+        _mit = _teilaufgabe_bericht("Der Preis liegt bei 14,90 Euro.",
+                                    ["websuche"])
+        pruefe(_mit.startswith("Ergebnis der Teilaufgabe")
+               and "websuche" in _mit,
+               "Teilaufgabe MIT Werkzeug: Ergebnis samt Werkzeugliste")
+        pruefe("UNBELEGT" not in _mit,
+               "belegte Arbeit wird nicht faelschlich gewarnt")
+        _ohne = _teilaufgabe_bericht("Der Preis liegt bei 14,90 Euro.", [])
+        pruefe(_ohne.startswith("ACHTUNG - UNBELEGT"),
+               "Teilaufgabe OHNE Werkzeug: Warnung steht VORNE, nicht in "
+               "einer Klammer dahinter")
+        pruefe("KEIN EINZIGES" in _ohne and "behauptet, nicht" in _ohne,
+               "die Warnung benennt den Grund, nicht nur den Zustand")
+        pruefe("14,90" in _ohne,
+               "der behauptete Text geht trotzdem mit (nachvollziehbar)")
+        pruefe("nicht als Tatsache weiter" in _ohne,
+               "die Warnung sagt, was der Aufrufer TUN soll")
+        _leer = _teilaufgabe_bericht("", [])
+        pruefe("kein Ergebnis geliefert" in _leer,
+               "gar keine Antwort wird als solche gemeldet")
+
+        # --- Kontext-Verdichtung ---
+        # Geprueft wird die Verdrahtung, nicht die Formulierkunst des
+        # kleinen Modells: der Modellaufruf wird ersetzt, damit der
+        # Selbsttest ohne geladenes Modell und in Sekunden laeuft.
+        _echt_erzeugen = globals()["_verdichtung_erzeugen"]
+        globals()["_verdichtung_erzeugen"] = (
+            lambda mitte, vorige, hauptmodell="":
+                f"[{len(mitte)}|vorige={bool(vorige)}]")
+        _probe_chat = "selbsttest_verdichtung"
+        _probe_datei = _chat_datei(_probe_chat)
+        try:
+            _fuell = "Fuellung. " * 2000
+            _lang = [{"role": "user", "content": "KOPF-MERKSATZ"},
+                     {"role": "assistant", "content": "ok"},
+                     {"role": "user", "content": "kopf drei"}]
+            for _i in range(10):
+                _lang.append({"role": "assistant",
+                              "content": f"mitte {_i} " + _fuell})
+                _lang.append({"role": "user", "content": f"weiter {_i}"})
+            _lang.append({"role": "user", "content": "SCHWANZ-MERKSATZ"})
+            _schwelle = (int(CHAT_NUM_CTX * VERDICHTUNG_SCHWELLE)
+                         - VERDICHTUNG_RESERVE_TOKEN)
+            _vorher = _tokens_schaetzen(_lang)
+            pruefe(_vorher > _schwelle,
+                   "Testverlauf ueberschreitet die Schwelle wirklich",
+                   f"{_vorher} > {_schwelle}")
+            _neu, _bericht = verlauf_verdichten(_lang, _probe_chat)
+            pruefe(_neu[0]["content"] == "KOPF-MERKSATZ",
+                   "Verdichtung laesst den KOPF stehen (das Thema)")
+            pruefe(_neu[-1]["content"] == "SCHWANZ-MERKSATZ",
+                   "Verdichtung laesst die letzte Frage woertlich stehen")
+            pruefe(_neu[VERDICHTUNG_KOPF]["content"].startswith(
+                       VERDICHTUNG_PRAEFIX),
+                   "Zusammenfassung ist als HINTERGRUND markiert")
+            pruefe("KEINE Anweisung" in VERDICHTUNG_PRAEFIX,
+                   "Zusammenfassung verbietet das Wiederausfuehren")
+            pruefe(_bericht["nachher_token"] < _schwelle,
+                   "nach der Verdichtung liegt die Last unter der Schwelle",
+                   f"{_bericht['nachher_token']} < {_schwelle}")
+            # Fortschreiben statt neu anfangen
+            _, _bericht2 = verlauf_verdichten(_lang, _probe_chat)
+            pruefe("vorige=True" in _bericht2["roh"],
+                   "die naechste Verdichtung schreibt die vorige fort")
+            # Kurzer Verlauf bleibt unangetastet - sonst verdichtete Tim
+            # bei jedem "hallo".
+            _kurz = [{"role": "user", "content": "hallo"}]
+            pruefe(verlauf_verdichten(_kurz, "") == (_kurz, {}),
+                   "kurzer Verlauf wird NICHT verdichtet")
+            # Die Anzeige darf davon nichts sehen
+            pruefe(all(not _e.get("verdichtung")
+                       for _e in verlauf_lesen(chat=_probe_chat)),
+                   "Verdichtungen erscheinen nicht in der Anzeige")
+            # --- Verdraengungsschutz: kein zweites Modell bei Enge ---
+            # Der Router beantwortet nur "passt das kleine Modell?",
+            # nicht "wirft es dabei das grosse raus?". Im Chat ist genau
+            # das der Normalfall: Ein Trainingslauf oder ein Abitur haengt
+            # stundenlang am 23-GB-Modell. Ohne diesen Riegel laedt die
+            # Verdichtung stur 6,6 GB nach und zerreisst den Lauf - von
+            # selbst, ohne dass jemand etwas angefasst hat.
+            if str(HARNESS_DIR) not in sys.path:
+                sys.path.insert(0, str(HARNESS_DIR))
+            import model_router as _mr
+            _echt_geladen, _echt_ram = _mr.modell_geladen, _mr.freier_ram_gb
+            _gross = "probe-gross:99b"
+            try:
+                # 1. Das arbeitende Modell ist geladen -> es verdichtet,
+                #    AUCH bei viel freiem Speicher. Gemessen ist es
+                #    schneller als das kleine (42.6 gegen 30.5 Tok/s);
+                #    ein zweites danebenzuladen waere in jeder Hinsicht
+                #    schlechter und zwaenge das grosse spaeter zum
+                #    Neuladen (11 s mitten im Lauf).
+                _mr.modell_geladen = lambda n: n == _gross
+                _mr.freier_ram_gb = lambda: 30.0
+                pruefe(_verdichtungsmodell(_gross) == _gross,
+                       "arbeitendes Modell geladen -> es verdichtet selbst, "
+                       "auch bei viel Speicher")
+                # 2. Nur das kleine ist da -> das kleine.
+                _mr.modell_geladen = lambda n: n != _gross
+                pruefe(_verdichtungsmodell(_gross) != _gross,
+                       "nur das kleine geladen -> es wird genommen")
+                # 3. Nichts geladen, zu wenig frei -> kein zweites Modell.
+                _mr.modell_geladen = lambda n: False
+                _mr.freier_ram_gb = lambda: 2.0
+                pruefe(_verdichtungsmodell(_gross) == _gross,
+                       "zu wenig Speicher -> das laufende Modell verdichtet, "
+                       "es wird KEIN zweites geladen")
+                # 4. Nichts geladen, genug frei -> das kleine ist
+                #    schneller da (4.8 s statt 11.3 s Ladezeit).
+                _mr.freier_ram_gb = lambda: 30.0
+                pruefe(_verdichtungsmodell(_gross) != _gross,
+                       "nichts geladen, genug Platz -> das kleine laedt "
+                       "schneller")
+                # Ohne bekanntes Hauptmodell darf er nicht raten
+                _mr.freier_ram_gb = lambda: 2.0
+                pruefe(_verdichtungsmodell("") != "",
+                       "ohne Hauptmodell faellt er auf das kleine zurueck")
+            finally:
+                _mr.modell_geladen, _mr.freier_ram_gb = _echt_geladen, _echt_ram
+
+            # --- Der Notnagel, wenn das kleine Modell schweigt ---
+            # Das ist der Fall, der im Betrieb wehtut: Ollama neu
+            # gestartet, Modell noch nicht geladen, Speicher voll. Der
+            # Chat darf daran NIE scheitern. Geprueft wird gegen einen
+            # garantiert stummen Port - dafuer braucht es kein Modell
+            # und keinen Speicher, der Test laeuft also immer mit.
+            globals()["_verdichtung_erzeugen"] = _echt_erzeugen
+            _echt_ollama = globals()["OLLAMA"]
+            globals()["OLLAMA"] = "http://127.0.0.1:9"   # discard-Port
+            try:
+                _not = _verdichtung_erzeugen(
+                    [{"role": "user", "content": "Seriennummer QX-7741"}], "")
+                pruefe("ohne Modell" in _not,
+                       "stummes Modell: Notnagel greift und ist erkennbar")
+                pruefe("QX-7741" in _not,
+                       "stummes Modell: der Inhalt bleibt erhalten")
+                _n2, _b2 = verlauf_verdichten(_lang, "")
+                pruefe(_n2[0]["content"] == "KOPF-MERKSATZ"
+                       and _n2[-1]["content"] == "SCHWANZ-MERKSATZ",
+                       "stummes Modell: Kopf und Schwanz stehen trotzdem")
+                pruefe(_b2["nachher_token"] < _schwelle,
+                       "stummes Modell: die Last sinkt trotzdem",
+                       f"{_b2['nachher_token']} < {_schwelle}")
+            finally:
+                globals()["OLLAMA"] = _echt_ollama
+        finally:
+            globals()["_verdichtung_erzeugen"] = _echt_erzeugen
+            if _probe_datei is not None:
+                _probe_datei.unlink(missing_ok=True)
+
+        # --- Kuerzen archiviert, es vernichtet nicht mehr ---
+        # Bis zum 24.08.2026 schnitt verlauf_kuerzen die Datei hart ab.
+        # Damit verschwand auch der gespeicherte Denkweg - unbemerkt,
+        # weil die Datei danach voellig normal aussah. Genau das prueft
+        # dieser Test: Zeile fuer Zeile muss wiederfindbar sein.
+        _arch_chat = "selbsttest_archiv"
+        _arch_datei = _chat_datei(_arch_chat)
+        _archive = []
+        try:
+            _arch_datei.unlink(missing_ok=True)
+            for _i in range(VERLAUF_GRENZE + 12):
+                verlauf_anhaengen("user", f"n{_i}", chat=_arch_chat,
+                                  zusatz={"gedanken": f"denkweg {_i}"})
+            _vorher_zeilen = len(_arch_datei.read_text().splitlines())
+            verlauf_kuerzen(_arch_chat)
+            _nachher_zeilen = len(_arch_datei.read_text().splitlines())
+            _archive = sorted((CHATS_DIR / "archiv").glob(
+                f"{_arch_chat}_*.jsonl"))
+            _im_archiv = sum(len(a.read_text().splitlines())
+                             for a in _archive)
+            pruefe(bool(_archive), "Kuerzen legt ein Archiv an")
+            # -1 fuer die Verweiszeile, die neu hinzukommt
+            pruefe(_im_archiv + _nachher_zeilen - 1 == _vorher_zeilen,
+                   "beim Kuerzen geht KEINE Nachricht verloren",
+                   f"{_im_archiv}+{_nachher_zeilen}-1 vs {_vorher_zeilen}")
+            _erste = json.loads(_archive[0].read_text().splitlines()[0])
+            pruefe(_erste.get("gedanken") == "denkweg 0",
+                   "der Denkweg ueberlebt das Kuerzen im Archiv")
+            pruefe("archiv" in _arch_datei.read_text().splitlines()[0],
+                   "die aktive Datei verweist auf ihr Archiv")
+        finally:
+            if _arch_datei is not None:
+                _arch_datei.unlink(missing_ok=True)
+            for _a in _archive:
+                _a.unlink(missing_ok=True)
+        _jobaktionen = job_server_aktionen().get("aktionen") or {}
+        if _jobaktionen:
+            pruefe(not any("aufraeum" in a for a in _jobaktionen),
+                   "Aufraeumen steht auch nicht in der Positivliste",
+                   str([a for a in _jobaktionen if "aufraeum" in a]))
+        namen -= {"werkstatt_schreiben", "werkstatt_lernnotiz"}
+        # Diese Liste ist mit Absicht ausgeschrieben und nicht gezaehlt:
+        # Jedes neue Chat-Werkzeug soll GENAU EINMAL hier auffallen und
+        # bewusst eingetragen werden, statt still dazuzukommen. Am
+        # 24.08.2026 von sieben auf neun erweitert (gedaechtnis_suchen,
+        # teilaufgabe) - beide lesend, beide oben einzeln gegengeprobt.
         pruefe(namen == {"websuche", "webseite_lesen", "systemzustand",
                          "ablaeufe_zeigen", "berichte_lesen",
-                         "projekte_auflisten", "projektdatei_lesen"},
-               "Chat hat genau die sieben lesenden Werkzeuge", str(sorted(namen)))
+                         "projekte_auflisten", "projektdatei_lesen",
+                         "gedaechtnis_suchen", "teilaufgabe"},
+               "Chat hat genau die neun lesenden Werkzeuge",
+               str(sorted(namen)))
         # --- Werkzeugrunden: gesprochen muss frueher Schluss sein ---
         # Der Sprachassistent wartet 300 s auf /api/chat; volle Runden
         # sprengen das Fenster (23.08.2026: 7 Minuten Stille auf "büro
@@ -2591,6 +4027,122 @@ def _selbsttest() -> int:
         pruefe("Veroeffentlichen (Commit, Push)" in SYSTEM_PROMPT
                and "kannst du selbst NICHT" in SYSTEM_PROMPT,
                "Prompt zieht die Grenze: pruefen ja, veroeffentlichen nein")
+        # --- Werkstatt (24.08.2026) ---
+        # Tim darf hier zum ersten Mal schreiben. Der Prompt muss den
+        # Ablauf und beide Grenzen tragen: nur im Sandkasten, und kein
+        # Ausrollen. Faellt einer der Saetze weg, wuerde Tim entweder
+        # nichts bauen oder es fuer fertig halten, ohne getestet zu haben.
+        for baustein in ("werkstatt_aufgabe", "werkstatt_schreiben",
+                         "werkstatt_testen", "Tim-Werkstatt/sandkasten",
+                         "werkstatt_lernnotiz", "werkstatt_gelernt"):
+            pruefe(baustein in SYSTEM_PROMPT,
+                   f"Prompt erklaert die Werkstatt: {baustein}")
+        # --- Die Werkstatt-Endpunkte UEBER HTTP (24.08.2026) ---
+        # Vorher pruefte hier nichts die VERDRAHTUNG, nur die Funktionen
+        # dahinter. Eine Parallelsitzung hat am selben Tag genau daran
+        # verloren: Ihr neuer Endpunkt stand versehentlich in do_GET
+        # statt do_POST, acht Selbsttests blieben gruen (sie riefen die
+        # Funktion direkt), und aufgefallen ist es erst im echten
+        # Betrieb. "Funktion gruen" heisst nicht "Weg gruen".
+        import werkstatt as _werk
+        import tempfile as _tmp
+        _echt_sk, _echt_alt = _werk.SANDKASTEN, _werk.ALTABLAGE
+        with _tmp.TemporaryDirectory() as _ordner:
+            # Der Test darf Mexlas echten Sandkasten NICHT anfassen.
+            _werk.SANDKASTEN = Path(_ordner) / "sandkasten"
+            _werk.SANDKASTEN.mkdir()
+            _werk.ALTABLAGE = Path(_ordner) / "_alt"
+            _werk.schreiben("probe.py", "x = 1\n")
+            try:
+                code, text = anfrage("/api/werkstatt")
+                pruefe(code == 200, "GET /api/werkstatt antwortet", f"HTTP {code}")
+                for feld in ("aufgaben", "sandkasten", "geschafft",
+                             "gelernt", "protokoll"):
+                    pruefe(feld in text, f"/api/werkstatt liefert '{feld}'")
+                code, _ = anfrage("/api/werkstatt", token=None)
+                pruefe(code == 401, "GET /api/werkstatt ohne Token abgewiesen",
+                       f"HTTP {code}")
+
+                # Aufraeumen: NUR per POST. Ein GET darf nichts bewegen -
+                # sonst raeumte ein Seitenaufruf den Sandkasten leer.
+                code, _ = anfrage("/api/werkstatt/aufraeumen")
+                pruefe(code == 404,
+                       "GET auf den Aufraeum-Pfad tut nichts", f"HTTP {code}")
+                pruefe((_werk.SANDKASTEN / "probe.py").exists(),
+                       "und der Sandkasten ist danach unveraendert")
+                code, _ = anfrage("/api/werkstatt/aufraeumen", token=None,
+                                  methode="POST", koerper={})
+                pruefe(code == 401,
+                       "POST Aufraeumen ohne Token abgewiesen", f"HTTP {code}")
+                pruefe((_werk.SANDKASTEN / "probe.py").exists(),
+                       "auch danach unveraendert")
+                code, text = anfrage("/api/werkstatt/aufraeumen",
+                                     methode="POST", koerper={})
+                pruefe(code == 200 and '"ok": true' in text.replace(" ", " "),
+                       "POST /api/werkstatt/aufraeumen raeumt wirklich auf",
+                       f"HTTP {code} {text[:60]}")
+                pruefe(not (_werk.SANDKASTEN / "probe.py").exists(),
+                       "die Datei ist aus dem Sandkasten verschwunden")
+                pruefe(any(_werk.ALTABLAGE.rglob("probe.py")),
+                       "und liegt vollstaendig in der Altablage - "
+                       "nichts geloescht")
+            finally:
+                _werk.SANDKASTEN, _werk.ALTABLAGE = _echt_sk, _echt_alt
+
+        pruefe("Ausrollen kannst du NICHT" in SYSTEM_PROMPT,
+               "Prompt schliesst das Ausrollen aus der Werkstatt aus")
+        # Ohne die Zeilenumbrueche vergleichen - der Prompt ist von Hand
+        # umbrochen, ein Suchtext ueber einen Umbruch hinweg findet
+        # sonst nichts.
+        _prompt_glatt = " ".join(SYSTEM_PROMPT.split())
+        pruefe("Nur Bestandenes taugt als Massstab" in _prompt_glatt,
+               "Prompt: nur bestandene Arbeit wird zur Pruefung")
+        pruefe("Du schlaegst nur VOR" in _prompt_glatt,
+               "Prompt: Tim schlaegt Pruefungen vor, traegt sie nicht ein")
+        pruefe("ZWEI-SEITEN-BEWEIS" in SYSTEM_PROMPT,
+               "Prompt verlangt den Zwei-Seiten-Beweis im Selbsttest")
+        # (_prompt_glatt steht weiter oben - einmal reicht.)
+        pruefe("bevor werkstatt_testen gruen gemeldet hat" in _prompt_glatt,
+               "Prompt verlangt den gruenen Test als Beleg")
+        # Am 24.08.2026 zweimal beobachtet: Tim beschrieb korrekt, was zu
+        # tun ist, und beendete die Antwort - ohne ein Werkzeug zu rufen.
+        # Er verstiess dabei gegen keine Regel; es gab schlicht keine.
+        pruefe("ANKUENDIGEN IST NICHT ARBEITEN" in _prompt_glatt,
+               "Prompt verbietet die blosse Ankuendigung")
+        # Nachtrag 24.08.2026: Die Regel oben allein hat Tim gelaehmt -
+        # er las sie als "du darfst kein Werkzeug aufrufen und auf das
+        # Ergebnis warten", geriet in eine Schleife ("I have to stop and
+        # wait for output") und gab die Aufgabe zurueck. Sein Denkweg
+        # zeigte ausserdem, dass er die Werkzeugausgaben im Kopf
+        # SIMULIERTE, statt sie zu holen. Deshalb steht jetzt
+        # ausdruecklich da, wie der Ablauf funktioniert.
+        pruefe("Du BEKOMMST sein Ergebnis" in _prompt_glatt,
+               "Prompt erklaert, dass Werkzeugergebnisse zurueckkommen")
+        pruefe("Was du dir stattdessen ausdenkst, ist erfunden"
+               in _prompt_glatt,
+               "Prompt verbietet das Ausdenken von Werkzeugausgaben")
+        pruefe("BESSERE NACH, STATT NEU ZU SCHREIBEN" in _prompt_glatt,
+               "Prompt verlangt Nachbessern statt Neuschreiben")
+        pruefe("uebersprungener Test ist eine LUECKE" in _prompt_glatt,
+               "Prompt: uebersprungen ist nicht bestanden")
+        # Das Schreib-Werkzeug muss angemeldet sein - und es darf
+        # ausschliesslich ueber werkstatt.py laufen, dessen Pfadsperre
+        # hier gegengeprobt wird (nicht die Absicht, die Verdrahtung).
+        _namen = [w["function"]["name"] for w in CHAT_WERKZEUGE]
+        pruefe("werkstatt_schreiben" in _namen,
+               "Chat-Werkzeug werkstatt_schreiben ist angemeldet")
+        for _boese in ("../raus.py", "/etc/passwd", "~/.zshrc",
+                       "../../opt/ki-server/oberflaeche/m1_zentrale.py"):
+            _ergebnis = werkzeug_ausfuehren("werkstatt_schreiben",
+                                            {"pfad": _boese,
+                                             "inhalt": "x = 1\n"})
+            pruefe(_ergebnis.startswith("Abgelehnt"),
+                   f"Werkstatt schreibt nicht nach {_boese}",
+                   _ergebnis[:60])
+        _ergebnis = werkzeug_ausfuehren("werkstatt_schreiben",
+                                        {"pfad": "probe.py", "inhalt": ""})
+        pruefe(_ergebnis.startswith("Fehler"),
+               "leerer Inhalt wird abgelehnt (kein Ausschnitt-Schreiben)")
         # --- Selbstauskunft ueber die eigene Anlage (23.08.2026) ---
         # Tim erklaerte Mexla, die Lampen-Transportlogik stehe in
         # harness/jobs/*.json, und der Weg zur Lampe liege "ausserhalb
@@ -2817,8 +4369,8 @@ def main() -> None:
     # Fuer den Zugriff vom Laptop oder Handy kommt die Tailscale-Adresse
     # dazu - bewusst als zweite Bindung und nicht als 0.0.0.0: sonst
     # haengt die Zentrale auch im heimischen WLAN, wo sie nichts zu
-    # suchen hat. Dieselbe Ueberlegung wie bei Odysseus und Open WebUI,
-    # die Docker mit zwei -p Angaben loest.
+    # suchen hat. Dieselbe Ueberlegung wie bei Open WebUI, das Docker
+    # mit zwei -p Angaben loest.
     adressen = [a.strip() for a
                 in os.environ.get("M1_ZENTRALE_HOST", "127.0.0.1").split(",")
                 if a.strip()]

@@ -23,7 +23,20 @@ except ImportError:
 # gegenseitig aus dem Speicher werfen.
 KLASSE_1 = "qwen3.6:35b-a3b"  # stark: Recherche, Implementierung, Controller
 KLASSE_2 = "qwen3.6:35b-a3b"  # mittel: komplexe Reviews, Planung
-KLASSE_3 = "qwen3.5:9b"       # klein/schnell: Reviews, Formatchecks, Canary
+# ACHTUNG bei Klasse 3: Sie ist die SPEICHERSPARENDE Klasse, nicht die
+# schnelle. Der Kommentar hier behauptete bis zum 24.08.2026 "klein/
+# schnell" - gemessen ist das Gegenteil: qwen3.6:35b-a3b laeuft mit
+# 42.6 Tok/s, qwen3.5:9b mit 30.5, bei gleicher Punktzahl (14/14). Das
+# grosse Modell ist ein MoE mit wenigen aktiven Parametern und deshalb
+# schneller, obwohl es groesser ist. Die Messung stand die ganze Zeit
+# drei Zeilen weiter oben.
+# Klein bleibt trotzdem richtig fuer Klasse 3: Das kleine Modell LAEDT
+# schneller (4.8 s gegen 11.3 s) und passt, wenn der Speicher knapp ist.
+# Fuer kurze Formatchecks und den Canary zaehlt die Ladezeit mehr als
+# der Durchsatz. Die Zuordnung selbst also NICHT ohne einen echten
+# Vergleichslauf aendern - eine Annahme durch die naechste zu ersetzen
+# waere derselbe Fehler noch einmal.
+KLASSE_3 = "qwen3.5:9b"       # speichersparend, laedt schnell: Formatchecks, Canary
 # Bis 21.08.2026 stand in Klasse 3 "llama-fast" (erfand eine Zeilenzahl),
 # danach gpt-oss:20b. Der Benchmark vom 23.08. zeigte bei gpt-oss zweimal
 # eine LEERE Antwort nach minutenlangem Denken - fuer Formatchecks und

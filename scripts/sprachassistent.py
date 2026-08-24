@@ -17,6 +17,7 @@ import sounddevice as sd
 import numpy as np
 import subprocess
 import requests
+import threading
 import tempfile
 import os
 import collections
@@ -138,7 +139,7 @@ def aufnehmen(sekunden):
 # einen Ringpuffer. Geprueft wird immer der jeweils letzte Ausschnitt.
 # Es gibt keine Pause mehr, in der etwas verlorengehen kann. Zusaetzlich
 # liegt dadurch das, was NACH dem Weckwort gesagt wurde, bereits im
-# Puffer - "Hey Tim, stoppe Odysseus" in einem Atemzug funktioniert
+# Puffer - "Hey Tim, starte den Selbsttest" in einem Atemzug funktioniert
 # damit wie bei den grossen Systemen.
 PUFFER_BLOCK = 0.1          # Groesse der Bloecke, die der Strom liefert
 PUFFER_SEKUNDEN = 12        # so weit reicht das Gedaechtnis zurueck
@@ -254,17 +255,18 @@ def befehl_aufnehmen(max_sekunden=8):
 # genau daran ging am 21./22.08.2026 die Fehlersuche mehrfach vorbei.
 MITSCHNITT = "/opt/ki-server/logs/letzte_aufnahme.wav"
 
-# Eigennamen, die Whisper von sich aus nicht kennt ("startdüssel" statt
-# "starte Odysseus"). Der Prompt ist ein Hinweis, kein Zwang.
-WHISPER_PROMPT = ("Tim, Odysseus, Selbsttest, Modell-Scan, Autonomie, "
-                  "Kill-Switch, Ablauf, Healthcheck.")
+# Eigennamen und Fachwoerter, die Whisper von sich aus nicht sicher
+# schreibt (es hoerte "startdüssel", "stoepelsaeuse"). Der Prompt ist ein
+# Hinweis, kein Zwang.
+WHISPER_PROMPT = ("Tim, Selbsttest, Modell-Scan, Autonomie, "
+                  "Kill-Switch, Ablauf, Healthcheck, Funkbruecke.")
 
 
 def transkribieren(audio, modell, mitschneiden=False, stichworte=False):
     """Wandelt Audio in Text um via whisper.cpp.
 
     stichworte=True gibt Whisper die Eigennamen mit. Das hilft beim
-    Befehl ("starte Odysseus"), schadet aber beim Weckwort-Lauschen:
+    Befehl ("starte den Modell-Scan"), schadet aber beim Weckwort-Lauschen:
     auf Rauschen antwortet Whisper dann mit den Stichworten selbst
     (belegt am 22.08.2026: "ablauf, ablauf, healthcheck").
     """
@@ -720,8 +722,6 @@ if "--selbsttest" not in sys.argv:
 DEPLOY_DIR = os.path.expanduser("~/Desktop/M1_DEPLOYMENT")
 VENV_PY = "/opt/ki-server/venv/bin/python"
 HARNESS_DIR = "/opt/ki-server/harness"
-ODYSSEUS_DIR = os.path.expanduser("~/Desktop/odysseus")
-
 SPRACHBEFEHLE = [
     (("status", "gesundheit", "healthcheck", "wie geht es dir"),
      ["bash", DEPLOY_DIR + "/scripts/10_MAC_healthcheck.sh"],
@@ -738,21 +738,11 @@ SPRACHBEFEHLE = [
     (("selbsttest", "selbsttests", "teste dich"),
      ["bash", DEPLOY_DIR + "/scripts/14_MAC_selbsttests.sh"],
      "Ich fahre die Selbsttests."),
-    # Whisper schreibt "Odysseus" nicht immer gleich - deshalb auch die
-    # "odyssee"-Formen. Die Stopp-Regel steht VOR der Start-Regel, damit
-    # "odysseus anhalten" nie am kuerzeren "odysseus an" haengen bleibt.
-    (("odysseus stoppen", "stoppe odysseus", "odysseus anhalten",
-      "odysseus aus", "odysseus beenden", "odyssee stoppen", "stoppe odyssee"),
-     ["docker", "compose", "--project-directory", ODYSSEUS_DIR, "stop"],
-     "Ich halte Odysseus an. Das dauert einen Moment."),
-    (("odysseus starten", "starte odysseus", "odysseus an",
-      "odyssee starten", "starte odyssee"),
-     ["docker", "compose", "--project-directory", ODYSSEUS_DIR, "up", "-d"],
-     "Ich starte Odysseus."),
     # Der Scan steht VOR der Status-Regel: "scanne die umgebung" ist der
     # engere Wunsch. Stuende die Funkbruecken-Regel zuerst, bliebe jeder
-    # Scan-Zuruf mit dem Wort "Funk" an ihrem "funk bruecke" haengen -
-    # dieselbe Falle wie bei Odysseus "an" gegen "anhalten".
+    # Scan-Zuruf mit dem Wort "Funk" an ihrem "funk bruecke" haengen.
+    # Allgemein: Wo ein Schluessel Praefix eines anderen ist, muss der
+    # laengere/engere zuerst stehen.
     (("funk scan", "funkscan", "funk scannen", "umgebung scannen",
       "scanne die umgebung", "wer funkt", "lampen suchen",
       "such nach lampen", "ble scan", "bluetooth scan"),
@@ -798,8 +788,18 @@ LAMPEN_LISTE = DEPLOY_DIR + "/hardware/pico_bruecke/lampen.json"
 # Nur diese Farben, keine freie Eingabe. Was hier nicht steht, wird nicht
 # gefunkt - so kann ein missverstandener Satz keine sinnlosen Pakete
 # ausloesen.
-LICHT_FARBEN = ("rot", "gruen", "gruen", "blau", "gelb", "cyan", "magenta",
-                "orange", "violett", "rosa", "tuerkis", "weiss")
+# Zwei Listen, mit Absicht: Diese hier ist die Positivliste des
+# SPRACHWEGS - was hier nicht steht, wird nie gefunkt, egal was
+# Whisper verstanden hat. lampen_deutung.GRUNDFARBEN uebersetzt
+# danach in RGB und gilt auch fuer Home Assistant. Beide muessen
+# zusammenpassen; der Selbsttest unten prueft genau das.
+LICHT_FARBEN = (
+                "rot", "gruen", "blau", "gelb", "cyan",
+                "magenta", "orange", "violett", "rosa", "tuerkis",
+                "weiss", "lila", "pink", "purpur", "hellblau",
+                "dunkelblau", "hellgruen", "dunkelgruen", "warmweiss", "kaltweiss",
+                "gold", "bernstein", "mint", "flieder", "koralle",
+                "limette", "indigo")
 
 # Der Diskomodus ist der einzige Wunsch, den die Lampe selbst weiterlaeuft
 # (Farbwechsel ohne weitere Funksprueche). Umgangssprachlich heisst er
@@ -1008,6 +1008,48 @@ def licht_aus_satz(satz, raeume=None):
     return None
 
 
+# Bereich je Programm - fuer die Anzeige im Chat, nicht fuer die Logik.
+_BEREICH_JE_PROGRAMM = (
+    ("bruecke_cli", "funk"),
+    ("kamera_cli", "kamera"),
+    ("crew_generic", "ablauf"),
+    ("lampen_steuern", "licht"),
+)
+
+
+def _bereich_raten(befehl):
+    """Grob einordnen, wofuer ein fester Befehl zustaendig ist."""
+    ganz = " ".join(str(t) for t in befehl)
+    for muster, bereich in _BEREICH_JE_PROGRAMM:
+        if muster in ganz:
+            return bereich
+    return "system"
+
+
+def _protokoll_melden(zuruf, antwort, weg, bereich):
+    """Meldet einen Zuruf an die Zentrale, damit er im Chat auftaucht.
+
+    IM HINTERGRUND und ohne jede Ruecksicht auf Erfolg. Der Grund steht
+    im Kommentar der Gegenstelle: Der schnelle Weg schaltet das Licht in
+    unter einer Sekunde, und genau das macht ihn im Alltag brauchbar.
+    Wuerde hier auf eine HTTP-Antwort gewartet, kaeme Tims Ansage
+    spaeter - die Meldung wuerde also genau die Eigenschaft kosten, die
+    sie sichtbar machen soll. Faellt die Zentrale aus, ist das Licht
+    trotzdem an; nur der Chateintrag fehlt.
+    """
+    def _senden():
+        try:
+            requests.post(
+                ZENTRALE_URL + "/api/sprachprotokoll",
+                json={"zuruf": zuruf, "antwort": antwort,
+                      "weg": weg, "bereich": bereich},
+                headers={"X-M1-Token": _token_lesen()},
+                timeout=5)
+        except Exception:
+            pass
+    threading.Thread(target=_senden, daemon=True).start()
+
+
 def befehl_ausfuehren(text):
     """Deterministische Zuordnung Sprache -> Befehl.
 
@@ -1042,9 +1084,29 @@ def befehl_ausfuehren(text):
                 capture_output=True, text=True, timeout=120)
         except Exception as fehler:
             return f"Das Licht liess sich nicht schalten: {fehler}"
-        if (ergebnis.stdout or "").strip().endswith("gesendet"):
-            return "%s, erledigt." % _raum_sprechbar(raum).capitalize()
-        return "Das Licht hat nicht reagiert."
+        ausgabe = ((ergebnis.stdout or "") + (ergebnis.stderr or "")).strip()
+        if ausgabe.endswith("gesendet"):
+            gesagt = "%s, erledigt." % _raum_sprechbar(raum).capitalize()
+            _protokoll_melden(text, gesagt, "licht", "licht")
+            return gesagt
+        # URSACHE statt Symptom. "Das Licht hat nicht reagiert" klingt nach
+        # einer kaputten Lampe - dabei WEISS das Werkzeug, woran es lag und
+        # sagt es auch ("Bruecke nicht erreichbar"). Diese Auskunft
+        # wegzuwerfen und durch eine allgemeine Klage zu ersetzen, schickt
+        # Mexla an die falsche Stelle: Er sucht bei der Lampe, waehrend der
+        # Pico am Schreibtisch liegt. (24.08.2026 real passiert - der Pico
+        # war fuer einen Hardware-Test abgesteckt, und Tim sagte nur, das
+        # Licht reagiere nicht.)
+        if "nicht erreichbar" in ausgabe or "timed out" in ausgabe.lower():
+            gesagt = ("Ich erreiche die Funkbruecke nicht. Der Pico haengt "
+                      "vermutlich nicht am Strom oder nicht im WLAN - die "
+                      "Lampen selbst sind wahrscheinlich in Ordnung.")
+        elif "unbekannt" in ausgabe.lower():
+            gesagt = "Den Raum kenne ich nicht."
+        else:
+            gesagt = "Das Licht hat nicht reagiert."
+        _protokoll_melden(text, gesagt, "licht", "licht")
+        return gesagt
 
     for schluessel, befehl, ansage in SPRACHBEFEHLE:
         if any(s in klein for s in schluessel):
@@ -1059,9 +1121,10 @@ def befehl_ausfuehren(text):
                 return f"Der Befehl ist fehlgeschlagen: {fehler}"
             ausgabe = (ergebnis.stdout or ergebnis.stderr or "").strip()
             letzte = [z.strip() for z in ausgabe.splitlines() if z.strip()][-6:]
-            if letzte:
-                return "Fertig. " + " ".join(letzte)
-            return "Fertig, ohne Ausgabe."
+            gesagt = ("Fertig. " + " ".join(letzte) if letzte
+                      else "Fertig, ohne Ausgabe.")
+            _protokoll_melden(text, gesagt, "befehl", _bereich_raten(befehl))
+            return gesagt
     return None
 
 
@@ -1081,7 +1144,7 @@ def _verarbeite(puffer, text):
     """
     print(f"Wake Word erkannt: '{text}'")
 
-    # 1) Kurz ausreden lassen. Wer "Hey Tim, stoppe Odysseus" in einem
+    # 1) Kurz ausreden lassen. Wer "Hey Tim, starte den Selbsttest" in einem
     # Atemzug sagt, ist beim Erkennen des Weckworts noch mitten im Satz -
     # ohne diese Pause holt der Puffer nur den Anfang (22.08.2026 belegt:
     # "herr tim, wie viele" statt der ganzen Frage).
@@ -1178,18 +1241,6 @@ if "--selbsttest" in sys.argv:
     _pruefe(os.path.isfile(WAKE_MODEL), "Weckwort-Modell vorhanden", WAKE_MODEL)
     _pruefe(os.path.isfile(COMMAND_MODEL), "Befehls-Modell vorhanden",
             COMMAND_MODEL)
-
-    # Die Stopp-Regel muss vor der Start-Regel stehen, sonst bleibt
-    # "odysseus anhalten" am kuerzeren "odysseus an" haengen.
-    _stopp = _start = None
-    for _i, (_schluessel, _befehl, _ansage) in enumerate(SPRACHBEFEHLE):
-        if "odysseus stoppen" in _schluessel:
-            _stopp = _i
-        if "odysseus starten" in _schluessel:
-            _start = _i
-    _pruefe(_stopp is not None and _start is not None and _stopp < _start,
-            "Odysseus: Stopp-Regel steht vor der Start-Regel",
-            f"stopp={_stopp}, start={_start}")
 
     # Dieselbe Falle beim Funk: Die engere Scan-Regel muss vor der
     # Status-Regel stehen, sonst faengt "funk bruecke" jeden Scan ab.
@@ -1460,12 +1511,12 @@ if "--selbsttest" in sys.argv:
         _pruefe(any(ww in _normalisieren(_gehoert) for ww in WAKE_WORDS),
                 f"Weckwort trotz Satzzeichen erkannt: '{_gehoert}'")
 
-    # Direktbefehl im selben Atemzug: aus "hey, tim! stoppe odysseus."
-    # muss sauber "stoppe odysseus" herausgeloest werden.
-    _norm = _normalisieren("hey, tim! stoppe odysseus.")
+    # Direktbefehl im selben Atemzug: aus "hey, tim! starte den modell scan."
+    # muss sauber "starte den modell scan" herausgeloest werden.
+    _norm = _normalisieren("hey, tim! starte den modell scan.")
     _s = weckwort_finden(_norm)
     _pruefe(_s is not None
-            and " ".join(_norm.split()[_s[1]:]) == "stoppe odysseus",
+            and " ".join(_norm.split()[_s[1]:]) == "starte den modell scan",
             "Direktbefehl wird aus dem Weckwort-Satz herausgeloest",
             repr(_norm))
 

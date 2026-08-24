@@ -124,11 +124,34 @@ def einordnen(zustaende: list) -> tuple[list, list, list]:
     if not lampen:
         hinweise.append("Keine BRMesh-Lampen-Entitaeten gefunden - "
                         "Integration nicht eingerichtet?")
+    elif len(kaputt) == len(lampen):
+        # ALLE weg heisst: gemeinsame Ursache. Das ist keine Vermutung,
+        # sondern der einzige Schluss, der zu diesem Befund passt - die
+        # Lampen haengen alle an derselben Bruecke.
+        #
+        # Warum der Schluss hier steht und nicht beim Leser: Am
+        # 24.08.2026 im Beobachter-Test gemessen - Tim bekam die Zeile
+        # "9 von 9 nicht verfuegbar ... sonst Bruecke pruefen" und
+        # meldete "Home Assistant ist grundsaetzlich in Ordnung". In
+        # drei von drei Laeufen nannte er das Symptom, nie die Ursache.
+        # Ein Bericht, der zwei Moeglichkeiten anbietet und um eine
+        # weitere Pruefung bittet, laedt zum Zusammenfassen ein statt
+        # zum Schliessen. Derselbe Befund, klar ausgesprochen, nicht.
+        probleme.append(
+            "ALLE %d BRMesh-Lampen sind nicht verfuegbar (%s). Wenn ALLE "
+            "weg sind, liegt es nicht an den Lampen, sondern an dem, was "
+            "sie gemeinsam haben: der FUNKBRUECKE. Wahrscheinlichste "
+            "Ursache: die Bruecke ist aus, abgezogen oder nicht im WLAN. "
+            "Naechster Schritt: Aktion funkbruecke_wlan. (Nur wenn der "
+            "Pico gerade eben neu gestartet wurde, sind ~10 s Hochlauf "
+            "normal.)"
+            % (len(lampen),
+               ", ".join(k.get("entity_id", "?") for k in kaputt[:4])))
     elif kaputt:
         probleme.append(
-            "%d von %d BRMesh-Lampen nicht verfuegbar (%s). Falls der "
-            "Pico gerade neu startet, ist das seine ~10 s Hochlaufzeit - "
-            "sonst Bruecke pruefen (Aktion funkbruecke_wlan)."
+            "%d von %d BRMesh-Lampen nicht verfuegbar (%s) - die uebrigen "
+            "laufen. Bei einem TEIL ist es also nicht die Bruecke, sondern "
+            "eher die einzelne Lampe (Strom, Funkreichweite)."
             % (len(kaputt), len(lampen),
                ", ".join(k.get("entity_id", "?") for k in kaputt[:5])))
     else:
@@ -187,12 +210,28 @@ def diagnose(adresse: str, token: str) -> int:
         return 1
 
     probleme, hinweise, zeilen = einordnen(zustaende)
-    for z in zeilen:
-        print(z)
-    for h in hinweise:
-        print("  HINWEIS %s" % h)
-    for p in probleme:
-        print("  PROBLEM %s" % p)
+    # PROBLEME ZUERST. Bis zum 24.08.2026 standen sie am Ende, nach neun
+    # "ok"-Zeilen und einem langen Hinweis ueber harmlose
+    # Geister-Eintraege. Gemessen im Beobachter-Test: Tim las den Bericht,
+    # bekam die Meldung "9 von 9 BRMesh-Lampen nicht verfuegbar" - und
+    # fasste zusammen mit "Home Assistant ist grundsaetzlich in Ordnung",
+    # die toten Lampen in die harmlosen Geister eingerechnet. Er hatte
+    # die richtige Information und gab sie falsch wieder.
+    # Ein Bericht, der das Wichtigste ans Ende stellt, laedt genau dazu
+    # ein - bei Menschen wie bei Modellen. Deshalb: erst was weh tut,
+    # dann was auffaellt, zuletzt was in Ordnung ist.
+    if probleme:
+        print("  ---- PROBLEME (%d) ----" % len(probleme))
+        for eintrag in probleme:
+            print("  PROBLEM %s" % eintrag)
+    if hinweise:
+        print("  ---- Hinweise (%d), kein Handlungsbedarf ----" % len(hinweise))
+        for h in hinweise:
+            print("  HINWEIS %s" % h)
+    if zeilen:
+        print("  ---- in Ordnung (%d) ----" % len(zeilen))
+        for z in zeilen:
+            print(z)
 
     if probleme:
         print("\nErgebnis: %d Problem(e), %d Hinweis(e)."
@@ -233,6 +272,26 @@ def _selbsttest() -> int:
     pruefe(not p, "gesunder Zustand: keine Probleme", str(p))
     pruefe(any("Geister" in x for x in h),
            "fremde unavailable-Entitaet wird als Geister-Hinweis eingeordnet")
+
+    # Der Unterschied ALLE gegen EINIGE ist der ganze Punkt: Bei allen
+    # ist die Bruecke schuld, bei einigen die einzelne Lampe. Ein
+    # Bericht, der das nicht trennt, ueberlaesst den Schluss dem Leser -
+    # und der faellt dann aus (24.08.2026 gemessen, 0 von 3).
+    alle_weg = [{"entity_id": "light.brmesh_bridge_a", "state": "unavailable"},
+                {"entity_id": "light.brmesh_bridge_b", "state": "unavailable"}]
+    p, _, _ = einordnen(alle_weg)
+    pruefe(any("FUNKBRUECKE" in x for x in p),
+           "alle Lampen weg -> die Bruecke wird als Ursache BENANNT", str(p))
+    pruefe(any("funkbruecke_wlan" in x for x in p),
+           "und der naechste Schritt steht dabei")
+    teils_weg = [{"entity_id": "light.brmesh_bridge_a", "state": "unavailable"},
+                 {"entity_id": "light.brmesh_bridge_b", "state": "on"}]
+    p, _, _ = einordnen(teils_weg)
+    pruefe(p and "FUNKBRUECKE" not in p[0],
+           "nur EINIGE weg -> NICHT die Bruecke beschuldigen (Gegenprobe)",
+           str(p))
+    pruefe(any("einzelne Lampe" in x for x in p),
+           "sondern die einzelne Lampe nennen")
 
     krank = [
         {"entity_id": "switch.shelly_esszimmer", "state": "unavailable"},

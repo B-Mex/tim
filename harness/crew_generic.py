@@ -558,8 +558,21 @@ def ergebnis_speichern(job: dict, text: str):
             ids=[f"{job['name']}_{int(time.time())}"],
         )
         print(f"In ChromaDB gespeichert (Collection: {job.get('collection', 'harness_ergebnisse')}).")
-    except Exception as e:
-        print(f"ChromaDB-Speicherung fehlgeschlagen (nicht kritisch): {e}")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        # BaseException, nicht Exception - und das ist kein Schludern:
+        # chromadb rechnet in Rust und meldet ueber pyo3 eine
+        # PanicException, die NICHT von Exception erbt (nachgemessen am
+        # 24.08.2026: issubclass(PanicException, Exception) == False).
+        # Mit "except Exception" entkam sie dem Handler und riss den
+        # ganzen Ablauf mit - NACH dem Schreiben des Berichts, an der
+        # Zeile, die im Kommentar "nicht kritisch" heisst. Genau der Fall
+        # trat ein, als die Datenbank in einen ungluecklichen Zustand
+        # geriet. Das Ablegen im Gedaechtnis ist Beiwerk; ein fertiger
+        # Ablauf darf daran nicht scheitern.
+        print(f"ChromaDB-Speicherung fehlgeschlagen (nicht kritisch): "
+              f"{type(e).__name__}: {e}")
 
 
 def job_ausfuehren(name: str) -> bool:
