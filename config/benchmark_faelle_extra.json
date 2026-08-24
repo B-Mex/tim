@@ -1,0 +1,40 @@
+{
+  "faelle": [
+    {
+      "name": "einheiten_minuten",
+      "quelle": "Startfall vom 23.08.2026 - belegt das Fall-Schema",
+      "prompt": "Wie viele Minuten sind 2,5 Stunden? Antworte nur mit der Zahl.",
+      "pruefung": {
+        "regex_muss": "\\b150\\b",
+        "regex_verboten": "\\b(125|130|145|155)\\b"
+      },
+      "gut_antwort": "150",
+      "schlecht_antwort": "Das sind 125 Minuten.",
+      "num_predict": 2048
+    },
+    {
+      "name": "mathe_wuerfel_seiten",
+      "prompt": "Wie viele Flächen hat ein geometrischer Würfel als Ganzes? Gib das Ergebnis ausschließlich in reiner Zahl ohne Kommentare aus.",
+      "pruefung": {
+        "muss_eines": [
+          "6"
+        ]
+      },
+      "gut_antwort": "6",
+      "schlecht_antwort": "4",
+      "num_predict": 64
+    },
+    {
+      "name": "deutsch_prima_zahl_ja_nein",
+      "prompt": "Ist die Zahl Elf eine Primzahl? Antworte ausschließlich mit dem Wort 'Ja' oder 'Nein'.",
+      "pruefung": {
+        "muss_eines": [
+          "Ja"
+        ]
+      },
+      "gut_antwort": "Ja",
+      "schlecht_antwort": "Nein",
+      "num_predict": 64
+    }
+  ]
+}

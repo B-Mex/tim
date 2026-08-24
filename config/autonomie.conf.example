@@ -1,0 +1,35 @@
+# ============================================================
+#  AUTONOMIE-KONFIGURATION
+#  Steuert, wie selbstständig der M1 handeln darf.
+#  SICHERHEIT: Standardmäßig ist alles auf SAFE (nur Vorschläge).
+# ============================================================
+
+# Modus: safe | assist | autonom
+#   safe    = macht nur Vorschläge, führt NICHTS selbst aus (Standard)
+#   assist  = führt unkritische Aktionen aus, fragt bei kritischen
+#   autonom = führt alles selbst aus (NUR für Bereiche unten mit =ja)
+AUTONOMIE_MODUS=safe
+
+# Welche Bereiche darf der Agent autonom bearbeiten? (ja/nein)
+# Diese greifen nur wenn AUTONOMIE_MODUS=assist oder autonom
+ERLAUBE_SHELL=nein                 # freier Shell-Zugriff aus der Oberflaeche (Tim)
+ERLAUBE_SOFTWARE_INSTALL=nein      # neue Software/Libraries installieren
+ERLAUBE_HA_KONFIG=nein             # Home Assistant Automationen ändern
+ERLAUBE_HARDWARE_TREIBER=nein      # Treiber für neue Hardware schreiben/laden
+ERLAUBE_REAUTH=nein                # abgelaufene Tokens selbst erneuern
+ERLAUBE_NETZWERK=nein              # Netzwerk-/Firewall-Änderungen
+
+# Sicherheits-Grenzen (gelten IMMER, auch im autonom-Modus)
+NIEMALS_KAEUFE=ja                  # niemals etwas kaufen/bestellen
+NIEMALS_NETZSPANNUNG=ja            # niemals 230V-relevante Aktionen ohne Rückfrage
+NIEMALS_LOESCHEN_OHNE_BACKUP=ja    # vor Löschungen immer Backup
+
+# Kill-Switch: Datei "STOP" im M1_DEPLOYMENT-Ordner anlegen, um ALLE
+# autonomen Aktionen sofort zu stoppen. Gilt egal ob der Ordner auf den
+# Schreibtisch kopiert wurde oder direkt von der SSD läuft, z.B.:
+#   touch ~/Desktop/M1_DEPLOYMENT/STOP
+#   touch /Volumes/M1_DEPLOYMENT/STOP
+KILLSWITCH_DATEI=<M1_DEPLOYMENT-Ordner>/STOP
+
+# Benachrichtigung: Wohin meldet der Agent kritische Dinge?
+BENACHRICHTIGUNG_EMAIL=deine-adresse@example.org

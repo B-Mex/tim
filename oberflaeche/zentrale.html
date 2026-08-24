@@ -1,0 +1,1590 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tim</title>
+<style>
+:root{
+  --grund:#14161a; --flaeche:#1b1e24; --flaeche2:#22262e; --rand:#2e333d;
+  --text:#e6e8ec; --leise:#9aa3b2; --akzent:#6ea8fe; --gut:#5fd39a;
+  --warn:#f0c674; --schlecht:#f08a8a; --schrift:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--grund);color:var(--text);font-family:var(--schrift);
+     font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit;cursor:pointer}
+a{color:var(--akzent)}
+
+/* ---- Gerüst ---- */
+/* ID plus Attribut, damit diese Regel gewinnt: ein blosses #huelle
+   mit display:flex ist spezifischer als das hidden-Attribut allein -
+   ausgeblendete Bereiche blieben sonst sichtbar. */
+#huelle[hidden],#tor[hidden]{display:none}
+#huelle{display:flex;min-height:100vh}
+/* Klebend und auf Fensterhöhe begrenzt: sonst wächst die Leiste mit dem
+   Inhalt mit, und der Not-Aus steht irgendwo weit unten - ausgerechnet
+   der Knopf, den man sofort erreichen muss. */
+#seite{width:210px;flex:0 0 210px;background:var(--flaeche);border-right:1px solid var(--rand);
+       padding:14px 10px;display:flex;flex-direction:column;gap:4px;
+       position:sticky;top:0;height:100vh;height:100dvh;
+       align-self:flex-start;overflow-y:auto}
+#marke{font-weight:600;font-size:17px;padding:6px 10px 14px;letter-spacing:.3px}
+#marke span{color:var(--akzent)}
+.reiter{display:block;width:100%;text-align:left;background:none;border:0;border-radius:7px;
+        padding:9px 11px;color:var(--leise)}
+.reiter:hover{background:var(--flaeche2);color:var(--text)}
+.reiter.aktiv{background:var(--flaeche2);color:var(--text);font-weight:500}
+#seitefuss{margin-top:auto;padding:10px 6px 0;border-top:1px solid var(--rand)}
+#notaus{width:100%;background:#3a1f1f;border:1px solid #6b3030;color:#ffb4b4;
+        border-radius:7px;padding:9px;font-weight:600}
+#notaus:hover{background:#4a2626}
+#haupt{flex:1;padding:20px 24px 60px;min-width:0}
+h1{font-size:20px;margin:0 0 4px}
+.unterzeile{color:var(--leise);font-size:13px;margin-bottom:18px}
+
+/* ---- Bausteine ---- */
+.gitter{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.karte{background:var(--flaeche);border:1px solid var(--rand);border-radius:10px;padding:14px}
+.karte h3{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--leise);
+          text-transform:uppercase;letter-spacing:.6px}
+.zeile{display:flex;justify-content:space-between;gap:10px;padding:4px 0;
+       border-bottom:1px solid rgba(255,255,255,.04);font-size:14px}
+.zeile:last-child{border-bottom:0}
+.zeile .wert{color:var(--leise);text-align:right;word-break:break-word}
+.punkt{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px}
+.p-da{background:var(--gut)} .p-weg{background:var(--schlecht)} .p-gestoert{background:var(--warn)}
+.knopf{background:var(--flaeche2);border:1px solid var(--rand);border-radius:7px;padding:7px 13px}
+.knopf:hover{border-color:var(--akzent)}
+.knopf.haupt{background:#24395e;border-color:#3a5a92}
+.knopf:disabled{opacity:.45;cursor:default}
+.knopf.klein{padding:4px 9px;font-size:13px}
+pre{background:#0e1013;border:1px solid var(--rand);border-radius:8px;padding:12px;
+    overflow-x:auto;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;
+    max-height:460px;overflow-y:auto;margin:10px 0 0}
+.hinweis{color:var(--leise);font-size:13px}
+.zeitstempel{color:var(--leise);font-size:11px;margin-top:6px;opacity:.8}
+.chatzeile{padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.chatzeile:hover{background:var(--flaeche2)}
+.chatzeile.aktiv{background:var(--flaeche2);border-color:var(--rand)}
+.chattitel{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chatloeschen{cursor:pointer;padding:0 4px;font-size:14px}
+.chatloeschen:hover{color:var(--schlecht)}
+#chatliste{max-height:70vh;overflow-y:auto}
+@media (max-width:700px){#chatliste{max-height:150px}}
+.fehler{color:var(--schlecht)}
+/* ---- Autonomie-Schalter ---- */
+.schalter{position:relative;display:inline-block;width:34px;height:20px;flex:0 0 auto}
+.schalter input{opacity:0;width:0;height:0}
+.schalter .schieber{position:absolute;inset:0;background:var(--rand);border-radius:10px;cursor:pointer;transition:background .15s}
+.schalter .schieber::before{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:var(--text);transition:transform .15s}
+.schalter input:checked+.schieber{background:var(--akzent)}
+.schalter input:checked+.schieber::before{transform:translateX(14px)}
+.schalter input:disabled+.schieber{background:var(--gut);opacity:.55;cursor:not-allowed}
+.empf-ok{color:var(--leise);font-size:12px}
+.empf-warn{color:var(--warn);font-size:12px}
+
+/* ---- Ablauf-Karten mit Agentenkette ---- */
+.ablauf{background:var(--flaeche);border:1px solid var(--rand);border-radius:10px;
+        padding:14px;margin-bottom:12px}
+.ablauf-kopf{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.ablauf-kopf>div{flex:1 1 auto;min-width:0}
+.ablauf-kopf>button{flex:0 0 auto}
+.ablauf-name{font-weight:600}
+.ablauf-plan{font-size:12px;color:var(--leise);margin-top:2px}
+.kette{display:flex;align-items:stretch;gap:0;margin-top:12px;overflow-x:auto;padding-bottom:4px}
+.knoten{flex:0 0 auto;background:var(--flaeche2);border:1px solid var(--rand);border-radius:8px;
+        padding:8px 11px;min-width:130px;max-width:190px}
+.knoten .rolle{font-size:13px;font-weight:500}
+.knoten .wz{font-size:11px;color:var(--leise);margin-top:3px}
+.pfeil{flex:0 0 auto;align-self:center;color:var(--leise);padding:0 7px;font-size:15px}
+
+/* ---- Chat ---- */
+#chatfeld{display:flex;flex-direction:column;min-height:340px;
+          height:calc(100vh - 150px);height:calc(100dvh - 150px)}
+#verlauf{flex:1;overflow-y:auto;padding-right:4px}
+.blase{max-width:min(760px,88%);padding:10px 13px;border-radius:11px;margin-bottom:10px;
+       white-space:pre-wrap;word-break:break-word}
+.blase.ich{background:#24395e;margin-left:auto}
+.blase.es{background:var(--flaeche)}
+.blase.warte{color:var(--leise);font-style:italic}
+.canary{font-size:11px;margin-top:7px;padding-top:6px;
+        border-top:1px solid rgba(255,255,255,.07)}
+.canary.gut{color:var(--gut)}
+.canary.weg{color:var(--warn)}
+.canary::before{content:'\2713  '}
+.canary.weg::before{content:'\26A0  '}
+#eingabezeile{display:flex;gap:8px;margin-top:10px}
+#frage{flex:1;background:var(--flaeche);border:1px solid var(--rand);border-radius:8px;
+       padding:10px 12px;color:var(--text);resize:none;font:inherit;min-height:44px;max-height:150px}
+select{background:var(--flaeche);border:1px solid var(--rand);border-radius:7px;
+       padding:7px 10px;color:var(--text);font:inherit}
+
+/* ---- Token-Abfrage ---- */
+#tor{position:fixed;inset:0;background:var(--grund);display:flex;align-items:center;
+     justify-content:center;padding:20px;z-index:50}
+#torkarte{max-width:460px;width:100%;background:var(--flaeche);border:1px solid var(--rand);
+          border-radius:12px;padding:22px}
+#torkarte input{width:100%;background:var(--grund);border:1px solid var(--rand);border-radius:7px;
+                padding:10px;color:var(--text);font:inherit;margin:12px 0}
+code{background:var(--flaeche2);padding:2px 6px;border-radius:4px;font-size:13px}
+
+@media(max-width:760px){
+  #huelle{flex-direction:column}
+  /* height/align-self/overflow müssen hier zurückgenommen werden: die
+     100vh aus der Seitenleisten-Regel gelten sonst auch für die nun
+     waagerechte Leiste - sie füllt dann den ganzen Schirm und schiebt
+     den Inhalt aus dem Bild. Das Kleben oben bleibt, damit der Not-Aus
+     beim Scrollen erreichbar ist. */
+  #seite{width:auto;flex:none;flex-direction:row;flex-wrap:wrap;border-right:0;
+         border-bottom:1px solid var(--rand);padding:8px;gap:6px;align-items:center;
+         height:auto;align-self:auto;overflow-y:visible;z-index:10}
+  #marke{padding:2px 8px 2px 4px;font-size:15px}
+  .reiter{width:auto;padding:7px 10px;font-size:14px}
+  #seitefuss{margin:0 0 0 auto;padding:0;border:0}
+  #notaus{padding:7px 12px}
+  #haupt{padding:16px 14px 50px}
+}
+.farbtupfer { width: 44px; height: 44px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.25); cursor: pointer; padding: 0; }
+.farbtupfer:hover { border-color: rgba(255,255,255,.7); transform: scale(1.08); }
+.knopf.aktiv { outline: 2px solid var(--akzent, #e8873a); }
+</style>
+</head>
+<body>
+
+<div id="tor">
+  <div id="torkarte">
+    <h1>Tim</h1>
+    <p class="hinweis">Zugriffstoken eingeben. Es steht auf dem Mac in
+       <code>~/.m1_job_token</code> — dasselbe Token wie beim Job-Server.</p>
+    <input id="tokenfeld" type="password" placeholder="Token" autocomplete="off">
+    <button class="knopf haupt" onclick="tokenSetzen()">Anmelden</button>
+    <p id="torfehler" class="hinweis fehler"></p>
+  </div>
+</div>
+
+<div id="huelle" hidden>
+  <nav id="seite">
+    <div id="marke">Ti<span>m</span></div>
+    <button class="reiter aktiv" data-ansicht="uebersicht">Übersicht</button>
+    <button class="reiter" data-ansicht="licht">Licht</button>
+    <button class="reiter" data-ansicht="auge">Auge</button>
+    <button class="reiter" data-ansicht="ablaeufe">Abläufe</button>
+    <button class="reiter" data-ansicht="chat">Chat</button>
+    <button class="reiter" data-ansicht="shell">Shell</button>
+    <button class="reiter" data-ansicht="berichte">Berichte</button>
+    <button class="reiter" data-ansicht="metriken">Metriken</button>
+    <button class="reiter" data-ansicht="benchmark">Benchmark</button>
+    <div id="seitefuss">
+      <button id="notaus" onclick="notAus()">NOT-AUS</button>
+    </div>
+  </nav>
+  <main id="haupt"></main>
+</div>
+
+<script>
+let TOKEN = localStorage.getItem("m1token") || "";
+let ANSICHT = "uebersicht";
+let MODELLE = [];
+let VERLAUF = [];
+/* Aktive Unterhaltung - gemerkt im Browser, damit ein Neuladen im
+   selben Gespraech bleibt. Neue Kennung = Zeitstempel. */
+let CHAT_AKTIV = localStorage.getItem("m1chat") || neueChatKennung();
+function neueChatKennung() {
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}_` +
+         `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+}
+function chatWaehlen(id) {
+  CHAT_AKTIV = id;
+  localStorage.setItem("m1chat", id);
+  VERLAUF = [];
+  zeichne();
+}
+function zeitKurz(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d)) return "";
+  const p2 = n => String(n).padStart(2, "0");
+  const heute = new Date();
+  const tag = (d.toDateString() === heute.toDateString())
+    ? "" : `${p2(d.getDate())}.${p2(d.getMonth()+1)}. `;
+  return `${tag}${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+function chatBildAdresse(name) {
+  return location.origin + "/api/chatbild?name=" + encodeURIComponent(name) +
+         "&token=" + encodeURIComponent(TOKEN);
+}
+let TAKT = null;
+
+/* ---------- Grundlagen ---------- */
+async function hole(pfad, optionen = {}) {
+  const antwort = await fetch(pfad, {
+    ...optionen,
+    headers: {"X-M1-Token": TOKEN, "Content-Type": "application/json",
+              ...(optionen.headers || {})}
+  });
+  if (antwort.status === 401) { abmelden("Token abgelehnt."); throw new Error("401"); }
+  return antwort.json();
+}
+function abmelden(grund) {
+  localStorage.removeItem("m1token"); TOKEN = "";
+  document.getElementById("tor").hidden = false;
+  document.getElementById("huelle").hidden = true;
+  document.getElementById("torfehler").textContent = grund || "";
+}
+async function tokenSetzen() {
+  const wert = document.getElementById("tokenfeld").value.trim();
+  if (!wert) return;
+  TOKEN = wert;
+  try {
+    await hole("/api/zustand");
+    localStorage.setItem("m1token", wert);
+    starten();
+  } catch (e) { /* abmelden() hat schon gemeldet */ }
+}
+function esc(t) {
+  return String(t == null ? "" : t)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function starten() {
+  document.getElementById("tor").hidden = true;
+  document.getElementById("huelle").hidden = false;
+  zeichne();
+}
+
+/* ---------- Navigation ---------- */
+document.querySelectorAll(".reiter").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".reiter").forEach(x => x.classList.remove("aktiv"));
+  b.classList.add("aktiv");
+  ANSICHT = b.dataset.ansicht;
+  zeichne();
+});
+
+function zeichne() {
+  if (TAKT) { clearInterval(TAKT); TAKT = null; }
+  const ziel = document.getElementById("haupt");
+  if (ANSICHT === "uebersicht") return zeigeUebersicht(ziel);
+  if (ANSICHT === "licht")      return zeigeLicht(ziel);
+  if (ANSICHT === "auge")       return zeigeAuge(ziel);
+  if (ANSICHT === "ablaeufe")   return zeigeAblaeufe(ziel);
+  if (ANSICHT === "chat")       return zeigeChat(ziel);
+  if (ANSICHT === "shell")      return zeigeShell(ziel);
+  if (ANSICHT === "berichte")   return zeigeBerichte(ziel);
+  if (ANSICHT === "metriken")   return zeigeMetriken(ziel);
+  if (ANSICHT === "benchmark")  return zeigeBenchmark(ziel);
+}
+
+/* ---------- Übersicht ---------- */
+async function zeigeUebersicht(ziel) {
+  ziel.innerHTML = `<h1>Übersicht</h1>
+    <div class="unterzeile">Was gerade läuft und was erlaubt ist.</div>
+    <div class="hinweis">lädt …</div>`;
+  const d = await hole("/api/zustand");
+  MODELLE = d.modelle || [];
+
+  const stop = d.killswitch
+    ? `<span class="fehler">gesetzt — ${esc(d.killswitch)}</span>`
+    : `<span style="color:var(--gut)">frei</span>`;
+
+  const sp = d.speicher || {};
+  const speicherZeilen = sp.fehler
+    ? `<div class="zeile"><span>Messung</span><span class="wert fehler">${esc(sp.fehler)}</span></div>`
+    : `<div class="zeile"><span>frei</span><span class="wert">${sp.frei_gb ?? "?"} GB von ${sp.gesamt_gb ?? "?"} GB</span></div>` +
+      Object.entries(sp.klassen || {}).map(([k, m]) =>
+        `<div class="zeile"><span>Klasse ${esc(k)}</span><span class="wert">${esc(m)}</span></div>`).join("");
+
+  const a = d.autonomie || {};
+  const autoZeilen = Object.entries(a).map(([k, v]) => autonomieZeile(k, v))
+    .join("") || `<div class="hinweis">keine Angaben</div>`;
+
+  ziel.innerHTML = `
+    <h1>Übersicht</h1>
+    <div class="unterzeile">Stand ${esc(d.zeit)}</div>
+    <div class="gitter">
+      <div class="karte">
+        <h3>Dienste</h3>
+        ${(d.dienste||[]).map(s => `<div class="zeile">
+            <span><span class="punkt p-${esc(s.zustand)}"></span>${esc(s.name)}</span>
+            <span class="wert">${esc(s.zustand)}</span></div>`).join("")}
+      </div>
+      <div class="karte">
+        <h3>Speicher und Modellwahl</h3>
+        ${speicherZeilen}
+      </div>
+      <div class="karte">
+        <h3>Not-Aus</h3>
+        <div class="zeile"><span>Kill-Switch</span><span class="wert">${stop}</span></div>
+        <p class="hinweis" style="margin:10px 0 0">Aufheben geht bewusst nur
+           an der Tastatur: <code>m1-weiter</code></p>
+      </div>
+      <div class="karte">
+        <h3>Autonomie</h3>
+        ${autoZeilen}
+        <div style="margin-top:12px">
+          <button class="knopf klein" onclick="normalzustand()"
+            title="Modus safe und alle erlaube-Schalter auf nein">
+            ⟲ Alles zurück auf sicher</button>
+        </div>
+        <p class="hinweis" style="margin:10px 0 0">Die erlaube-Schalter greifen
+          erst ab Modus <code>assist</code> oder <code>autonom</code>. Beim
+          Hochstufen fragt Tim nach; bei gesetztem Kill-Switch geht es gar
+          nicht. Zurück auf sicher geht immer.</p>
+      </div>
+      <div class="karte" style="grid-column:1/-1">
+        <h3>Modelle (${MODELLE.length})</h3>
+        ${MODELLE.map(m => `<div class="zeile"><span>${esc(m.name)}</span>
+           <span class="wert">${m.groesse_gb} GB · ${esc(m.geaendert)}</span></div>`).join("")
+           || `<div class="hinweis">Ollama antwortet nicht.</div>`}
+      </div>
+      <div class="karte" style="grid-column:1/-1">
+        <h3>Werkzeuge</h3>
+        <div id="werkzeuge" class="hinweis">lädt …</div>
+        <div id="werkzeugausgabe"></div>
+      </div>
+    </div>`;
+
+  zeigeWerkzeuge();
+}
+
+/* ---------- Autonomie-Schalter ----------
+   Die erlaube-Felder sind umschaltbar (empfohlen ist überall "nein" —
+   wer mehr Autonomie freigibt, soll das bewusst tun). Die niemals-Grenzen
+   sind in autonomie.py fest verdrahtet und per Datei NICHT abschaltbar;
+   ihr Schalter ist deshalb ehrlich gesperrt statt eine Attrappe.
+   Geschaltet wird über den Job-Server (autonomie_setzen), der an
+   autonomie.py weiterreicht — die Zentrale schreibt selbst nichts. */
+const AUTONOMIE_SCHALTBAR = {
+  ERLAUBE_SHELL: "nein", ERLAUBE_SOFTWARE_INSTALL: "nein",
+  ERLAUBE_HA_KONFIG: "nein", ERLAUBE_HARDWARE_TREIBER: "nein",
+  ERLAUBE_REAUTH: "nein", ERLAUBE_NETZWERK: "nein",
+};
+const AUTONOMIE_FEST = ["NIEMALS_KAEUFE", "NIEMALS_NETZSPANNUNG",
+                        "NIEMALS_LOESCHEN_OHNE_BACKUP"];
+
+/* Der Modus ist der grosse Hebel: safe = nur Vorschlaege, assist =
+   unkritisches selbst, autonom = alles Freigeschaltete selbst. Seit
+   22.08.2026 in der Oberflaeche umschaltbar. Herunterstufen geht immer,
+   Hochstufen lehnt der Job-Server bei gesetztem Kill-Switch ab. */
+const MODI = ["safe", "assist", "autonom"];
+const MODUS_ERKLAERT = {
+  safe: "macht nur Vorschläge, führt nichts selbst aus",
+  assist: "führt Unkritisches selbst aus, fragt bei Kritischem",
+  autonom: "führt alles selbst aus, was oben freigeschaltet ist",
+};
+
+function modusZeile(ist) {
+  const knoepfe = MODI.map(m => {
+    const aktiv = m === ist;
+    return `<button class="knopf klein${aktiv ? " haupt" : ""}"
+      title="${esc(MODUS_ERKLAERT[m])}"
+      onclick="modusSetzen('${m}')" ${aktiv ? "disabled" : ""}>${m}</button>`;
+  }).join(" ");
+  return `<div class="zeile"><span>autonomie modus
+      <span class="${ist === "safe" ? "empf-ok" : "empf-warn"}">(${
+        ist === "safe" ? "Empfohlen" : "Nicht empfohlen"})</span></span>
+    <span style="display:flex;gap:5px">${knoepfe}</span></div>
+    <div class="hinweis" style="margin:2px 0 8px">${esc(MODUS_ERKLAERT[ist] || "")}</div>`;
+}
+
+async function modusSetzen(neu) {
+  if (neu !== "safe" && !confirm(
+      `Autonomie-Modus auf „${neu}" stellen?\n\n` +
+      MODUS_ERKLAERT[neu] + ".\n\nDie einzelnen erlaube-Schalter greifen " +
+      "dann wirklich. Empfohlen ist: safe.")) { zeichne(); return; }
+  await autonomieAktion({aktion: "autonomie_modus", argument: neu},
+                        "Modus umstellen");
+}
+
+async function normalzustand() {
+  if (!confirm("Alles zurück auf sicher?\n\nModus wird auf safe gesetzt " +
+               "und alle erlaube-Schalter auf nein.")) return;
+  await autonomieAktion({aktion: "autonomie_normal", argument: ""},
+                        "Zurücksetzen");
+}
+
+/* Gemeinsamer Weg für alle Autonomie-Änderungen: starten, auf das Ende
+   des Laufs warten, dann den ECHTEN Stand neu zeichnen - nicht den
+   erhofften. */
+async function autonomieAktion(koerper, was) {
+  let d;
+  try {
+    d = await hole("/api/start", {method: "POST", body: JSON.stringify(koerper)});
+  } catch (e) { alert(was + " fehlgeschlagen: " + e); zeichne(); return; }
+  if (d.fehler) { alert(was + " abgelehnt: " + d.fehler); zeichne(); return; }
+  for (let i = 0; i < 15; i++) {
+    await new Promise(w => setTimeout(w, 1000));
+    try {
+      const l = await hole("/api/lauf?id=" + encodeURIComponent(d.lauf));
+      if (l.fertig) {
+        if (l.code) alert(was + " fehlgeschlagen:\n" + (l.ausgabe || ""));
+        break;
+      }
+    } catch (e) { break; }
+  }
+  zeichne();
+}
+
+function autonomieZeile(k, v) {
+  const name = esc(k.replace(/_/g, " ").toLowerCase());
+  const ist = String(v).toLowerCase();
+  if (k === "AUTONOMIE_MODUS") return modusZeile(ist);
+  if (k in AUTONOMIE_SCHALTBAR) {
+    const empfohlen = ist === AUTONOMIE_SCHALTBAR[k];
+    return `<div class="zeile"><span>${name}
+        <span class="${empfohlen ? "empf-ok" : "empf-warn"}">(${empfohlen ? "Empfohlen" : "Nicht empfohlen"})</span></span>
+      <label class="schalter" title="Klicken zum Umschalten — empfohlen: ${esc(AUTONOMIE_SCHALTBAR[k])}">
+        <input type="checkbox" ${ist === "ja" ? "checked" : ""}
+          onchange="autonomieSchalten('${k}', this.checked ? 'ja' : 'nein')">
+        <span class="schieber"></span></label></div>`;
+  }
+  if (AUTONOMIE_FEST.includes(k)) {
+    return `<div class="zeile"><span>${name}
+        <span class="empf-ok">(Empfohlen — fest verdrahtet)</span></span>
+      <label class="schalter" title="Harte Grenze in autonomie.py — lässt sich nicht abschalten, auch nicht per Datei">
+        <input type="checkbox" checked disabled>
+        <span class="schieber"></span></label></div>`;
+  }
+  return `<div class="zeile"><span>${name}</span><span class="wert">${esc(v)}</span></div>`;
+}
+
+async function autonomieSchalten(schalter, neu) {
+  const anzeige = schalter.replace(/_/g, " ").toLowerCase();
+  if (neu === "ja" && !confirm(`„${anzeige}“ auf JA stellen?\n\n` +
+      "Der Harness darf diesen Bereich dann selbstständig bearbeiten, " +
+      "sobald der Modus assist oder autonom ist. Empfohlen ist: nein.")) {
+    zeichne(); return;
+  }
+  let d;
+  try {
+    d = await hole("/api/start", {method: "POST",
+      body: JSON.stringify({aktion: "autonomie_setzen",
+                            argument: schalter + "." + neu})});
+  } catch (e) { alert("Umschalten fehlgeschlagen: " + e); zeichne(); return; }
+  if (d.fehler) { alert("Umschalten abgelehnt: " + d.fehler); zeichne(); return; }
+  // Kurz auf das Ende des Laufs warten, dann den echten Stand zeichnen —
+  // der Schalter zeigt danach, was wirklich in der Datei steht.
+  for (let i = 0; i < 15; i++) {
+    await new Promise(w => setTimeout(w, 1000));
+    try {
+      const l = await hole("/api/lauf?id=" + encodeURIComponent(d.lauf));
+      if (l.fertig) {
+        if (l.code) alert("Umschalten fehlgeschlagen:\n" + (l.ausgabe || ""));
+        break;
+      }
+    } catch (e) { break; }
+  }
+  zeichne();
+}
+
+/* Die Knöpfe kommen aus der Positivliste des Job-Servers, nicht aus einer
+   Liste hier. Eine neue Aktion dort erscheint dadurch von selbst — und
+   was dort nicht steht, lässt sich hier nicht auslösen. */
+async function zeigeWerkzeuge() {
+  const feld = document.getElementById("werkzeuge");
+  if (!feld) return;
+  let d;
+  try { d = await hole("/api/ablaeufe"); } catch (e) { return; }
+  const a = (d.aktionen || {});
+  if (a.fehler) {
+    feld.innerHTML = `<span class="fehler">${esc(a.fehler)}</span>`;
+    return;
+  }
+  const liste = a.aktionen || {};
+  const knoepfe = Object.entries(liste)
+    .filter(([name, w]) => !w.braucht_argument && name !== "notaus")
+    .map(([name, w]) =>
+      `<button class="knopf klein" title="${esc(w.beschreibung)}"
+         onclick="werkzeug('${esc(name)}')">${esc(name)}</button>`).join(" ");
+  feld.innerHTML = knoepfe
+    ? `<div style="display:flex;flex-wrap:wrap;gap:7px">${knoepfe}</div>`
+    : `<span class="hinweis">Keine Aktionen ohne Argument.</span>`;
+}
+
+async function werkzeug(name) {
+  const feld = document.getElementById("werkzeugausgabe");
+  feld.innerHTML = `<pre>startet …</pre>`;
+  let d;
+  try {
+    d = await hole("/api/start", {method: "POST",
+      body: JSON.stringify({aktion: name, argument: ""})});
+  } catch (e) { return; }
+  if (d.fehler) { feld.innerHTML = `<pre class="fehler">${esc(d.fehler)}</pre>`; return; }
+  verfolge(d.lauf, feld, null);
+}
+
+/* ---------- Licht ---------- */
+let LICHT_RAUM = null;      /* gerade geöffneter Raum */
+let LICHT_HELL = 60;        /* zuletzt gewählte Helligkeit in Prozent */
+
+/* Farbton (0-360) in RGB. Sättigung und Helligkeit bleiben voll -
+   gedimmt wird über den eigenen Regler, nicht über blassere Farben. */
+function tonZuRgb(ton) {
+  const c = 255, x = Math.round(255 * (1 - Math.abs(((ton / 60) % 2) - 1)));
+  const t = [[c,x,0],[x,c,0],[0,c,x],[0,x,c],[x,0,c],[c,0,x]];
+  return t[Math.floor(((ton % 360) + 360) % 360 / 60)];
+}
+
+async function lichtSenden(raum, befehl) {
+  const feld = document.getElementById("lichtausgabe");
+  if (feld) feld.textContent = "sendet …";
+  try {
+    /* Punkt als Trenner: Die Zentrale lässt in Argumenten keine
+       Leerzeichen durch - das ist der Riegel gegen eingeschleuste
+       Befehle und bleibt so. */
+    const d = await hole("/api/start", {method: "POST",
+      body: JSON.stringify({aktion: "lampen", argument: raum + "." + befehl})});
+    if (d.fehler) { if (feld) feld.textContent = d.fehler; return; }
+    if (feld) feld.textContent = raum + ": " + befehl.replace(/\./g, " ");
+  } catch (e) {
+    if (feld) feld.textContent = "Fehler beim Senden";
+  }
+}
+
+async function zeigeLicht(ziel) {
+  ziel.innerHTML = `<h1>Licht</h1>
+    <div class="unterzeile">lädt …</div>`;
+  let d;
+  try { d = await hole("/api/licht"); } catch (e) {
+    ziel.innerHTML = `<h1>Licht</h1><div class="hinweis fehler">
+      Lichtdaten nicht erreichbar.</div>`;
+    return;
+  }
+  const raeume = Object.entries(d.raeume || {})
+    .sort((a, b) => Number(a[0]) - Number(b[0]));
+  const farben = d.farben || {};
+
+  if (!raeume.length) {
+    ziel.innerHTML = `<h1>Licht</h1><div class="hinweis">
+      Noch keine Räume angelernt.</div>`;
+    return;
+  }
+  if (!LICHT_RAUM) LICHT_RAUM = raeume[0][1];
+
+  const kacheln = raeume.map(([nr, name]) =>
+    `<button class="knopf klein ${name === LICHT_RAUM ? "aktiv" : ""}"
+       onclick="LICHT_RAUM='${esc(name)}';zeichne()">${esc(name)}</button>`).join(" ");
+
+  /* Das Farbrad: ein Ring aus allen Farbtönen. Ein Klick darauf wird
+     über den Winkel zum Mittelpunkt in einen Farbton umgerechnet. */
+  const eigene = Object.entries(farben).map(([name, w]) =>
+    `<button class="farbtupfer" title="${esc(name)}"
+       style="background:rgb(${w.rot},${w.gruen},${w.blau})"
+       onclick="lichtSenden('${esc(LICHT_RAUM)}','${w.rot}.${w.gruen}.${w.blau}')">
+     </button>`).join("");
+
+  ziel.innerHTML = `<h1>Licht</h1>
+    <div class="unterzeile">${raeume.length} Räume · geschaltet wird über die
+      Funkbrücke am Pico</div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:18px">${kacheln}</div>
+
+    <div class="karte">
+      <h2 style="margin-top:0">${esc(LICHT_RAUM)}</h2>
+
+      <div id="lichtrad" onclick="radKlick(event)"
+        style="position:relative;width:230px;height:230px;margin:14px auto;
+               border-radius:50%;cursor:crosshair;
+               background:conic-gradient(from 90deg,
+                 #f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)">
+        <div style="position:absolute;inset:52px;border-radius:50%;
+                    background:var(--grund,#14161a);display:flex">
+          <button class="knopf" style="flex:1;border-radius:50% 0 0 50%"
+            onclick="event.stopPropagation();lichtSenden('${esc(LICHT_RAUM)}','an')">An</button>
+          <button class="knopf" style="flex:1;border-radius:0 50% 50% 0"
+            onclick="event.stopPropagation();lichtSenden('${esc(LICHT_RAUM)}','aus')">Aus</button>
+        </div>
+      </div>
+
+      <div class="unterzeile">Grundfarben</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 16px">
+        <button class="farbtupfer" style="background:#fff"
+          onclick="lichtSenden('${esc(LICHT_RAUM)}','weiss')" title="Weiß"></button>
+        <button class="farbtupfer" style="background:#f00"
+          onclick="lichtSenden('${esc(LICHT_RAUM)}','rot')" title="Rot"></button>
+        <button class="farbtupfer" style="background:#0f0"
+          onclick="lichtSenden('${esc(LICHT_RAUM)}','gruen')" title="Grün"></button>
+        <button class="farbtupfer" style="background:#00f"
+          onclick="lichtSenden('${esc(LICHT_RAUM)}','blau')" title="Blau"></button>
+        <button class="farbtupfer" style="background:#ff0"
+          onclick="lichtSenden('${esc(LICHT_RAUM)}','gelb')" title="Gelb"></button>
+      </div>
+
+      ${eigene ? `<div class="unterzeile">Eigene Farben</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 16px">
+          ${eigene}</div>` : ""}
+
+      <div class="unterzeile">Selbstlauf</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 16px">
+        <button class="knopf klein" onclick="lichtSenden('${esc(LICHT_RAUM)}','disko')"
+          title="Die Lampe wechselt von allein die Farbe, bis ein anderer Befehl kommt">
+          Disko</button>
+        <button class="knopf klein" onclick="lichtSenden('${esc(LICHT_RAUM)}','weiss')"
+          title="Beendet den Selbstlauf">Disko aus (weiss)</button>
+      </div>
+
+      <div class="unterzeile">Helligkeit: <span id="hellwert">${LICHT_HELL}</span> %</div>
+      <input type="range" min="1" max="100" value="${LICHT_HELL}" style="width:100%"
+        oninput="document.getElementById('hellwert').textContent=this.value"
+        onchange="LICHT_HELL=Number(this.value);
+                  lichtSenden('${esc(LICHT_RAUM)}','hell.'+this.value)">
+
+      <div id="lichtausgabe" class="hinweis" style="margin-top:14px">bereit</div>
+    </div>`;
+}
+
+function radKlick(ereignis) {
+  const rad = document.getElementById("lichtrad");
+  const kasten = rad.getBoundingClientRect();
+  const dx = ereignis.clientX - (kasten.left + kasten.width / 2);
+  const dy = ereignis.clientY - (kasten.top + kasten.height / 2);
+  const abstand = Math.sqrt(dx * dx + dy * dy);
+  /* Nur der Ring zählt - in der Mitte sitzen die An/Aus-Schalter. */
+  if (abstand < kasten.width * 0.24) return;
+  /* Der Farbverlauf beginnt oben (from 90deg), deshalb der Versatz. */
+  let winkel = Math.atan2(dy, dx) * 180 / Math.PI;
+  const ton = ((winkel + 360) % 360);
+  const [r, g, b] = tonZuRgb(ton);
+  lichtSenden(LICHT_RAUM, r + "." + g + "." + b);
+}
+
+/* ---------- Auge ----------
+   Das Kamerabild kommt nicht direkt vom Kameradienst (der hört nur auf
+   127.0.0.1), sondern durchgereicht von Tim. Deshalb ist es auch vom
+   Handy aus zu sehen, ohne die Kamera ins Netz zu hängen.
+
+   Weitere Augen (Mähroboter, Garten, ...) bekommen hier später eigene
+   Reiter: einen Eintrag in AUGEN ergänzen und im Backend die passende
+   Kamera-Adresse hinterlegen — die Ansicht zeichnet die Reiterleiste
+   aus dieser Liste. */
+const AUGEN = [
+  {id: "tim", name: "Tims Auge"},
+];
+let AUGE_AKTIV = "tim";
+
+/* Das Token steht bei den Bildpfaden ausnahmsweise in der Adresse: Ein
+   <img> kann keinen eigenen Kopf mitschicken. Es landet damit im
+   Browserverlauf — im eigenen Tailnet der annehmbare Preis dafür, das
+   Bild überhaupt zeigen zu können. */
+let AUGE_AN = false;
+
+function augeStromAdresse() {
+  return location.origin + "/api/auge/strom?token=" + encodeURIComponent(TOKEN);
+}
+/* Der Reiter holt EINZELBILDER statt des Stroms: Ein MJPEG-Strom wird
+   vom Browser nie übersprungen — drosselt er den Tab (Hintergrund,
+   Reiterwechsel), läuft der Strom auf und das Bild hängt dauerhaft
+   Sekunden hinterher. Ein frisch geholtes Einzelbild ist immer jetzt. */
+function augeBildAdresse() {
+  return location.origin + "/api/auge/bild?token=" + encodeURIComponent(TOKEN) +
+         "&t=" + Date.now();
+}
+/* Fürs zweite Fenster nicht der nackte Strom (weiße Seite, Reiter "strom"),
+   sondern die kleine eigene Seite mit Bild und Fundliste. */
+function augeFensterAdresse() {
+  return location.origin + "/api/auge/fenster?token=" + encodeURIComponent(TOKEN);
+}
+
+async function augeSchalten(an) {
+  const knopf = document.getElementById("augeknopf");
+  if (knopf) { knopf.disabled = true; knopf.textContent = an ? "schaltet ein …" : "schaltet aus …"; }
+  try { await hole("/api/auge", {method: "POST", body: JSON.stringify({an})}); }
+  catch (e) {}
+  zeigeAuge(document.getElementById("haupt"));
+}
+
+async function zeigeAuge(ziel) {
+  ziel.innerHTML = `<h1>Tims Auge</h1>
+    <div class="unterzeile">lädt …</div>`;
+  let d;
+  try { d = await hole("/api/auge"); }
+  catch (e) { ziel.innerHTML = `<h1>Tims Auge</h1>
+    <div class="hinweis fehler">Tim antwortet nicht.</div>`; return; }
+
+  AUGE_AN = !!d.an;
+
+  /* Läuft der Kameradienst gar nicht, hilft kein Knopf: Er muss von Hand
+     im Terminal gestartet werden, weil die Kameraerlaubnis unter macOS am
+     zugreifenden Programm hängt. Also genau das zeigen. */
+  if (!d.da) {
+    ziel.innerHTML = `<h1>Tims Auge</h1>
+      <div class="unterzeile">Der Kameradienst läuft gerade nicht.</div>
+      <div class="karte">
+        <h3>Starten</h3>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="knopf haupt" onclick="augeDienst('kamera_starten', this)">
+            Dienst starten</button>
+          <button class="knopf" onclick="zeigeAuge(document.getElementById('haupt'))">
+            Nochmal nachsehen</button>
+          <span class="hinweis" id="augedienst"></span>
+        </div>
+        <div class="hinweis" style="margin-top:10px">Beim allerersten Start fragt
+          macOS <b>am Mac selbst</b> nach der Kameraerlaubnis für Python — die
+          Frage erscheint nur dort auf dem Bildschirm und muss einmal mit
+          „Erlauben" beantwortet werden. Danach geht Starten auch von unterwegs.</div>
+        <div class="hinweis" style="margin-top:10px">Rückfall, falls der Dienst so
+          kein Bild bekommt — im Terminal:</div>
+        <pre id="augebefehl">${esc(d.befehl || "")}</pre>
+        <button class="knopf klein" onclick="augeBefehlKopieren()">Befehl kopieren</button>
+      </div>`;
+    return;
+  }
+
+  const funde = d.gesehen || [];
+  const liste = funde.length
+    ? funde.map(f => `<div class="zeile"><span>${esc(f.deutsch || f.name)}</span>
+        <span class="wert">${Math.round(f.vertrauen * 100)} %</span></div>`).join("")
+    : `<div class="hinweis">${AUGE_AN
+        ? "Noch nichts Beständiges gesehen — ein Fund muss mehrfach auftauchen, bevor Tim ihn meldet."
+        : "Auge ist aus."}</div>`;
+
+  /* Reiterleiste der Augen — wächst mit der AUGEN-Liste. */
+  const augenReiter = AUGEN.map(a =>
+    `<button class="knopf klein ${a.id === AUGE_AKTIV ? "aktiv" : ""}"
+       onclick="AUGE_AKTIV='${a.id}';zeichne()">${esc(a.name)}</button>`).join(" ");
+
+  ziel.innerHTML = `<h1>Auge</h1>
+    <div class="unterzeile">Was die Kameras sehen. Die Bilder verlassen den Rechner nicht —
+      Tim reicht sie durch, die Kameradienste selbst hängen nur am Loopback.</div>
+
+    <div style="margin-bottom:14px">${augenReiter}</div>
+
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <button class="knopf ${AUGE_AN ? "" : "haupt"}" id="augeknopf"
+              onclick="augeSchalten(${AUGE_AN ? "false" : "true"})">
+        ${AUGE_AN ? "Auge ausschalten" : "Auge einschalten"}</button>
+      <a class="knopf" href="${esc(augeFensterAdresse())}" target="_blank" rel="noopener">
+        In eigenem Fenster öffnen ↗</a>
+      <button class="knopf klein" onclick="augeLinkKopieren()">Link kopieren</button>
+      <span class="hinweis" id="augemeldung"></span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:14px">
+      <div class="karte" style="padding:8px">
+        ${AUGE_AN
+          ? `<img id="augebild" src="${esc(augeBildAdresse())}" alt="Livebild"
+                  style="width:100%;border-radius:7px;display:block;background:#000">`
+          : `<div class="hinweis" style="padding:40px;text-align:center">
+               Das Auge ist aus. Es wird kein Bild geholt und nichts gerechnet.</div>`}
+      </div>
+      <div>
+        <div class="karte">
+          <h3>Gesehen</h3>
+          ${liste}
+        </div>
+        <div class="karte" style="margin-top:12px">
+          <h3>Womit</h3>
+          <div class="zeile"><span>Modell</span><span class="wert">${esc(d.modell || "—")}</span></div>
+          <div class="zeile"><span>Begriffe</span><span class="wert">${d.begriffe ?? "—"}</span></div>
+          <div class="zeile"><span>Ein Blick dauert</span><span class="wert">${
+            d.dauer_s ? d.dauer_s + " s" : "—"}</span></div>
+          <div class="zeile"><span>Zuletzt geschaut</span><span class="wert">${
+            d.zuletzt_vor_s != null ? "vor " + d.zuletzt_vor_s + " s" : "—"}</span></div>
+          ${d.fehler ? `<div class="hinweis fehler">${esc(d.fehler)}</div>` : ""}
+        </div>
+      </div>
+    </div>
+
+    <div class="karte" style="margin-top:14px">
+      <h3>Anzeigen im Bild</h3>
+      ${d.anzeigen ? `
+        <div class="zeile"><span>Messfeld der Lampenmessung <span class="hinweis">(gelber Rahmen)</span></span>
+          <label class="schalter" title="Nur die Einblendung — gemessen wird immer">
+            <input type="checkbox" ${d.anzeigen.messfeld ? "checked" : ""}
+              onchange="augeAnzeige('messfeld', this.checked, this)">
+            <span class="schieber"></span></label></div>
+        <div class="zeile"><span>Erkannte Objekte <span class="hinweis">(grüne Kästen)</span></span>
+          <label class="schalter" title="Nur die Einblendung — erkannt wird, solange das Auge an ist">
+            <input type="checkbox" ${d.anzeigen.objekte ? "checked" : ""}
+              onchange="augeAnzeige('objekte', this.checked, this)">
+            <span class="schieber"></span></label></div>
+        <div class="zeile"><span>Textgröße der Beschriftungen</span>
+          <span style="display:flex;gap:8px;align-items:center">
+            <input type="range" min="0.6" max="3" step="0.2"
+              value="${d.anzeigen.textgroesse ?? 1.6}" style="width:150px"
+              oninput="this.nextElementSibling.textContent = this.value + '×'"
+              onchange="augeAnzeige('textgroesse', parseFloat(this.value))">
+            <span class="hinweis">${d.anzeigen.textgroesse ?? 1.6}×</span>
+          </span></div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="knopf klein" onclick="augeLampeSuchen(this)">Messfeld neu auf die Lampe setzen</button>
+          <span class="hinweis" id="augesuche"></span>
+        </div>
+        <div class="hinweis" style="margin-top:8px">Künftige Erkennungen bekommen hier
+          einen weiteren Schalter. Zum Gegenprüfen das eigene Fenster daneben öffnen.</div>`
+      : `<div class="hinweis">Der laufende Kameradienst kennt die Schalter noch nicht —
+          einmal im Terminal neu starten, dann erscheinen sie hier.</div>`}
+    </div>
+
+    <div class="karte" style="margin-top:14px">
+      <h3>Kameradienst</h3>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="knopf" onclick="augeDienst('kamera_starten', this)">Neu starten</button>
+        <button class="knopf" onclick="augeDienst('kamera_stoppen', this)">Stoppen</button>
+        <span class="hinweis" id="augedienst"></span>
+      </div>
+      ${d.kamera_fehler ? `<div class="hinweis fehler" style="margin-top:8px">
+          Kamera meldet: ${esc(d.kamera_fehler)}</div>` : ""}
+      ${d.bildalter_s != null && d.bildalter_s > 10 ? `<div class="hinweis fehler"
+          style="margin-top:8px">Das letzte Bild ist ${d.bildalter_s} s alt —
+          die Kamera liefert gerade nicht.</div>` : ""}
+      <div class="hinweis" style="margin-top:10px">Rückfall, falls der Dienst als
+        Hintergrunddienst kein Bild bekommt (macOS-Kameraerlaubnis) — im Terminal:</div>
+      <pre id="augebefehl">${esc(d.befehl || "")}</pre>
+      <button class="knopf klein" onclick="augeBefehlKopieren()">Befehl kopieren</button>
+      <span class="hinweis"> Direkt am Mac auch: <code>${esc(d.adresse || "")}</code></span>
+    </div>`;
+
+  /* Solange das Auge an ist, die Fundliste nachführen — aber nur die,
+     nicht die ganze Ansicht: Ein Neuzeichnen würde den Bildstrom
+     abreißen lassen und neu aufbauen. */
+  if (AUGE_AN) {
+    let runde = 0;
+    TAKT = setInterval(async () => {
+      if (ANSICHT !== "auge") return;
+      /* Frisches Einzelbild, per Doppelpuffer gegen Flackern: erst
+         laden, erst nach dem Laden einwechseln. */
+      const bild = document.getElementById("augebild");
+      if (bild) {
+        const frisch = new Image();
+        frisch.onload = () => { bild.src = frisch.src; };
+        frisch.src = augeBildAdresse();
+      }
+      if (runde++ % 2) return;          /* Fundliste nur jede 2. Runde */
+      let n;
+      try { n = await hole("/api/auge"); } catch (e) { return; }
+      if (!n.da || !n.an) { zeigeAuge(document.getElementById("haupt")); return; }
+      const kasten = document.querySelector(".karte h3")?.parentElement;
+      const neu = (n.gesehen || []);
+      const inhalt = neu.length
+        ? neu.map(f => `<div class="zeile"><span>${esc(f.deutsch || f.name)}</span>
+            <span class="wert">${Math.round(f.vertrauen * 100)} %</span></div>`).join("")
+        : `<div class="hinweis">Noch nichts Beständiges gesehen.</div>`;
+      if (kasten) kasten.innerHTML = "<h3>Gesehen</h3>" + inhalt;
+    }, 900);
+  }
+}
+
+async function augeAnzeige(name, an, kasten) {
+  /* Der Bildstrom zeigt die Änderung von selbst — nichts neu zeichnen,
+     sonst reißt das Livebild ab. Nur den Schalter mit der Antwort
+     abgleichen, falls der Dienst anders entschieden hat. */
+  try {
+    const d = await hole("/api/auge/anzeigen",
+                         {method: "POST", body: JSON.stringify({[name]: an})});
+    if (kasten && typeof d[name] === "boolean") kasten.checked = d[name];
+  } catch (e) {}
+}
+
+async function augeLampeSuchen(knopf) {
+  const feld = document.getElementById("augesuche");
+  knopf.disabled = true;
+  if (feld) feld.textContent = "sucht …";
+  try {
+    const d = await hole("/api/auge/lampe_suchen", {method: "POST", body: "{}"});
+    if (feld) feld.textContent = d.gefunden
+      ? "Gefunden und gemerkt" + (d.leuchte_vom_modell ? " (Leuchte vom Modell erkannt)." : ".")
+      : "Nichts gefunden: " + (d.grund || d.fehler || "unbekannt");
+  } catch (e) {
+    if (feld) feld.textContent = "Suche fehlgeschlagen.";
+  }
+  knopf.disabled = false;
+}
+
+async function augeDienst(aktion, knopf) {
+  /* Start und Stopp laufen über die Positivliste des Job-Servers —
+     Tim bekommt kein Terminal, nur diese zwei festen Befehle. */
+  const feld = document.getElementById("augedienst");
+  knopf.disabled = true;
+  if (feld) feld.textContent = aktion === "kamera_starten" ? "startet …" : "stoppt …";
+  try {
+    const d = await hole("/api/start", {method: "POST",
+      body: JSON.stringify({aktion, argument: ""})});
+    if (d.fehler) { if (feld) feld.textContent = d.fehler; knopf.disabled = false; return; }
+    /* Dem Dienst kurz Zeit geben, dann neu zeichnen. */
+    setTimeout(() => zeigeAuge(document.getElementById("haupt")), 3500);
+  } catch (e) {
+    if (feld) feld.textContent = "Job-Server nicht erreichbar.";
+    knopf.disabled = false;
+  }
+}
+
+async function augeLinkKopieren() {
+  const meldung = document.getElementById("augemeldung");
+  try {
+    await navigator.clipboard.writeText(augeFensterAdresse());
+    if (meldung) meldung.textContent = "Link kopiert (enthält das Token).";
+  } catch (e) {
+    if (meldung) meldung.textContent = "Kopieren ging nicht — Adresse aus dem Knopf ziehen.";
+  }
+}
+
+async function augeBefehlKopieren() {
+  const feld = document.getElementById("augebefehl");
+  if (!feld) return;
+  try { await navigator.clipboard.writeText(feld.textContent); feld.style.borderColor = "var(--gut)"; }
+  catch (e) {}
+}
+
+/* ---------- Abläufe ---------- */
+async function zeigeAblaeufe(ziel) {
+  ziel.innerHTML = `<h1>Abläufe</h1>
+    <div class="unterzeile">lädt …</div>`;
+  const d = await hole("/api/ablaeufe");
+  const aktionen = d.aktionen || {};
+  const serverWeg = aktionen.fehler;
+
+  const karten = (d.ablaeufe || []).map(j => {
+    if (j.fehlerhaft) return `<div class="ablauf"><div class="ablauf-name">${esc(j.name)}</div>
+      <div class="hinweis fehler">fehlerhafte Definition: ${esc(j.fehlerhaft)}</div></div>`;
+    const kette = (j.agenten || []).map(a => `
+      <div class="knoten">
+        <div class="rolle">${esc(a.rolle)}</div>
+        <div class="wz">${a.werkzeuge && a.werkzeuge.length
+            ? esc(a.werkzeuge.join(", ")) : "ohne Werkzeug"}${
+            a.klasse ? " · Klasse " + esc(a.klasse) : ""}</div>
+      </div>`).join(`<div class="pfeil">→</div>`);
+    return `<div class="ablauf" id="ablauf-${esc(j.name)}">
+      <div class="ablauf-kopf">
+        <div>
+          <div class="ablauf-name">${esc(j.name)}</div>
+          <div class="ablauf-plan">${esc(j.beschreibung)}</div>
+          <div class="ablauf-plan">${j.zeitplan
+              ? "Zeitplan: " + esc(j.zeitplan) : "kein Zeitplan"} ·
+              ${j.aufgaben} Aufgabe(n)</div>
+        </div>
+        <button class="knopf haupt" onclick="starteAblauf('${esc(j.name)}')"
+          ${serverWeg ? "disabled" : ""}>Starten</button>
+      </div>
+      ${kette ? `<div class="kette">${kette}</div>` : ""}
+      <div class="ausgabe"></div>
+    </div>`;
+  }).join("");
+
+  ziel.innerHTML = `<h1>Abläufe</h1>
+    <div class="unterzeile">Aus <code>harness/jobs/*.json</code> — eine neue
+      Datei dort erscheint hier von selbst.</div>
+    ${serverWeg ? `<div class="karte" style="margin-bottom:14px">
+       <h3>Job-Server</h3>
+       <div class="hinweis fehler">${esc(aktionen.fehler)}</div>
+       <p class="hinweis">Starten mit:<br>
+         <code>/opt/ki-server/venv/bin/python /opt/ki-server/oberflaeche/m1_job_server.py</code></p>
+       </div>` : ""}
+    ${karten || `<div class="hinweis">Keine Abläufe gefunden.</div>`}`;
+}
+
+async function starteAblauf(name) {
+  const karte = document.getElementById("ablauf-" + name);
+  const feld = karte.querySelector(".ausgabe");
+  const knopf = karte.querySelector("button");
+  knopf.disabled = true;
+  feld.innerHTML = `<pre>startet …</pre>`;
+  let d;
+  try {
+    d = await hole("/api/start", {method: "POST",
+      body: JSON.stringify({aktion: "ablauf_starten", argument: name})});
+  } catch (e) { return; }
+  if (d.fehler) {
+    feld.innerHTML = `<pre class="fehler">${esc(d.fehler)}</pre>`;
+    knopf.disabled = false; return;
+  }
+  verfolge(d.lauf, feld, knopf);
+}
+
+function verfolge(id, feld, knopf) {
+  const takt = setInterval(async () => {
+    let l;
+    try { l = await hole("/api/lauf?id=" + encodeURIComponent(id)); }
+    catch (e) { clearInterval(takt); return; }
+    if (!l.fertig) {
+      feld.innerHTML = `<pre>läuft … ${l.laeuft_seit}s</pre>`;
+      return;
+    }
+    clearInterval(takt);
+    feld.innerHTML = `<pre>${esc(l.ausgabe || "(keine Ausgabe)")}</pre>`;
+    if (knopf) knopf.disabled = false;
+  }, 2000);
+}
+
+/* ---------- Chat ---------- */
+async function zeigeChat(ziel) {
+  if (!MODELLE.length) {
+    try { MODELLE = (await hole("/api/zustand")).modelle || []; } catch (e) {}
+  }
+  // Der Verlauf liegt auf dem Mac: am Handy begonnene Gespräche stehen
+  // damit auch hier - und umgekehrt.
+  let CHATS = [];
+  try { CHATS = (await hole("/api/chats")).chats || []; } catch (e) {}
+  if (!VERLAUF.length) {
+    try {
+      const d = await hole("/api/verlauf?chat=" + encodeURIComponent(CHAT_AKTIV));
+      VERLAUF = (d.nachrichten || []).map(n =>
+        ({role: n.role, content: n.content, ts: n.ts, bildName: n.bild}));
+    } catch (e) {}
+  }
+  const chatListe = CHATS.map(c => `
+    <div class="chatzeile ${c.id === CHAT_AKTIV ? "aktiv" : ""}"
+         onclick="chatWaehlen('${esc(c.id)}')">
+      <div class="chattitel">${esc(c.titel)}</div>
+      <div class="hinweis">${esc(c.zuletzt)} · ${c.anzahl}
+        <span class="chatloeschen" title="Diese Unterhaltung löschen"
+          onclick="event.stopPropagation();chatLoeschen('${esc(c.id)}')">&times;</span>
+      </div>
+    </div>`).join("");
+
+  ziel.innerHTML = `<h1>Chat</h1>
+    <div class="unterzeile">Spricht mit Ollama. Ausführen kann Tim nur
+      Aktionen der Positivliste.</div>
+    <div style="display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px">
+    <div id="chatliste">
+      <button class="knopf" style="width:100%;margin-bottom:8px"
+        onclick="chatWaehlen(neueChatKennung())">+ Neuer Chat</button>
+      ${chatListe || '<div class="hinweis">Noch keine Unterhaltungen.</div>'}
+    </div>
+    <div id="chatfeld">
+      <div style="margin-bottom:10px">
+        <select id="modellwahl">
+          <option value="auto">Automatisch — Orchestrator wählt</option>
+          ${MODELLE.map(m =>
+          `<option value="${esc(m.name)}">${esc(m.name)}${
+            m.parameter ? " · " + esc(m.parameter) : ""}${
+            m.quant ? " " + esc(m.quant) : ""} · ${m.groesse_gb} GB</option>`).join("")}
+        </select>
+
+      </div>
+      <div id="verlauf"></div>
+      <div id="hoerhinweis" class="hinweis"></div>
+      <div id="eingabezeile">
+        <textarea id="frage" rows="1" placeholder="Frage eingeben — Enter sendet"></textarea>
+        <button class="knopf" id="mikroknopf" onclick="mikroUmschalten()"
+                title="Sprechen — wird lokal mit Whisper erkannt">🎙</button>
+        <button class="knopf haupt" id="sendeknopf" onclick="sende()">Senden</button>
+      </div>
+    </div>
+    </div>`;
+  const feld = document.getElementById("frage");
+  feld.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sende(); }
+  });
+  zeichneVerlauf();
+}
+
+function zeichneVerlauf() {
+  const v = document.getElementById("verlauf");
+  if (!v) return;
+  v.innerHTML = VERLAUF.map(n => {
+    const zeit = zeitKurz(n.ts);
+    const stempel = zeit ? `<div class="zeitstempel">${zeit}</div>` : "";
+    if (n.role === "user")
+      return `<div class="blase ich">${esc(n.content)}${stempel}</div>`;
+    const anker = n.content.trimStart().startsWith("Mexla,");
+    return `<div class="blase es">${esc(n.content)}
+      ${n.bildName ? `<img src="${esc(chatBildAdresse(n.bildName))}" alt="Kamerabild"
+        style="max-width:100%;border-radius:8px;margin-top:8px;display:block">
+        <div class="hinweis">Aufnahme von ${zeit || "unbekannt"}</div>` : ""}
+      ${stempel}
+      <div class="canary ${anker ? "gut" : "weg"}">${anker
+        ? "Ankerphrase vorhanden"
+        : "Ankerphrase &bdquo;Mexla,&ldquo; fehlt \u2014 Modell driftet oder Modelfile stimmt nicht"
+      }</div></div>`;
+  }).join("") || `<div class="hinweis">Noch keine Nachrichten.</div>`;
+  v.scrollTop = v.scrollHeight;
+}
+
+async function sende() {
+  const feld = document.getElementById("frage");
+  const text = feld.value.trim();
+  if (!text) return;
+  const modell = document.getElementById("modellwahl").value;
+  if (!modell) return;
+  feld.value = "";
+  VERLAUF.push({role: "user", content: text,
+                ts: new Date().toISOString()});
+  zeichneVerlauf();
+
+  const v = document.getElementById("verlauf");
+  const warte = document.createElement("div");
+  warte.className = "blase es warte";
+  warte.textContent = modell + " denkt nach … (großes Modell: bis zu einer Minute)";
+  v.appendChild(warte); v.scrollTop = v.scrollHeight;
+  document.getElementById("sendeknopf").disabled = true;
+
+  let d;
+  try {
+    d = await hole("/api/chat", {method: "POST",
+      body: JSON.stringify({modell, nachrichten: VERLAUF, chat: CHAT_AKTIV})});
+  } catch (e) { d = {fehler: "Anfrage fehlgeschlagen"}; }
+  document.getElementById("sendeknopf").disabled = false;
+  // Sichtbar machen, wann Tim nachgesehen hat: sonst lässt sich
+  // Gesuchtes nicht von Erfundenem unterscheiden.
+  let hinweis = "";
+  if (d.werkzeuge && d.werkzeuge.length) {
+    const wie = {websuche: "gesucht", webseite_lesen: "Seite gelesen",
+                 kamerabild: "Kamerabild gezeigt", aktionen_zeigen: "Aktionen nachgesehen",
+                 aktion_starten: "Aktion ausgeführt"};
+    hinweis = "\n\n_(" + d.werkzeuge.map(w => wie[w] || w).join(", ") + ")_";
+  }
+  VERLAUF.push({role: "assistant", bildName: d.bild || null,
+                ts: d.ts || new Date().toISOString(),
+                content: (d.antwort ? d.antwort + hinweis
+                                    : "Fehler: " + (d.fehler || "?"))});
+  zeichneVerlauf();
+  if (d.gewaehlt) hoerHinweis("Orchestrator: " + d.gewaehlt + " — " + (d.grund || ""));
+}
+
+/* ---------- Shell ----------
+   Der einzige Ort, an dem Tim einen Befehl ausführt. Standardmäßig
+   gesperrt; freigeschaltet wird an der Tastatur in autonomie.conf.
+   Jeder Aufruf steht danach im Protokoll — auch der abgelehnte. */
+async function chatLoeschen(id) {
+  if (!confirm("Diese Unterhaltung endgültig löschen?")) return;
+  try { await hole("/api/verlauf/leeren",
+    {method: "POST", body: JSON.stringify({chat: id})}); } catch (e) {}
+  if (id === CHAT_AKTIV) { VERLAUF = []; }
+  zeigeChat(document.getElementById("haupt"));
+}
+
+async function zeigeShell(ziel) {
+  ziel.innerHTML = `<h1>Shell</h1><div class="unterzeile">lädt …</div>`;
+  const d = await hole("/api/shell");
+
+  const gesperrt = !d.erlaubt;
+  ziel.innerHTML = `<h1>Shell</h1>
+    <div class="unterzeile">Führt Befehle auf dem Mac aus, im Ordner
+      <code>${esc(d.ordner)}</code>. Jeder Aufruf wird protokolliert.</div>
+
+    <div class="karte" style="margin-bottom:14px">
+      <h3>Freigabe</h3>
+      <div class="zeile"><span>Zustand</span>
+        <span class="wert" style="color:var(--${gesperrt ? "warn" : "gut"})">
+          ${gesperrt ? "gesperrt" : "frei"}</span></div>
+      <div class="zeile"><span>Grund</span><span class="wert">${esc(d.grund)}</span></div>
+      ${gesperrt ? `<p class="hinweis" style="margin:10px 0 0">
+        Freischalten an der Tastatur — bewusst nicht von hier aus:<br>
+        <code>ERLAUBE_SHELL=ja</code> und <code>AUTONOMIE_MODUS=assist</code>
+        in <code>/opt/ki-server/config/autonomie.conf</code></p>` : ""}
+    </div>
+
+    <div class="karte" style="margin-bottom:14px">
+      <h3>Befehl</h3>
+      <div style="display:flex;gap:8px">
+        <input id="shellbefehl" placeholder="${gesperrt
+            ? "gesperrt — siehe oben" : "z. B. ls -la  oder  git status"}"
+          ${gesperrt ? "disabled" : ""}
+          style="flex:1;background:var(--grund);border:1px solid var(--rand);
+                 border-radius:7px;padding:10px;color:var(--text);font:inherit">
+        <button class="knopf haupt" id="shellknopf" onclick="shellStarten()"
+          ${gesperrt ? "disabled" : ""}>Ausführen</button>
+      </div>
+      <div id="shellausgabe"></div>
+    </div>
+
+    <div class="karte">
+      <h3>Protokoll — die letzten Befehle</h3>
+      <div id="shellprotokoll">${protokollZeilen(d.protokoll)}</div>
+    </div>`;
+
+  const feld = document.getElementById("shellbefehl");
+  if (feld) feld.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); shellStarten(); }
+  });
+}
+
+function protokollZeilen(liste) {
+  if (!liste || !liste.length) return `<div class="hinweis">Noch nichts ausgeführt.</div>`;
+  return liste.map(e => `<div class="zeile">
+      <span style="font-family:ui-monospace,monospace;font-size:13px">${
+        e.abgelehnt ? "⛔ " : (e.code === 0 ? "✓ " : "✗ ")}${esc(e.befehl)}</span>
+      <span class="wert">${esc((e.ts || "").slice(5, 16).replace("T", " "))}${
+        e.abgelehnt ? " · abgelehnt" : ` · ${e.dauer_sek}s`}</span>
+    </div>`).join("");
+}
+
+async function shellStarten() {
+  const feld = document.getElementById("shellbefehl");
+  const befehl = feld.value.trim();
+  if (!befehl) return;
+  const knopf = document.getElementById("shellknopf");
+  const aus = document.getElementById("shellausgabe");
+  knopf.disabled = true;
+  aus.innerHTML = `<pre>läuft …</pre>`;
+  let d;
+  try {
+    d = await hole("/api/shell", {method: "POST",
+      body: JSON.stringify({befehl})});
+  } catch (e) { d = {fehler: "Anfrage fehlgeschlagen"}; }
+  knopf.disabled = false;
+  if (d.fehler) {
+    aus.innerHTML = `<pre class="fehler">${esc(d.fehler)}</pre>`;
+  } else {
+    aus.innerHTML = `<pre>${esc(d.ausgabe || "(keine Ausgabe)")}</pre>
+      <div class="hinweis">Rückgabewert ${d.code} · ${d.dauer_sek}s · ${esc(d.ordner)}</div>`;
+    feld.value = "";
+  }
+  try {
+    const neu = await hole("/api/shell");
+    document.getElementById("shellprotokoll").innerHTML = protokollZeilen(neu.protokoll);
+  } catch (e) {}
+}
+
+/* ---------- Sprechen ----------
+   Bewusst nicht die Spracherkennung des Browsers (webkitSpeechRecognition):
+   die schickt die Aufnahme an Apples bzw. Googles Server. Hier wird im
+   Browser nur aufgenommen und zu 16-kHz-WAV gerechnet; erkannt wird mit
+   Whisper auf dem Mac. Die Aufnahme verlässt das Haus nicht. */
+let AUFNAHME = null;
+
+function hoerHinweis(text, fehler) {
+  const h = document.getElementById("hoerhinweis");
+  if (!h) return;
+  h.className = "hinweis" + (fehler ? " fehler" : "");
+  h.textContent = text || "";
+}
+
+async function mikroUmschalten() {
+  const knopf = document.getElementById("mikroknopf");
+  if (AUFNAHME) { AUFNAHME.stop(); return; }
+
+  // getUserMedia gibt es nur in gesicherten Verbindungen. Über die
+  // Tailscale-Adresse mit http:// verweigert der Browser das Mikrofon —
+  // das ist keine fehlende Berechtigung, sondern eine feste Regel.
+  const sicher = window.isSecureContext;
+  if (!sicher || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    hoerHinweis(sicher
+      ? "Dieser Browser gibt kein Mikrofon frei."
+      // Am Handy ist das der Normalfall: über die Tailscale-Adresse
+      // läuft http, und dabei sperrt jeder Browser das Mikrofon. Statt
+      // nur zu meckern, den Ausweg nennen, den es sofort gibt.
+      : "Mikrofon braucht https — über " + location.host + " sperrt der "
+        + "Browser es. Am Handy: die Diktiertaste der Tastatur (🎙 neben "
+        + "der Leertaste) ins Textfeld nutzen. Dauerhaft schöner: HTTPS "
+        + "über Tailscale einschalten, siehe docs/HANDY_ZUGRIFF.md", true);
+    return;
+  }
+
+  let strom;
+  try {
+    strom = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch (e) {
+    hoerHinweis("Mikrofon nicht freigegeben (" + e.name + ").", true);
+    return;
+  }
+
+  const brocken = [];
+  AUFNAHME = new MediaRecorder(strom);
+  AUFNAHME.ondataavailable = e => { if (e.data.size) brocken.push(e.data); };
+  AUFNAHME.onstop = async () => {
+    strom.getTracks().forEach(t => t.stop());
+    AUFNAHME = null;
+    knopf.textContent = "🎙";
+    knopf.classList.remove("haupt");
+    hoerHinweis("wird erkannt …");
+    try {
+      const wav = await zuWav(new Blob(brocken));
+      const antwort = await fetch("/api/hoeren", {
+        method: "POST",
+        headers: {"X-M1-Token": TOKEN, "Content-Type": "audio/wav"},
+        body: wav
+      });
+      const d = await antwort.json();
+      if (d.fehler) { hoerHinweis(d.fehler, true); return; }
+      if (!d.text)  { hoerHinweis(d.hinweis || "nichts verstanden", true); return; }
+      const feld = document.getElementById("frage");
+      feld.value = (feld.value ? feld.value + " " : "") + d.text;
+      feld.focus();
+      hoerHinweis("erkannt mit " + (d.modell || "Whisper"));
+    } catch (e) {
+      hoerHinweis("Erkennung fehlgeschlagen: " + e.message, true);
+    }
+  };
+  AUFNAHME.start();
+  knopf.textContent = "■";
+  knopf.classList.add("haupt");
+  hoerHinweis("nimmt auf — nochmal drücken zum Beenden");
+}
+
+/* In 16-kHz-Mono-WAV wandeln. Das muss im Browser passieren: auf dem Mac
+   ist kein ffmpeg installiert, und whisper-cli öffnet kein WebM. */
+async function zuWav(blob) {
+  const roh = await blob.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const dekodiert = await ctx.decodeAudioData(roh);
+  ctx.close();
+
+  const ZIEL = 16000;
+  const off = new OfflineAudioContext(1, Math.ceil(dekodiert.duration * ZIEL), ZIEL);
+  const quelle = off.createBufferSource();
+  quelle.buffer = dekodiert;
+  quelle.connect(off.destination);
+  quelle.start();
+  const werte = (await off.startRendering()).getChannelData(0);
+
+  const puffer = new ArrayBuffer(44 + werte.length * 2);
+  const v = new DataView(puffer);
+  const text = (pos, s) => { for (let i = 0; i < s.length; i++) v.setUint8(pos + i, s.charCodeAt(i)); };
+  text(0, "RIFF");  v.setUint32(4, 36 + werte.length * 2, true);
+  text(8, "WAVE");  text(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, ZIEL, true); v.setUint32(28, ZIEL * 2, true);
+  v.setUint16(32, 2, true);  v.setUint16(34, 16, true);
+  text(36, "data"); v.setUint32(40, werte.length * 2, true);
+  for (let i = 0; i < werte.length; i++) {
+    const s = Math.max(-1, Math.min(1, werte[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([puffer], {type: "audio/wav"});
+}
+
+/* ---------- Berichte ---------- */
+async function zeigeBerichte(ziel) {
+  ziel.innerHTML = `<h1>Berichte</h1><div class="unterzeile">lädt …</div>`;
+  const d = await hole("/api/berichte");
+  ziel.innerHTML = `<h1>Berichte</h1>
+    <div class="unterzeile">Ergebnisse der Abläufe, neueste zuerst.</div>
+    <div class="karte">
+      ${(d.berichte||[]).map(b => `<div class="zeile">
+        <span><button class="knopf klein" onclick="lies('${esc(b.name)}')">${esc(b.name)}</button></span>
+        <span class="wert">${esc(b.geaendert)} · ${(b.groesse/1024).toFixed(1)} kB</span>
+      </div>`).join("") || `<div class="hinweis">Noch keine Berichte.</div>`}
+    </div>
+    <div id="berichtfeld"></div>`;
+}
+async function lies(name) {
+  const feld = document.getElementById("berichtfeld");
+  feld.innerHTML = `<pre>lädt …</pre>`;
+  const d = await hole("/api/bericht?name=" + encodeURIComponent(name));
+  feld.innerHTML = `<h1 style="font-size:16px;margin-top:20px">${esc(name)}</h1>
+    <pre>${esc(d.inhalt || d.fehler || "")}</pre>`;
+}
+
+/* ---------- Metriken ---------- */
+async function zeigeMetriken(ziel) {
+  ziel.innerHTML = `<h1>Metriken</h1><div class="unterzeile">lädt …</div>`;
+  const [d, s] = await Promise.all([hole("/api/telemetrie"),
+                                    hole("/api/sprachlog").catch(() => ({}))]);
+  ziel.innerHTML = `<h1>Metriken</h1>
+    <div class="unterzeile">Aus <code>harness_log.jsonl</code> — jeder Lauf
+      wird dort verzeichnet.</div>
+    <div class="gitter" style="margin-bottom:14px">
+      <div class="karte"><h3>Läufe</h3>
+        <div class="zeile"><span>gesamt</span><span class="wert">${d.gesamt}</span></div>
+        <div class="zeile"><span>geglückt</span><span class="wert" style="color:var(--gut)">${d.geglueckt}</span></div>
+        <div class="zeile"><span>gescheitert</span><span class="wert ${d.gescheitert?"fehler":""}">${d.gescheitert}</span></div>
+      </div>
+      <div class="karte"><h3>Aufwand</h3>
+        <div class="zeile"><span>Dauer im Schnitt</span><span class="wert">${d.dauer_schnitt} s</span></div>
+        <div class="zeile"><span>Strom gesamt</span><span class="wert">${d.kosten_cent} Cent</span></div>
+      </div>
+    </div>
+    <div class="karte"><h3>Letzte Läufe</h3>
+      ${(d.eintraege||[]).map(e => `<div class="zeile">
+        <span>${e.ok ? "✓" : "✗"} ${esc(e.job)}</span>
+        <span class="wert">${esc((e.ts||"").slice(0,16).replace("T"," "))} ·
+          ${e.versuche} Versuch(e) · ${e.dauer_sek}s</span></div>`).join("")
+        || `<div class="hinweis">Noch keine Läufe verzeichnet.</div>`}
+    </div>
+    <div class="karte" style="margin-top:14px"><h3>Sprachassistent</h3>
+      <div class="zeile"><span>Zustand</span>
+        <span class="wert" style="color:var(${s.laeuft ? "--gut" : "--schlecht"})">
+          ${s.laeuft ? "läuft — hört auf „Hey Tim“" : "aus"}</span></div>
+      <div class="unterzeile">Was zuletzt gehört wurde, aus
+        <code>sprachassistent.log</code>. An und aus geht bei den
+        Abläufen: <code>sprachassistent_stoppen</code> /
+        <code>sprachassistent_starten</code>.</div>
+      <pre id="sprachlog" style="max-height:280px;overflow:auto">${
+        esc((s.zeilen||[]).join("\n") || "Noch nichts protokolliert.")}</pre>
+    </div>`;
+  const protokoll = document.getElementById("sprachlog");
+  if (protokoll) protokoll.scrollTop = protokoll.scrollHeight;
+}
+
+/* ---------- Benchmark ---------- */
+/* Eigener Reiter fuer den Modelltest (23.08.2026): gemessener Stand je
+   Modell, Start der Laeufe, Uebernahme recherchierter Testfaelle und die
+   Benchmark-Berichte an einer Stelle. Ausgefuehrt wird alles ueber
+   /api/start -> Job-Server-Positivliste - hier wird nur gelesen. */
+async function zeigeBenchmark(ziel) {
+  ziel.innerHTML = `<h1>Benchmark</h1><div class="unterzeile">lädt …</div>`;
+  let d;
+  try { d = await hole("/api/benchmark"); }
+  catch (e) { return; }
+
+  const status = d.laeuft
+    ? `<span class="wert" style="color:var(--warn,#e0a800)">läuft seit ${esc(d.laeuft.start||"?")} — ${esc(d.laeuft.beschreibung||"")}</span>`
+    : `<span class="wert" style="color:var(--gut)">frei</span>`;
+
+  const zeile5 = (a,b,c,e,f,fett) => `<div class="zeile" style="display:grid;grid-template-columns:minmax(0,2.2fr) .8fr .7fr .8fr 1fr;gap:8px${fett?";font-weight:600":""}">
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a)}">${esc(a)}</span>
+    <span class="wert">${esc(b)}</span><span class="wert">${esc(c)}</span>
+    <span class="wert">${esc(e)}</span><span class="wert">${esc(f)}</span></div>`;
+
+  ziel.innerHTML = `<h1>Benchmark</h1>
+    <div class="unterzeile">Die 14 deterministischen Prüfungen
+      (<code>modell_benchmark.py</code>) plus recherchierte Zusatzfälle —
+      Messwerte statt Bauchgefühl.</div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Lauf</h3>
+      <div class="zeile"><span>Zustand</span><span id="benchstatus">${status}</span></div>
+      <div style="margin:10px 0 6px;display:flex;flex-wrap:wrap;gap:8px">
+        <button class="knopf haupt" id="bench-neue" onclick="benchAktion('modell_benchmark_neue','',this)">Neue Modelle testen</button>
+        <button class="knopf" onclick="benchAktion('modell_benchmark_status','',this)">Stand / Log ansehen</button>
+        <button class="knopf" onclick="benchAktion('benchmark_faelle_uebernehmen','',this)">Testfälle übernehmen</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <select id="benchmodell">${(d.installiert||[]).map(m =>
+          `<option value="${esc(m)}">${esc(m)}${(d.ungetestet||[]).includes(m) ? " — nie gemessen" : ""}</option>`).join("")}</select>
+        <button class="knopf" onclick="benchEinzeltest(this)">Dieses Modell testen</button>
+      </div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--rand)">
+        <div style="margin-bottom:6px">Diese Modelle gegeneinander testen
+          <span class="unterzeile" style="display:inline">(2 bis 6 anhaken — ein Lauf, ein Vergleichsbericht):</span></div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-bottom:8px">
+          ${(d.installiert||[]).map(m => `<label style="display:flex;gap:6px;align-items:center;cursor:pointer">
+            <input type="checkbox" class="benchwahl" value="${esc(m)}">${esc(m)}</label>`).join("")}
+        </div>
+        <button class="knopf" onclick="benchVergleich(this)">Vergleich starten</button>
+      </div>
+      <div class="unterzeile">„Neue Modelle testen“ misst alles, was installiert
+        und noch nie gemessen wurde${(d.ungetestet||[]).length
+          ? ` — aktuell: <b>${d.ungetestet.map(esc).join(", ")}</b>`
+          : " — aktuell ist alles vermessen"}.
+        Ein Lauf braucht je Modell Minuten bis über eine Stunde und läuft im
+        Hintergrund weiter, auch wenn du den Reiter verlässt.</div>
+      <div class="ausgabe" id="benchausgabe"></div>
+    </div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Messstand je Modell</h3>
+      <div style="overflow-x:auto"><div style="min-width:540px">
+      ${d.stand && d.stand.length ? zeile5("Modell","Punkte","Tok/s","Ladezeit","gemessen",1)
+        + d.stand.map(s => zeile5(s.modell, s.punkte,
+            s.tok_pro_s ?? "?", (s.ladezeit_s ?? "?") + " s",
+            (s.zeit||"").replace("T"," "))).join("")
+        : `<div class="hinweis">Noch keine vollständigen Messungen.</div>`}
+      </div></div>
+      <div class="unterzeile">Jüngster vollständiger Lauf je Modell; Details
+        stehen im jeweiligen Bericht unten.</div>
+    </div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Zusatz-Testfälle</h3>
+      ${(d.extra_faelle||[]).length
+        ? `<div class="zeile"><span>aktiv</span><span class="wert">${d.extra_faelle.map(esc).join(", ")}</span></div>`
+        : `<div class="hinweis">Noch keine Zusatzfälle aktiv.</div>`}
+      ${(d.extra_meldungen||[]).map(m => `<div class="hinweis fehler">${esc(m)}</div>`).join("")}
+      <div class="unterzeile">Der Ablauf <code>modell_scan</code> recherchiert
+        Vorschläge; „Testfälle übernehmen“ prüft sie (Gut-Antwort muss
+        bestehen, Schlecht-Antwort durchfallen) und übernimmt nur Daten,
+        nie Code.</div>
+    </div>
+
+    <div class="karte" style="margin-bottom:14px"><h3>Quellen</h3>
+      ${(d.quellen||[]).map(q => `<div class="zeile">
+        <span><a href="${esc(q.url)}" target="_blank" rel="noopener" style="color:inherit">${esc(q.name)}</a></span>
+        <span class="wert" style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(q.hinweis)}">${esc(q.hinweis || q.url)}</span>
+      </div>`).join("") || `<div class="hinweis">Noch keine Quellen eingetragen.</div>`}
+      <div class="unterzeile">Aus <code>config/benchmark_quellen.json</code> —
+        der <code>modell_scan</code> liest diese Liste und ruft die Seiten ab.
+        Neue Fundorte schlägt er selbst vor; übernommen wird per
+        „Testfälle übernehmen“ (öffentliche Adressen, geprüft gegen
+        interne Dienste). Von Hand pflegbar in derselben Datei.</div>
+    </div>
+
+    <div class="karte"><h3>Berichte</h3>
+      ${(d.berichte||[]).map(b => `<div class="zeile">
+        <span><button class="knopf klein" onclick="benchBericht('${esc(b.name)}')">${esc(b.name)}</button></span>
+        <span class="wert">${esc(b.geaendert)} · ${(b.groesse/1024).toFixed(1)} kB</span>
+      </div>`).join("") || `<div class="hinweis">Noch keine Benchmark-Berichte.</div>`}
+    </div>
+    <div id="benchberichtfeld"></div>`;
+
+  /* Solange ein Lauf arbeitet, die Statuszeile mitziehen - aber nur die,
+     damit ein geoeffneter Bericht beim Lesen nicht zugeklappt wird. */
+  if (d.laeuft) {
+    TAKT = setInterval(async () => {
+      let n;
+      try { n = await hole("/api/benchmark"); } catch (e) { return; }
+      const feld = document.getElementById("benchstatus");
+      if (!feld) return;
+      if (n.laeuft) {
+        feld.innerHTML = `<span class="wert" style="color:var(--warn,#e0a800)">läuft seit ${esc(n.laeuft.start||"?")} — ${esc(n.laeuft.beschreibung||"")}</span>`;
+      } else {
+        clearInterval(TAKT); TAKT = null;
+        zeigeBenchmark(document.getElementById("haupt"));
+      }
+    }, 10000);
+  }
+}
+
+async function benchAktion(aktion, argument, knopf) {
+  const feld = document.getElementById("benchausgabe");
+  if (knopf) knopf.disabled = true;
+  feld.innerHTML = `<pre>startet …</pre>`;
+  let d;
+  try {
+    d = await hole("/api/start", {method: "POST",
+      body: JSON.stringify({aktion: aktion, argument: argument || ""})});
+  } catch (e) { if (knopf) knopf.disabled = false; return; }
+  if (d.fehler) {
+    feld.innerHTML = `<pre class="fehler">${esc(d.fehler)}</pre>`;
+    if (knopf) knopf.disabled = false; return;
+  }
+  verfolge(d.lauf, feld, knopf);
+}
+
+function benchEinzeltest(knopf) {
+  const auswahl = document.getElementById("benchmodell");
+  if (!auswahl || !auswahl.value) return;
+  /* ':' und '/' duerfen den Argument-Riegel nicht passieren - der
+     Starter loest die Punkt-Schreibweise gegen die installierten
+     Modelle auf (Positivliste, kein Raten). */
+  benchAktion("modell_benchmark_modell",
+              auswahl.value.replace(/[:/]/g, "."), knopf);
+}
+
+function benchVergleich(knopf) {
+  const gewaehlt = [...document.querySelectorAll(".benchwahl:checked")]
+    .map(w => w.value);
+  const feld = document.getElementById("benchausgabe");
+  if (gewaehlt.length < 2) {
+    feld.innerHTML = `<pre class="fehler">Bitte mindestens zwei Modelle anhaken.</pre>`;
+    return;
+  }
+  if (gewaehlt.length > 6) {
+    feld.innerHTML = `<pre class="fehler">Höchstens sechs Modelle je Vergleich — sonst ist der Mac zu lange belegt.</pre>`;
+    return;
+  }
+  /* Trenner '__': Komma und Leerzeichen kommen nicht durch den
+     Argument-Riegel; aufgeloest wird im Starter gegen die
+     installierten Modelle. */
+  const arg = gewaehlt.map(m => m.replace(/[:/]/g, ".")).join("__");
+  if (arg.length > 80) {
+    feld.innerHTML = `<pre class="fehler">Die Auswahl ist zu lang für ein Argument (max. 80 Zeichen) — bitte weniger oder kürzere Modellnamen wählen.</pre>`;
+    return;
+  }
+  benchAktion("modell_benchmark_vergleich", arg, knopf);
+}
+
+async function benchBericht(name) {
+  const feld = document.getElementById("benchberichtfeld");
+  feld.innerHTML = `<pre>lädt …</pre>`;
+  const d = await hole("/api/bericht?name=" + encodeURIComponent(name));
+  feld.innerHTML = `<h1 style="font-size:16px;margin-top:20px">${esc(name)}</h1>
+    <pre>${esc(d.inhalt || d.fehler || "")}</pre>`;
+}
+
+/* ---------- Not-Aus ---------- */
+async function notAus() {
+  if (!confirm("Kill-Switch setzen? Alle autonomen Abläufe werden gestoppt.\n\n" +
+               "Aufheben geht danach nur an der Tastatur mit m1-weiter.")) return;
+  const d = await hole("/api/notaus", {method: "POST", body: "{}"});
+  alert(d.fehler ? "Fehler: " + d.fehler : "Not-Aus ausgelöst.");
+  if (ANSICHT === "uebersicht") zeichne();
+}
+
+/* ---------- Los ---------- */
+if (TOKEN) {
+  hole("/api/zustand").then(starten).catch(() => {});
+}
+</script>
+</body>
+</html>

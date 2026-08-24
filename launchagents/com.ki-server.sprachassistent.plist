@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ki-server.sprachassistent</string>
+    <!-- Homebrew-Python: sounddevice/numpy/scipy sind nur dort installiert.
+         -u: ungepuffert, sonst erscheinen die Log-Zeilen erst Minuten spaeter. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>-u</string>
+        <string>/opt/ki-server/scripts/sprachassistent.py</string>
+        <string>--dienst</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+    <key>StandardOutPath</key>
+    <string>/opt/ki-server/logs/sprachassistent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/ki-server/logs/sprachassistent.log</string>
+</dict>
+</plist>

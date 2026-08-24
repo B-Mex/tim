@@ -1,0 +1,43 @@
+{
+  "name": "s7_wissensfrage",
+  "beschreibung": "Fragen zur SIMATIC S7-1200 anhand der lokalen Siemens-Wissensbasis beantworten (Handbuecher im Projektordner).",
+  "schedule_cron": null,
+  "collection": "projekt_s7_1200",
+  "bericht_pfad": "~/Desktop/Quick Agent Projekte/S7-1200_Steuerung/ANTWORTEN_AUTOMATISCH.md",
+  "benoetigt_freigabe": [],
+  "erlaubte_pfade": ["~/Desktop/Quick Agent Projekte/S7-1200_Steuerung"],
+  "agents": [
+    {
+      "id": "wissensfinder",
+      "rolle": "Dokumentations-Rechercheur",
+      "ziel": "In der lokalen S7-1200-Wissensbasis die passenden Handbuecher zur Frage finden",
+      "hintergrund": "Liest die README der Wissensbasis, um zu wissen welches PDF welches Thema abdeckt (Systemhandbuch, OPC UA, MQTT, Webserver, Safety, ...).",
+      "modell_klasse": 1,
+      "werkzeuge": ["dateien_lesen"]
+    },
+    {
+      "id": "sps_experte",
+      "rolle": "SPS-Experte",
+      "ziel": "Die Frage praxisnah beantworten, bevorzugt mit SCL-Beispiel",
+      "hintergrund": "Kennt TIA Portal und S7-1200. Bevorzugt SCL, alternativ LAD/FBD. Baut immer Fehlerbehandlung ein. Warnt bei sicherheitsrelevanten Themen (Netzspannung, F-CPU, Not-Halt) ausdruecklich.",
+      "modell_klasse": 1,
+      "werkzeuge": []
+    }
+  ],
+  "tasks": [
+    {
+      "id": "quellen",
+      "agent": "wissensfinder",
+      "beschreibung": "Lies ~/Desktop/Quick Agent Projekte/S7-1200_Steuerung/README.md und nenne, welche Dokumente zur gestellten Frage relevant sind. Die Frage steht in der Datei FRAGE.txt im selben Ordner - lies sie ebenfalls.",
+      "input": [],
+      "erwartete_ausgabe": "Mexla, gefolgt von: die Frage + Liste der relevanten Dokumente mit Begruendung."
+    },
+    {
+      "id": "antwort",
+      "agent": "sps_experte",
+      "beschreibung": "Beantworte die Frage konkret und praxisnah. Nenne die Handbuecher als Quelle. Wenn Code sinnvoll ist, gib SCL mit Fehlerbehandlung und deutschen Kommentaren an. Sag ehrlich, wenn die Wissensbasis die Frage nicht abdeckt.",
+      "input": ["quellen"],
+      "erwartete_ausgabe": "Mexla, gefolgt von der Antwort mit Quellenangabe und ggf. SCL-Code."
+    }
+  ]
+}

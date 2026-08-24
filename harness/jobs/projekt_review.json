@@ -1,0 +1,58 @@
+{
+  "name": "projekt_review",
+  "beschreibung": "Prueft ein Projekt gegen die eigenen Coding-Regeln: Deutsch kommentiert, Type Hints, Fehlerbehandlung, Warnung bei Netzspannung/Motoren. Pfad in 'erlaubte_pfade' anpassen, um ein anderes Projekt zu pruefen.",
+  "collection": "m1_projekt_review",
+  "bericht_pfad": "~/Desktop/M1_DEPLOYMENT/berichte/projekt_review.md",
+  "erlaubte_pfade": [
+    "~/Desktop/Quick Agent Projekte/Maehroboter"
+  ],
+  "agents": [
+    {
+      "id": "leser",
+      "rolle": "Code-Leser",
+      "ziel": "Alle Quelldateien des freigegebenen Projekts erfassen und je Datei Sprache, Zweck und auffaellige Stellen festhalten",
+      "hintergrund": "Liest nur, urteilt nicht. Kennt Python, MicroPython, Arduino C++ und SCL.",
+      "modell_klasse": 1,
+      "werkzeuge": ["dateien_lesen"]
+    },
+    {
+      "id": "regelpruefer",
+      "rolle": "Regel-Pruefer",
+      "ziel": "Jede Datei gegen die vier Hausregeln pruefen: (1) Kommentare, Variablennamen und Docstrings auf Deutsch, (2) Python mit Type Hints, (3) Fehlerbehandlung vorhanden, (4) bei Netzspannung oder Motoren eine ausdrueckliche Warnung im Code oder in der README",
+      "hintergrund": "Beurteilt ausschliesslich, was der Leser wirklich gefunden hat. Erfindet keine Dateien und keine Zeilennummern. Wenn eine Datei nicht gelesen werden konnte, ist das eine Luecke und kein bestandener Punkt.",
+      "modell_klasse": 1,
+      "werkzeuge": []
+    },
+    {
+      "id": "controller",
+      "rolle": "Controller",
+      "ziel": "Die Befunde nach Gewicht ordnen und je Befund einen konkreten naechsten Schritt nennen",
+      "hintergrund": "Sicherheitsrelevante Befunde (fehlende Warnung bei Netzspannung oder Motoren, fehlende Fehlerbehandlung im Dauerbetrieb) stehen immer oben. Stilfragen zuletzt. Empfiehlt NIE einen Kauf.",
+      "modell_klasse": 1,
+      "werkzeuge": []
+    }
+  ],
+  "tasks": [
+    {
+      "id": "lesen",
+      "agent": "leser",
+      "beschreibung": "Lies die Quelldateien im freigegebenen Projektordner. Halte je Datei fest: Dateiname, Sprache, Zweck in einem Satz, und ob Kommentare deutsch sind, ob Type Hints vorkommen, ob es Fehlerbehandlung gibt und ob Netzspannung oder Motoren vorkommen. Wenn eine Datei nicht lesbar ist, nenne sie als nicht gelesen.",
+      "input": [],
+      "erwartete_ausgabe": "Mexla, gefolgt von JSON-Liste: [{datei, sprache, zweck, deutsch, type_hints, fehlerbehandlung, netzspannung_oder_motor, gelesen}]"
+    },
+    {
+      "id": "pruefen",
+      "agent": "regelpruefer",
+      "beschreibung": "Bewerte je Datei die vier Hausregeln. Urteile nur ueber Dateien, die als gelesen gemeldet wurden. Nicht gelesene Dateien sind eine Luecke.",
+      "input": ["lesen"],
+      "erwartete_ausgabe": "Mexla, gefolgt von JSON-Liste: [{datei, regel, urteil: erfuellt|verletzt|luecke, begruendung}]"
+    },
+    {
+      "id": "ordnen",
+      "agent": "controller",
+      "beschreibung": "Ordne die Befunde nach Gewicht und nenne je Befund einen konkreten naechsten Schritt fuer den Besitzer. Sicherheitsrelevantes zuerst, Stilfragen zuletzt.",
+      "input": ["pruefen"],
+      "erwartete_ausgabe": "Mexla, gefolgt von JSON-Liste: [{rang, datei, befund, gewicht: hoch|mittel|niedrig, naechster_schritt}]"
+    }
+  ]
+}

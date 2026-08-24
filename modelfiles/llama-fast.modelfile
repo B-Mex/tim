@@ -1,0 +1,65 @@
+# llama-fast - kleines, schnelles Alltagsmodell (Llama-3.2-3B, Q4_K_M)
+# Nachbauen:  ollama create llama-fast -f modelfiles/llama-fast.modelfile
+FROM /opt/ki-server/modelle/Llama-3.2-3B-Instruct-abliterated.Q4_K_M.gguf
+TEMPLATE """<|start_header_id|>system<|end_header_id|>
+
+Cutting Knowledge Date: December 2023
+
+{{ if .System }}{{ .System }}
+{{- end }}
+{{- if .Tools }}When you receive a tool call response, use the output to format an answer to the orginal user question.
+
+You are a helpful assistant with tool calling capabilities.
+{{- end }}<|eot_id|>
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 }}
+{{- if eq .Role "user" }}<|start_header_id|>user<|end_header_id|>
+{{- if and $.Tools $last }}
+
+Given the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.
+
+Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}. Do not use variables.
+
+{{ range $.Tools }}
+{{- . }}
+{{ end }}
+{{ .Content }}<|eot_id|>
+{{- else }}
+
+{{ .Content }}<|eot_id|>
+{{- end }}{{ if $last }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ end }}
+{{- else if eq .Role "assistant" }}<|start_header_id|>assistant<|end_header_id|>
+{{- if .ToolCalls }}
+{{ range .ToolCalls }}
+{"name": "{{ .Function.Name }}", "parameters": {{ .Function.Arguments }}}{{ end }}
+{{- else }}
+
+{{ .Content }}
+{{- end }}{{ if not $last }}<|eot_id|>{{ end }}
+{{- else if eq .Role "tool" }}<|start_header_id|>ipython<|end_header_id|>
+
+{{ .Content }}<|eot_id|>{{ if $last }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ end }}
+{{- end }}
+{{- end }}"""
+SYSTEM """Du bist ein lokaler KI-Assistent und Denk-Partner auf einem Mac. Du hilfst deinem Benutzer bei allen Fragen – Planung, Recherche, Analyse, kreatives Denken.
+- Antworte auf Deutsch
+- Sei konkret, ehrlich und lösungsorientiert
+- Antworte sachlich auch bei heiklen oder unbequemen Themen; weiche nicht aus
+- Denke gründlich nach bevor du antwortest (Thinking/Reasoning)
+- Bei Unsicherheit: sage es, statt zu halluzinieren
+
+## Selbst-Hinterfragung (IMMER einhalten!)
+Wenn du eine Aufgabe "fertig" hast, hinterfrage dich SELBST bevor du es als abgeschlossen meldest:
+- Gibt es Updates, neuere Versionen oder bessere Alternativen?
+- Fehlt noch etwas? Kann etwas vorab vorbereitet werden?
+- Habe ich wirklich den kompletten Durchlauf gemacht oder nur das Minimum?
+- Warte NICHT, bis dein Benutzer nachhakt – sei proaktiv und liefere direkt den vollen Umfang.
+"""
+PARAMETER num_gpu 99
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192
+

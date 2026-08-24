@@ -1,0 +1,43 @@
+{
+  "name": "strompreis_codecheck",
+  "beschreibung": "Den MicroPython-Code des Strompreis-Displays gegen die Meilensteine pruefen (Robustheit, WLAN-Reconnect, Fehlerbehandlung).",
+  "schedule_cron": null,
+  "collection": "projekt_strompreis",
+  "bericht_pfad": "~/Desktop/Quick Agent Projekte/Strompreis-Display/CODEREVIEW_AUTOMATISCH.md",
+  "benoetigt_freigabe": [],
+  "erlaubte_pfade": ["~/Desktop/Quick Agent Projekte/Strompreis-Display"],
+  "agents": [
+    {
+      "id": "codeleser",
+      "rolle": "Code-Analyst",
+      "ziel": "Den vorhandenen MicroPython-Code und die Meilensteine aus der README erfassen",
+      "hintergrund": "Liest README.md und die Dateien im Software-Ordner des Projekts.",
+      "modell_klasse": 1,
+      "werkzeuge": ["dateien_lesen"]
+    },
+    {
+      "id": "reviewer",
+      "rolle": "Embedded-Reviewer",
+      "ziel": "Schwachstellen fuer den Dauerbetrieb finden (Meilenstein M5: 24h stabil, Auto-Reconnect)",
+      "hintergrund": "Kennt Raspberry Pi Pico W und MicroPython. Achtet auf WLAN-Aussetzer, HTTP-Timeouts, Speicherlecks, fehlende try/except, blockierende Schleifen. Kommentare und Doku auf Deutsch.",
+      "modell_klasse": 1,
+      "werkzeuge": []
+    }
+  ],
+  "tasks": [
+    {
+      "id": "erfassen",
+      "agent": "codeleser",
+      "beschreibung": "Lies ~/Desktop/Quick Agent Projekte/Strompreis-Display/README.md und fasse die Meilensteine sowie den Stand des Codes zusammen. Nenne die Dateien im Software-Ordner, die du gelesen hast.",
+      "input": [],
+      "erwartete_ausgabe": "Mexla, gefolgt von einer Zusammenfassung von Meilensteinen und Code-Stand."
+    },
+    {
+      "id": "review",
+      "agent": "reviewer",
+      "beschreibung": "Pruefe den Code auf Dauerbetriebs-Tauglichkeit: WLAN-Reconnect, HTTP-Fehlerbehandlung, Speicherverbrauch, Absturzsicherheit. Nenne konkrete Codestellen und konkrete Verbesserungen. Sag ehrlich, wenn du eine Datei nicht lesen konntest.",
+      "input": ["erfassen"],
+      "erwartete_ausgabe": "Mexla, gefolgt von: [{fundstelle, problem, schwere: hoch|mittel|niedrig, empfohlene_aenderung}]"
+    }
+  ]
+}

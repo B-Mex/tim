@@ -1,0 +1,71 @@
+{
+  "name": "maehroboter_recherche",
+  "beschreibung": "Offene Bauteilfragen des Maehroboter-Projekts recherchieren (GPS, Ladestation, BMS, Motortreiber) - recherchiert und schlaegt vor, kauft NIE.",
+  "schedule_cron": null,
+  "collection": "projekt_maehroboter",
+  "bericht_pfad": "~/Desktop/Quick Agent Projekte/Maehroboter/Einkauf/RECHERCHE_AUTOMATISCH.md",
+  "benoetigt_freigabe": [
+    "kauf"
+  ],
+  "erlaubte_pfade": [
+    "~/Desktop/Quick Agent Projekte/Maehroboter"
+  ],
+  "agents": [
+    {
+      "id": "projektleser",
+      "rolle": "Projekt-Analyst",
+      "ziel": "Aus der Projekt-README herauslesen, welche Bauteile noch fehlen und welche Fragen offen sind",
+      "hintergrund": "Liest die README des Maehroboter-Projekts und fasst den offenen Bedarf strukturiert zusammen.",
+      "modell_klasse": 1,
+      "werkzeuge": [
+        "dateien_lesen"
+      ]
+    },
+    {
+      "id": "teile_researcher",
+      "rolle": "Bauteil-Rechercheur",
+      "ziel": "Fuer jedes fehlende Bauteil konkrete, in Deutschland lieferbare Optionen mit Preisspanne finden",
+      "hintergrund": "Kennt Reichelt, Conrad, Voelkner, Amazon.de, eBay. Prueft Kompatibilitaet mit Raspberry Pi. Gibt NUR Vorschlaege - bestellt niemals etwas. Darf eine Produktseite oeffnen, wenn der Suchtreffer keinen Preis zeigt.",
+      "modell_klasse": 1,
+      "werkzeuge": [
+        "searxng",
+        "webseite_lesen"
+      ]
+    },
+    {
+      "id": "pruefer",
+      "rolle": "Zwilling/Reviewer",
+      "ziel": "Vorschlaege auf Pi-Kompatibilitaet, Plausibilitaet des Preises und Sicherheitsrisiken pruefen",
+      "hintergrund": "Skeptisch. Warnt ausdruecklich bei Akku-, Motor- oder Netzspannungsrisiken.",
+      "modell_klasse": 1,
+      "werkzeuge": []
+    }
+  ],
+  "tasks": [
+    {
+      "id": "bedarf",
+      "agent": "projektleser",
+      "beschreibung": "Lies die Datei ~/Desktop/Quick Agent Projekte/Maehroboter/README.md und liste auf, welche Komponenten als fehlend oder 'zu recherchieren' markiert sind.",
+      "input": [],
+      "erwartete_ausgabe": "Mexla, gefolgt von einer Liste der offenen Bauteile mit Zweck."
+    },
+    {
+      "id": "recherche",
+      "agent": "teile_researcher",
+      "beschreibung": "Suche fuer JEDES offene Bauteil aus Schritt 1 zwei bis drei konkrete Produkte, die in Deutschland lieferbar sind. Nutze dafuer die Websuche; reicht der Treffer nicht, oeffne die Produktseite. Gib KEINE Anleitungen und keine Verkabelung - nur Produkte.",
+      "input": [
+        "bedarf"
+      ],
+      "erwartete_ausgabe": "Antwort beginnt mit 'Mexla,'. Danach je Bauteil eine Markdown-Tabelle mit den Spalten: Bauteil | Produktname | Haendler | Preis in Euro | Quelle (Adresse). Keine Anleitungen, keine Verkabelungshinweise."
+    },
+    {
+      "id": "pruefung",
+      "agent": "pruefer",
+      "beschreibung": "Pruefe jeden Vorschlag kritisch: passt er technisch zum Pi, ist der Preis plausibel, gibt es Sicherheitsrisiken (Akku/Motor)? Markiere klar, was der Besitzer vor einem Kauf noch selbst entscheiden muss. WICHTIG: Es wird nichts bestellt, das entscheidet ausschliesslich der Besitzer.",
+      "input": [
+        "recherche"
+      ],
+      "erwartete_ausgabe": "Antwort beginnt mit 'Mexla,'. Fuer jeden Vorschlag aus Schritt 2 eine Zeile: Produkt - passt/passt nicht - Begruendung. Am Ende: offene Fragen an den Besitzer."
+    }
+  ]
+}

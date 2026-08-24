@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ki-server.jobserver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/ki-server/venv/bin/python</string>
+        <string>/opt/ki-server/oberflaeche/m1_job_server.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/opt/ki-server/logs/jobserver.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/ki-server/logs/jobserver.log</string>
+</dict>
+</plist>

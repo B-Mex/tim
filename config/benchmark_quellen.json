@@ -1,0 +1,29 @@
+{
+  "quellen": [
+    {
+      "name": "llm_benchmark_omar",
+      "url": "https://github.com/omar16100/llm-benchmark",
+      "hinweis": "Aufgabensammlung, aus der die Faelle code_bereiche (C1) und mathe_wahrscheinlichkeit (M1) stammen."
+    },
+    {
+      "name": "willison_pelikan",
+      "url": "https://simonwillison.net/tags/pelican-riding-a-bicycle/",
+      "hinweis": "Der Pelikan-auf-dem-Fahrrad-SVG-Test im Original - Willison schreibt die Serie mit jedem neuen Modell fort."
+    },
+    {
+      "name": "livebench",
+      "url": "https://livebench.ai/",
+      "hinweis": "Benchmark mit regelmaessig erneuerten Fragen. NUR als Ideenquelle fuer Aufgabentypen - die Seite selbst ist Technik-Doku, Faelle daraus immer selbst formulieren."
+    },
+    {
+      "name": "reddit_localllama",
+      "url": "https://www.reddit.com/r/LocalLLaMA/",
+      "hinweis": "Community-Tests und Eval-Ideen fuer lokale Modelle; Einzelfunde immer gegenpruefen."
+    },
+    {
+      "name": "lmarena_blog",
+      "url": "https://blog.lmarena.ai/",
+      "hinweis": "Methodik-Artikel zu Modellvergleichen; taugt fuer Testideen, nicht fuer fertige Faelle."
+    }
+  ]
+}

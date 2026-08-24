@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Setzt bei jedem Systemstart das GPU-Speicherlimit auf 26 GB,
+         damit qwen3.6:35b-a3b (23 GB + Kontext) komplett auf die GPU passt.
+         Gemessen am 23.08.2026 (Mac Studio M1 Max, 32 GB): mit diesem Limit
+         100% GPU, 42,6 Tok/s. Ohne den Dienst gilt nach jedem Neustart
+         wieder der Standard (~21 GB). Wert an den eigenen RAM anpassen!
+         Installation (LaunchDaemon, braucht root):
+           sudo cp config/com.ki-server.iogpu-limit.plist /Library/LaunchDaemons/
+           sudo launchctl load /Library/LaunchDaemons/com.ki-server.iogpu-limit.plist -->
+    <key>Label</key>
+    <string>com.ki-server.iogpu-limit</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/sysctl</string>
+        <string>iogpu.wired_limit_mb=26624</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>

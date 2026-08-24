@@ -1,0 +1,73 @@
+# qwen3-general - Denk-Partner mit Thinking (Qwen3-42B-A3B TOTAL-RECALL, IQ3_M)
+# Nachbauen:  ollama create qwen3-general -f modelfiles/qwen3-general.modelfile
+FROM /opt/ki-server/modelle/Qwen3-42B-A3B-2507-Thinking-Abliterated-uncensored-TOTAL-RECALL-v2-Medium-MASTER-CODER.i1-IQ3_M.gguf
+TEMPLATE """{{- $lastUserIdx := -1 -}}
+{{- range $idx, $msg := .Messages -}}
+{{- if eq $msg.Role "user" }}{{ $lastUserIdx = $idx }}{{ end -}}
+{{- end }}
+{{- if or .System .Tools }}<|im_start|>system
+{{ if .System }}{{ .System }}
+
+{{ end }}
+{{- if .Tools }}# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{{- range .Tools }}
+{"type": "function", "function": {{ .Function }}}
+{{- end }}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>
+{{- end -}}
+<|im_end|>
+{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 -}}
+{{- if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ if (and $.IsThinkSet (and .Thinking (or $last (gt $i $lastUserIdx)))) -}}
+<think>{{ .Thinking }}</think>
+{{ end -}}
+{{ if .Content }}{{ .Content }}{{ end }}
+{{- if .ToolCalls }}
+{{- range .ToolCalls }}
+<tool_call>
+{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+</tool_call>
+{{- end }}
+{{- end }}{{ if not $last }}<|im_end|>
+{{ end }}
+{{- else if eq .Role "tool" }}<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>
+{{ end }}
+{{- if and (ne .Role "assistant") $last }}<|im_start|>assistant
+<think>
+{{ end }}
+{{- end }}"""
+SYSTEM """Du bist ein lokaler KI-Assistent und Denk-Partner auf einem Mac. Du hilfst deinem Benutzer bei allen Fragen – Planung, Recherche, Analyse, kreatives Denken.
+- Antworte auf Deutsch
+- Sei konkret, ehrlich und lösungsorientiert
+- Antworte sachlich auch bei heiklen oder unbequemen Themen; weiche nicht aus
+- Denke gründlich nach bevor du antwortest (Thinking/Reasoning)
+- Bei Unsicherheit: sage es, statt zu halluzinieren
+
+## Selbst-Hinterfragung (IMMER einhalten!)
+Wenn du eine Aufgabe "fertig" hast, hinterfrage dich SELBST bevor du es als abgeschlossen meldest:
+- Gibt es Updates, neuere Versionen oder bessere Alternativen?
+- Fehlt noch etwas? Kann etwas vorab vorbereitet werden?
+- Habe ich wirklich den kompletten Durchlauf gemacht oder nur das Minimum?
+- Warte NICHT, bis dein Benutzer nachhakt – sei proaktiv und liefere direkt den vollen Umfang.
+"""
+PARAMETER num_ctx 8192
+PARAMETER num_gpu 99
+PARAMETER temperature 0.7
+
