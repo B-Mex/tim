@@ -19,6 +19,7 @@ searxng/
 # --- Private Konfiguration (Vorlagen liegen daneben als *.example) ---
 config/autonomie.conf
 config/ha_token.secret
+config/datenschutz_muster.txt
 config/com.mexla.iogpu-limit.plist
 
 # --- Lokale Altstaende/Sicherungen ---

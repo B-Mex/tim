@@ -1,0 +1,41 @@
+# Suchmuster fuer den Datenschutz-Riegel (scripts/git_hook_datenschutz.sh).
+#
+# Diese Datei ist die VORLAGE. Zum Benutzen kopieren:
+#     cp config/datenschutz_muster.txt.example config/datenschutz_muster.txt
+# und die eigenen Angaben eintragen. Die Kopie steht in .gitignore und
+# bleibt lokal - denn die Muster sind ja genau das, was geheim bleiben soll.
+#
+# Aufbau:
+#   #  am Zeilenanfang  = Kommentar
+#   !  am Zeilenanfang  = Ausnahme (Treffer mit diesem Umfeld sind erlaubt)
+#   sonst               = verbotenes Muster (erweiterter regulaerer Ausdruck)
+#
+# Der Riegel prueft nur die hinzugefuegten Zeilen eines Commits.
+# Gross- und Kleinschreibung zaehlen: sonst wuerde ein Muster wie
+# \bVorname\b auch jedes "max(" im Python-Code treffen. Wer mehrere
+# Schreibweisen abdecken will, schreibt sie ins Muster: [Mm]ustermann
+
+# --- Beispiele: durch die eigenen Angaben ersetzen ---
+
+# Private E-Mail-Adresse
+dein\.name@beispiel\.de
+
+# Fernzugriff: Tailscale-Hostname und -Adressbereich der eigenen Anlage
+deintailnet\.ts\.net
+100\.64\.[0-9]+\.[0-9]+
+
+# Geraete-Geheimnisse (z.B. Funk-/Mesh-Schluessel)
+0123456789abcdef
+
+# Pfade und Rechnername, die den Benutzernamen verraten
+/Users/deinbenutzername
+DeinRechnername\.local
+
+# --- Klarname der Person ---
+# Im Repo heisst sie "Mexla". Der echte Vorname soll nicht auftauchen -
+# ausser dort, wo dasselbe Wort etwas anderes bedeutet (siehe Ausnahmen).
+\bVorname\b
+!M1 Max
+!MAX_
+!Max-Versuche
+!Pro Max
