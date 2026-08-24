@@ -23,10 +23,21 @@
 set -u
 
 WURZEL="$(git rev-parse --show-toplevel)"
-MUSTERDATEI="$WURZEL/config/datenschutz_muster.txt"
 
-if [ ! -f "$MUSTERDATEI" ]; then
-    echo "ABGELEHNT: $MUSTERDATEI fehlt - der Datenschutz-Riegel kann nicht pruefen."
+# Musterliste: erst im Repo selbst, sonst die zentrale dieser Anlage.
+# So schuetzt derselbe Riegel auch Repos ohne eigenen config-Ordner
+# (brmesh-bridge, tim-privat) - und es gibt weiterhin nur EINE Liste,
+# die auch harness/datenschutz_pruefen.py liest. Zwei Listen waeren
+# zwei Wahrheiten.
+ZENTRAL="/opt/ki-server/config/datenschutz_muster.txt"
+if [ -f "$WURZEL/config/datenschutz_muster.txt" ]; then
+    MUSTERDATEI="$WURZEL/config/datenschutz_muster.txt"
+elif [ -f "$ZENTRAL" ]; then
+    MUSTERDATEI="$ZENTRAL"
+else
+    echo "ABGELEHNT: keine Musterliste gefunden - der Riegel kann nicht pruefen."
+    echo "Gesucht in:  $WURZEL/config/datenschutz_muster.txt"
+    echo "         und $ZENTRAL"
     echo "Anlegen mit:  cp config/datenschutz_muster.txt.example config/datenschutz_muster.txt"
     echo "Danach die eigenen Angaben eintragen (die Datei bleibt lokal)."
     exit 1
