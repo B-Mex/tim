@@ -163,6 +163,22 @@ cat ~/.m1_job_token
   (z. B. per `tailscale serve` auf Port 8770) — niemals den Port ins offene
   Internet freigeben.
 
+### Schutz vor versehentlich veröffentlichten Daten
+
+Wer selbst am Repo arbeitet, sollte den mitgelieferten Riegel einschalten.
+Er prüft vor jedem Commit den angemeldeten Inhalt auf private Angaben und
+bricht ab, bevor etwas hochgeht:
+
+```bash
+cp config/datenschutz_muster.txt.example config/datenschutz_muster.txt
+ln -sf ../../scripts/git_hook_datenschutz.sh .git/hooks/pre-commit
+```
+
+In `config/datenschutz_muster.txt` (bleibt lokal) stehen die eigenen
+Suchmuster — E-Mail, Fernzugriffsadressen, Geräteschlüssel, Benutzer- und
+Rechnername. Die Muster stehen bewusst nicht im Hook selbst: sie **sind**
+die privaten Angaben.
+
 ## Erweitern
 
 - **Eigene Abläufe:** JSON nach dem Muster in `harness/jobs/` anlegen;
