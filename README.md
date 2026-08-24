@@ -20,8 +20,25 @@ auf dem eigenen Rechner, alle Daten bleiben im Haus.
   (gute Antwort besteht, schlechte fällt durch).
 - **Gedächtnis** (`memory/`, wird lokal angelegt) — Chatablage als JSONL plus
   ChromaDB für semantische Suche.
-- **Websuche** (optional) — über eine lokale SearXNG-Instanz; der Chat selbst
-  bleibt offline, nur ausgewiesene Abläufe dürfen suchen.
+- **Werkzeuge im Chat** (14 Stück) — Tim sucht im Netz, liest Seiten, prüft den
+  Systemzustand, liest Berichte und Projektdateien, durchsucht sein Gedächtnis,
+  reicht Teilaufgaben an einen Zuarbeiter weiter und startet vorgegebene Aktionen.
+  Genau **ein** Werkzeug schreibt — und nur in den Sandkasten.
+- **Werkstatt** (`harness/werkstatt.py`) — ein Sandkasten, in dem Tim selbst Code
+  baut und testet. Zwei Sperren: ein Pfadriegel im Werkzeug **und** `sandbox-exec`
+  beim Ausführen. Die Pfadprüfung allein war nachweislich eine Attrappe —
+  ausgeführter Code kam ungehindert nach draußen. (41 Selbsttests)
+- **Modell-Abitur** (`harness/abitur.py`) — jedes neue Modell muss durch Benchmark
+  und Werkstatt, bevor es in den Betrieb darf. Prüfungen entstehen aus bestandener
+  Arbeit; Grundlagen werden nie aussortiert. (59 Selbsttests)
+- **Selbstdiagnose** (`harness/ha_diagnose.py`, `doppelablage_pruefen.py`,
+  `datenschutz_pruefen.py`) — prüft Home Assistant, den Abgleich zwischen Quelle
+  und Betrieb sowie das Repo auf private Daten. Alle drei **nur lesend**:
+  Befund melden, nicht eigenmächtig beheben.
+- **Websuche** (optional) — über eine lokale SearXNG-Instanz. Chat und Abläufe
+  nutzen dieselben geprüften Bausteine, damit die Sperren nicht auseinanderlaufen:
+  interne Adressen (Loopback, LAN, Tailscale/CGNAT) werden abgelehnt, fremde
+  Seiteninhalte ausdrücklich als ungeprüft markiert.
 
 **Referenz-Hardware:** Mac Studio M1 Max, 32 GB RAM, macOS. Mit kleineren Modellen
 läuft Tim auch auf 16 GB — die großen Modelle unten brauchen die vollen 32 GB.
@@ -35,7 +52,7 @@ läuft Tim auch auf 16 GB — die großen Modelle unten brauchen die vollen 32 G
 | `oberflaeche/` | Zentrale (Port 8770) und Job-Server (Port 8765) |
 | `scripts/` | Sprachassistent „Hey Tim“ |
 | `kamera/` | Kamera-Dienst „Tims Auge“ (Port 8781) + Objekterkennung |
-| `harness/` | Agenten-Abläufe, Job-Schema, Autonomie, Benchmark, Model-Router |
+| `harness/` | Agenten-Abläufe, Job-Schema, Autonomie, Benchmark, Model-Router, Werkstatt, Abitur, Diagnose-Werkzeuge |
 | `harness/jobs/` | Beispiel-Jobs (Recherche, Projekt-Review, Modell-Scan) |
 | `modelfiles/` | Ollama-Modelfiles zum Nachbauen aller Modelle |
 | `config/` | Konfiguration; `*.example` kopieren und anpassen |
@@ -151,6 +168,12 @@ cat ~/.m1_job_token
 
 ## Sicherheit & Autonomie
 
+- **Positivliste statt freier Ausführung:** Alles Ausführende läuft über den
+  Job-Server (Port 8765) und dessen feste Liste erlaubter Aktionen. Das Modell
+  kann eine Aktion *anfragen* — geprüft wird im Job-Server selbst, nie im
+  Aufrufer. Keine Shell, kein zweiter Weg. Das Muster heißt **Reference Monitor**:
+  Was entscheidet, ist von dem getrennt, was ausführt, und letzteres traut
+  ersterem nicht. (131 Selbsttests)
 - **Token-Schutz:** Jeder API-Zugriff (Zentrale, Job-Server, Kamera) verlangt das
   Token aus `~/.m1_job_token`. Die Oberfläche selbst enthält keine Daten.
 - **Autonomie standardmäßig „safe“:** Agenten machen nur Vorschläge. Stufen und
