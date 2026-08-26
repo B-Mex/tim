@@ -1815,6 +1815,13 @@ GEDANKEN_GRENZE = 12000
 # Harness (crew_generic): dieselbe SearXNG-Suche, derselbe Seitenabruf
 # mit denselben SSRF-Sperren. Bewusst kein zweiter Satz Code - sonst
 # laufen die Sperren auseinander.
+# Aktionen der Job-Server-Positivliste, die der Chat trotzdem NIE
+# einreichen darf: Ueber diese drei stellt sich die Schranke selbst
+# weiter. Ein Modell, das seine eigene Autonomie hochstufen kann,
+# hat keine Schranke, sondern eine Bitte.
+CHAT_GESPERRTE_AKTIONEN = {"autonomie_setzen", "autonomie_modus",
+                           "autonomie_normal"}
+
 CHAT_WERKZEUGE = [
     {"type": "function", "function": {
         "name": "websuche",
@@ -2562,6 +2569,18 @@ def werkzeug_ausfuehren(name: str, argumente: dict,
                 return "Unzulaessiger Aktionsname."
             if argument and not SICHERER_NAME.match(argument):
                 return "Unzulaessiges Argument."
+            # Der Waechter darf nicht ueber den Kanal verstellbar sein,
+            # den er bewacht (26.08.2026): Der Namens-Riegel des
+            # Selbsttests prueft WERKZEUGnamen, aber hier kommt der Name
+            # als ARGUMENT an - autonomie_setzen war so erreichbar,
+            # obwohl es als Werkzeug ausdruecklich verboten ist. Die
+            # Aktionen bleiben in der Positivliste (Mexlas Knoepfe in
+            # der Oberflaeche gehen weiter) - nur der CHAT-Weg ist zu.
+            if aktion in CHAT_GESPERRTE_AKTIONEN:
+                return ("Abgelehnt: '%s' verstellt die Autonomie. Das "
+                        "geht aus dem Chat grundsaetzlich nicht - in "
+                        "keine Richtung. Mexla schaltet selbst, in der "
+                        "Oberflaeche oder an der Tastatur." % aktion)
             daten = _job_server_sync(aktion, argument)
             if daten.get("fehler"):
                 return "Abgelehnt oder fehlgeschlagen: %s" % daten["fehler"]
@@ -3490,6 +3509,54 @@ def _selbsttest() -> int:
     pruefe("Unzulaessiger Aktionsname" in
            werkzeug_ausfuehren("aktion_starten", {"name": ""}),
            "aktion_starten ohne Namen wird abgewiesen")
+
+    # Die Autonomie-Sperre des Chat-Wegs (26.08.2026): Diese Namen
+    # stehen in der Positivliste des Job-Servers, duerfen aber vom
+    # Chat nicht eingereicht werden.
+    #
+    # _job_server_sync wird fuer diesen Block auf einen Doppelgaenger
+    # umgebogen. Beim Bau nachgemessen, warum das noetig ist: Die erste
+    # Fassung rief mit scharfem Argument (ERLAUBE_SHELL.ja) den ECHTEN
+    # Job-Server - bei intakter Sperre harmlos, aber der Mutationstest
+    # leert die Sperre absichtlich, und dann SCHALTETE der Test real.
+    # Die Lehre vom 23.08. (Selbsttests fassen keine Betriebsdaten an)
+    # gilt auch fuer den Fehlerfall, den eine Mutation herstellt.
+    # Ausserdem: NICHT auf startswith("Abgelehnt") pruefen - die
+    # Durchreich-Meldung "Abgelehnt oder fehlgeschlagen:" beginnt
+    # genauso, und drei von fuenf Pruefungen blieben bei geleerter
+    # Sperre faelschlich gruen.
+    echte_sync = globals()["_job_server_sync"]
+    durchgerutscht = []
+    def _sync_doppelgaenger(aktion, argument=""):
+        durchgerutscht.append((aktion, argument))
+        return {"fehler": "Doppelgaenger - nichts ausgefuehrt"}
+    globals()["_job_server_sync"] = _sync_doppelgaenger
+    try:
+        for tabu in sorted(CHAT_GESPERRTE_AKTIONEN):
+            antwort = werkzeug_ausfuehren("aktion_starten", {"name": tabu})
+            pruefe("verstellt die Autonomie" in antwort,
+                   f"Chat kann Autonomie nicht verstellen: {tabu}",
+                   antwort[:60])
+        antwort = werkzeug_ausfuehren(
+            "aktion_starten",
+            {"name": "autonomie_setzen", "argument": "ERLAUBE_SHELL.ja"})
+        pruefe("verstellt die Autonomie" in antwort,
+               "auch mit Argument (der eigentliche Angriff) abgelehnt",
+               antwort[:60])
+        # Eine NICHT gesperrte Aktion muss den (Doppelgaenger-)Server
+        # weiterhin erreichen - sonst sperrt der Riegel zu viel.
+        werkzeug_ausfuehren("aktion_starten", {"name": "status"})
+        pruefe(("status", "") in durchgerutscht,
+               "erlaubte Aktionen gehen weiter durch (status erreichte "
+               "den Server)")
+    finally:
+        globals()["_job_server_sync"] = echte_sync
+    pruefe(all(a == "status" for a, _ in durchgerutscht),
+           "kein gesperrter Name erreichte den Job-Server",
+           str(durchgerutscht))
+    pruefe({"autonomie_setzen", "autonomie_modus",
+            "autonomie_normal"} <= CHAT_GESPERRTE_AKTIONEN,
+           "die drei Autonomie-Namen stehen vollstaendig in der Sperre")
 
     # --- Das Auge im Chat: Fakten vorlegen statt Halluzination ---
     text_an = auge_fuer_chat({"an": True, "gesehen": [
