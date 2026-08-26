@@ -1,0 +1,35 @@
+{
+  "_hinweis": "Routinen sind DATEN: neue Routine = neuer Eintrag, kein Code. Jeder Schritt ist eine Aktion der Job-Server-Positivliste (Ausnahme: eingebaut git_stand, nur lesend). Den Takt geben die crontab-Zeilen mit Marker # m1-routine.",
+  "routinen": [
+    {
+      "name": "diagnose_morgen",
+      "beschreibung": "Taegliche Pruefrunde 07:30 - die Diagnose-Trias, alle nur lesend",
+      "schritte": [
+        {"aktion": "ha_diagnose"},
+        {"aktion": "doppelablage_pruefen"},
+        {"aktion": "datenschutz_pruefen"}
+      ],
+      "einordnen": true,
+      "melden": "leise+laut"
+    },
+    {
+      "name": "selbsttest_woche",
+      "beschreibung": "Montags 06:45 - liest den Bericht des 04:00-Selbsttestlaufs und ordnet ein",
+      "schritte": [
+        {"aktion": "bericht_lesen", "argument": "selbsttests.md"}
+      ],
+      "einordnen": true,
+      "melden": "leise+laut"
+    },
+    {
+      "name": "sicherung_check",
+      "beschreibung": "Sonntags 18:00 - bereit zum Sichern? Datenschutz + git-Stand. Der Push bleibt bei Mexla.",
+      "schritte": [
+        {"aktion": "datenschutz_pruefen"},
+        {"eingebaut": "git_stand"}
+      ],
+      "einordnen": true,
+      "melden": "leise+laut"
+    }
+  ]
+}

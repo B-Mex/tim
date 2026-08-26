@@ -52,7 +52,7 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 # Denken eine LEERE Antwort, und am Sprachweg heisst leer: Tim schweigt.
 # qwen3.5:9b: 14/14 Pruefungen, 30.5 Tok/s, 4.8 s Ladezeit, entspricht
 # STANDARD_MODELL der Zentrale (m1_zentrale.py).
-OLLAMA_MODEL = "qwen3.5:9b"
+OLLAMA_MODEL = "gpt-oss:20b"
 MODELL_NUM_CTX = 16384           # wie CHAT_NUM_CTX in m1_zentrale.py
 # Der gesprochene Weg geht ueber Tims eigenen Chat - so kann er dieselben
 # Werkzeuge (Websuche, Seite lesen) und bekommt kuenftige von selbst mit.

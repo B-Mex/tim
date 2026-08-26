@@ -35,3 +35,6 @@ kamera/messfeld.json
 
 # --- Neue Oberflaeche: solange im Bau, nicht veroeffentlichen (24.08.2026) ---
 oberflaeche/zentrale_neu.html
+
+# --- Berichte sind Laufzeitdaten: bleiben lokal (26.08.2026) ---
+berichte/

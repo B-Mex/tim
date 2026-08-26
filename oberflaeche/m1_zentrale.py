@@ -1110,7 +1110,7 @@ def _verdichtungsmodell(hauptmodell: str = "") -> str:
         #    Rechnen ist es das langsamere.
         return klein
     except Exception:                                # pragma: no cover
-        return hauptmodell or "qwen3.5:9b"
+        return hauptmodell or STANDARD_MODELL
 
 
 def verdichtung_lesen(chat: str = "standard") -> dict:
@@ -1355,21 +1355,37 @@ AUFGABEN = [
 #                   braucht das iogpu-Limit (LaunchDaemon com.mexla.iogpu-limit)
 #   qwen3.5:9b      14/14, 30.5 Tok/s,  4.8 s Ladezeit - klein und ehrlich
 #   qwen3.8:27b     14/14, 13.0 Tok/s - gruendlich, aber zaeh; bleibt Reserve
-# gpt-oss:20b steht bewusst nicht mehr hier: im Benchmark lieferte es
-# zweimal nach minutenlangem Denken eine LEERE Antwort - am Sprachweg
-# waere das Schweigen. llama-fast flog schon am 21.08. (erfundene
-# Zeilenzahl); im Benchmark erfand es zusaetzlich zwei Bundespraesidenten.
+# ACHTUNG, alter Befund (vor dem 26.08.): gpt-oss:20b lieferte im
+# Benchmark zweimal nach minutenlangem Denken eine LEERE Antwort - am
+# Sprachweg waere das Schweigen. llama-fast flog am 21.08. (erfundene
+# Zeilenzahl) und erfand spaeter zwei Bundespraesidenten.
+#
+# Stand 26.08.2026: Es sind nur noch zwei Modelle installiert, gpt-oss
+# ist eines davon und traegt jetzt Chat, Sprache und Werkzeuge. Deshalb
+# nachgemessen statt geerbt: fuenf kurze Fragen hintereinander, fuenfmal
+# vollstaendige Antwort, kein einziges Schweigen. Im Kettentest loeste es
+# fuenf Schritte mit acht Werkzeugaufrufen, sauber.
+#
+# WAS DAMIT NICHT WIDERLEGT IST: Der alte Fund stammt aus LANGEN
+# Denkaufgaben, nicht aus kurzen Fragen. Wer gpt-oss eine schwere
+# Einzelaufgabe gibt, sollte auf leere Antworten achten - dafuer steht
+# qwen3.6:35b-a3b in der Tabelle.
+# Stand 26.08.2026: Von zehn Modellen sind zwei uebrig. qwen3.5:9b ist
+# geloescht - es fiel im neuen Kettentest durch (erfand den fuenften von
+# fuenf Schritten), obwohl es im Benchmark 19/19 hatte. Der Name des
+# grossen Modells lautet vollstaendig "qwen3.6:35b-a3b"; die verkuerzte
+# Schreibweise hier hat frueher ins Leere gezeigt.
 AUFGABE_MODELL = {
-    "code": "qwen3.6:35b",
-    "werkzeuge": "qwen3.5:9b",
-    "denken": "qwen3.6:35b",
-    "kurz": "qwen3.5:9b",
+    "code": "qwen3.6:35b-a3b",
+    "werkzeuge": "gpt-oss:20b",
+    "denken": "qwen3.6:35b-a3b",
+    "kurz": "gpt-oss:20b",
 }
 
 # Wenn die Aufgabenart nichts Bestimmtes ergibt, nimmt der Orchestrator
 # dieses Modell - nicht mehr blind das staerkste. Das staerkste ist hier
 # ein 23-GB-Modell, das fuer eine kurze Frage erst 11 s laedt.
-STANDARD_MODELL = "qwen3.5:9b"
+STANDARD_MODELL = "gpt-oss:20b"
 
 # Ab wann eine Frage als "kurz" gilt und das kleine Modell reicht.
 KURZ_ZEICHEN = 80
@@ -1876,6 +1892,36 @@ Lampe kommt, steht oben und in den Unterlagen, nicht dort."""
 # genau das war frueher die Ursache fuer leere Antworten. Wer mehr will,
 # misst erst mit "ollama ps" nach.
 CHAT_NUM_CTX = 65536
+
+# --- Modellspezifische Grenzen (26.08.2026) --------------------------
+# Bis heute bekam jedes Modell dieselben Werte, obwohl sie
+# unterschiedlich viel koennen (gemessen mit "ollama show"):
+#     gpt-oss:20b        131072 Token Kontext
+#     qwen3.6:35b-a3b    262144 Token Kontext
+#
+# Wichtiger als der Kontext ist aber die ANTWORTLAENGE: Ein Modell, das
+# laut denkt, verbraucht sein Budget im Denkweg. Ist es aufgebraucht,
+# bevor die eigentliche Antwort beginnt, kommt eine LEERE Antwort - am
+# Sprachweg waere das Schweigen. Genau das wurde vor dem 26.08. bei
+# gpt-oss beobachtet und war der Grund, es aus der Rollentabelle zu
+# nehmen.
+#
+# Deshalb: num_predict ausdruecklich setzen statt dem Ollama-Standard zu
+# vertrauen, und zwar grosszuegig genug fuer Denkweg UND Antwort.
+MODELL_GRENZEN = {
+    "gpt-oss:20b":     {"num_ctx": 65536, "num_predict": 8192},
+    "qwen3.6:35b-a3b": {"num_ctx": 65536, "num_predict": 8192},
+}
+MODELL_GRENZEN_STANDARD = {"num_ctx": CHAT_NUM_CTX, "num_predict": 4096}
+
+
+def modell_grenzen(modell: str) -> dict:
+    """Kontext- und Antwortgrenze fuer ein Modell.
+
+    Unbekannte Modelle bekommen den vorsichtigen Standard - lieber eine
+    knappe Grenze als eine, die den Speicher sprengt.
+    """
+    return dict(MODELL_GRENZEN.get(modell, MODELL_GRENZEN_STANDARD))
 # Notnagel gegen Ausreisser. Seit dem 24.08.2026 ist das NICHT mehr der
 # eigentliche Schutz - der heisst verlauf_verdichten und misst die
 # Tokenlast, statt Nachrichten zu zaehlen. Die Zahl steht trotzdem noch
@@ -2532,7 +2578,7 @@ def teilaufgabe_ausfuehren(auftrag: str, modell: str = "") -> str:
             letzte = runde == TEILAUFGABE_RUNDEN
             koerper = {"model": modell, "messages": verlauf, "stream": False,
                        "options": {"temperature": 0.3,
-                                   "num_ctx": CHAT_NUM_CTX}}
+                                   **modell_grenzen(modell)}}
             if not letzte:
                 koerper["tools"] = angeboten
             anfrage = urllib.request.Request(
@@ -2890,7 +2936,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 "stream": False,
                 # Weniger Zufall in der Wortwahl: das senkt die Neigung,
                 # Ergebnisse und Links zu erfinden.
-                "options": {"temperature": 0.3, "num_ctx": CHAT_NUM_CTX},
+                "options": dict(modell_grenzen(modell), temperature=0.3),
             }
             if not letzte:
                 koerper["tools"] = CHAT_WERKZEUGE
@@ -2947,7 +2993,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                         "model": modell, "messages": nachfassen,
                         "stream": False,
                         "options": {"temperature": 0.3,
-                                    "num_ctx": CHAT_NUM_CTX},
+                                    **modell_grenzen(modell)},
                     }).encode("utf-8"), method="POST")
                 a2.add_header("Content-Type", "application/json")
                 with urllib.request.urlopen(a2, timeout=600) as r2:
