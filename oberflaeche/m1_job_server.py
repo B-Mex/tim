@@ -81,6 +81,28 @@ STOP_ORTE = [
 # Ein Ablauf mit dem 30B-Modell braucht Minuten - deshalb grosszuegig.
 ZEITGRENZE = 1800
 
+# --- Werkstatt stilllegen waehrend einer Livewerkstatt-Pruefung ---
+# Am 25.08.2026 gemessen: Tim legte seine Dateien viermal in die FALSCHE
+# Kiste (werkstatt_ statt livewerkstatt_) und suchte sie dann dort
+# vergeblich. Zwei fast gleich heissende Werkzeugfamilien nebeneinander
+# sind eine Falle - gebaut habe ich sie, hineingefallen ist er.
+# Im Pruefungsmodus gibt es deshalb nur EINE Kiste. Verborgen, nicht
+# geloescht: Schalter weg, alles wieder da.
+PRUEFUNGSSCHALTER = Path("/opt/ki-server/config/PRUEFUNGSMODUS")
+
+
+# Der Selbsttest prueft die VOLLSTAENDIGE Positivliste - er soll nicht
+# davon abhaengen, ob gerade eine Pruefung laeuft. Deshalb kann er den
+# Filter fuer die Dauer des Laufs abschalten.
+_FILTER_AUS = False
+
+
+def _verborgen(name: str) -> bool:
+    """Aktionen, die waehrend einer Pruefung nicht angeboten werden."""
+    if _FILTER_AUS or not PRUEFUNGSSCHALTER.exists():
+        return False
+    return name.startswith("werkstatt_") or name.startswith("dummy_")
+
 
 def _py() -> str:
     """Der Interpreter, in dem crewai installiert ist."""
@@ -394,6 +416,92 @@ AKTIONEN = {
     # aufgehoben. Der Chat der Zentrale ruft dafuer werkstatt.schreiben
     # direkt auf (Werkzeug "werkstatt_schreiben") - dieselbe Pfadsperre,
     # nur ohne Umweg ueber die Shell.
+    # ------------------------------------------------------------------
+    # Die Livetest-Werkstatt (25.08.2026)
+    # ------------------------------------------------------------------
+    # Die Werkstatt ist der Sandkasten fuer Code, diese hier ist der
+    # Sandkasten fuer HARDWARE: ein zweiter Pico W (der "Dummy"), auf dem
+    # dieselbe Brueckensoftware laeuft wie im Hausstand. Tim darf hier
+    # alles, was er an der echten Funkbruecke nicht darf - lauschen, den
+    # Mesh-Schluessel eintragen, Raeume anlernen, ausrollen.
+    #
+    # Die Grenze haengt am GERAET, nicht an der Adresse: dummy_bruecke.py
+    # fragt vor jeder Handlung die Chip-ID ab und bricht ab, wenn nicht
+    # der Dummy antwortet. Beim Ausrollen wird zusaetzlich die ID am USB
+    # geprueft - beide Picos stammen aus derselben Charge und
+    # unterscheiden sich in zwei Ziffern.
+    #
+    # Der Weg zur Liveschaltung ist damit eine einzige Stelle: die
+    # Konstante DUMMY_ID im Werkzeug. Solange sie auf den Dummy zeigt,
+    # kann hier nichts im Hausstand kaputtgehen.
+    "dummy_stand": (
+        "Livetest-Werkstatt: Stand der Dummy-Bruecke (Fassung, Raeume)",
+        lambda arg: [_py(), str(HARNESS_DIR / "dummy_bruecke.py"), "stand"],
+        False,
+    ),
+    "dummy_lauschen": (
+        "Livetest-Werkstatt: der Dummy hoert zu und meldet Mesh-Schluessel "
+        "und Raumnummern (Argument: Sekunden, hoechstens 25). Funkt nichts.",
+        lambda arg: [_py(), str(HARNESS_DIR / "dummy_bruecke.py"),
+                     "lauschen"] + ([str(arg)] if arg else []),
+        False,
+    ),
+    "dummy_schluessel": (
+        "Livetest-Werkstatt: Mesh-Schluessel des Dummy eintragen "
+        "(Argument: 8 Hex-Zeichen)",
+        lambda arg: [_py(), str(HARNESS_DIR / "dummy_bruecke.py"),
+                     "schluessel", str(arg or "")],
+        True,
+    ),
+    "dummy_raum": (
+        "Livetest-Werkstatt: Raum am Dummy anlernen "
+        "(Argument: '<name>.<nummer>', z.B. 'waschkueche.12')",
+        lambda arg: [_py(), str(HARNESS_DIR / "dummy_bruecke.py"),
+                     "raum"] + str(arg or "").split("."),
+        True,
+    ),
+    "dummy_ausrollen": (
+        "Livetest-Werkstatt: die Uebungskonfiguration auf den Dummy "
+        "spielen (noetig, damit ein neuer Schluessel wirkt)",
+        lambda arg: [_py(), str(HARNESS_DIR / "dummy_bruecke.py"),
+                     "ausrollen"],
+        False,
+    ),
+    # ------------------------------------------------------------------
+    # Die Livewerkstatt (25.08.2026) - eigener Code an echter Hardware
+    # ------------------------------------------------------------------
+    # Die Werkstatt laesst Tim Code schreiben, aber eingesperrt ohne Netz
+    # und ohne Geraete. Ein Funkprotokoll erarbeitet man so nicht: Dafuer
+    # muss man ein Byte aendern, senden und schauen, was passiert.
+    #
+    # Hier bekommt er diesen Kreislauf - eingezaeunt durch zwei Riegel,
+    # die beide GEMESSEN sind, nicht versprochen:
+    #  1. Sandbox: Netz komplett zu (macOS kann nicht auf einzelne
+    #     Adressen filtern - "host must be * or localhost"), offen ist
+    #     allein der serielle Draht. Die echte Bruecke haengt am
+    #     Netzteil, nicht am Mac: PermissionError, nachgemessen.
+    #  2. Chip-ID am USB: Vor jedem Lauf wird geprueft, WER dort haengt.
+    #
+    # Im Sandkasten liegt bewusst NICHTS Vorgebautes.
+    "livewerkstatt_fahren": (
+        "Livewerkstatt: eigenen Code am echten Dummy laufen lassen "
+        "(Argument: Dateiname im Sandkasten)",
+        lambda arg: [_py(), str(HARNESS_DIR / "livewerkstatt.py"),
+                     "fahren", str(arg or "")],
+        True,
+    ),
+    "livewerkstatt_liste": (
+        "Livewerkstatt: zeigen, was im Sandkasten liegt",
+        lambda arg: [_py(), str(HARNESS_DIR / "livewerkstatt.py"), "liste"],
+        False,
+    ),
+    "livewerkstatt_lesen": (
+        "Livewerkstatt: eine eigene Datei im Wortlaut zurueckgeben "
+        "(Argument: Dateiname)",
+        lambda arg: [_py(), str(HARNESS_DIR / "livewerkstatt.py"),
+                     "lesen", str(arg or "")],
+        True,
+    ),
     "autonomie_modus": (
         "Autonomie-Modus setzen (Argument: safe, assist oder autonom)",
         None,  # Sonderfall, siehe aktion_ausfuehren()
@@ -596,7 +704,8 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "kill_switch": killswitch_aktiv(),
                 "aktionen": {k: {"beschreibung": v[0], "braucht_argument": v[2]}
-                             for k, v in AKTIONEN.items()},
+                             for k, v in AKTIONEN.items()
+                             if not _verborgen(k)},
                 "ablaeufe": bekannte_ablaeufe(),
             })
             return
@@ -650,7 +759,13 @@ def _selbsttest() -> int:
             print(f"  FEHLER  {text}" + (f"  [{zusatz}]" if zusatz else ""))
             fehler += 1
 
+    global _FILTER_AUS
+    _FILTER_AUS = True          # die ganze Liste pruefen, nicht die gefilterte
     print("m1_job_server Selbsttest:")
+    if PRUEFUNGSSCHALTER.exists():
+        print("  Hinweis: Pruefungsmodus ist aktiv - der Aktionsfilter wird "
+              "fuer diesen Lauf abgeschaltet, damit die volle Liste geprueft "
+              "wird.")
 
     # Port 0: das Betriebssystem sucht einen freien - so kollidiert der
     # Test nie mit einem laufenden Job-Server.
@@ -705,7 +820,12 @@ def _selbsttest() -> int:
                          "datenschutz_pruefen",
                          "werkstatt_aufgabe", "werkstatt_liste",
                          "werkstatt_lesen", "werkstatt_testen",
-                         "werkstatt_gelernt"):
+                         "werkstatt_gelernt",
+                         "dummy_stand", "dummy_lauschen",
+                         "dummy_schluessel", "dummy_raum",
+                         "dummy_ausrollen",
+                         "livewerkstatt_fahren", "livewerkstatt_liste",
+                         "livewerkstatt_lesen"):
             pruefe(erwartet in liste, f"Aktion gemeldet: {erwartet}")
 
         # --- Die Werkstatt-Grenze (24.08.2026) ---
@@ -725,6 +845,94 @@ def _selbsttest() -> int:
             pruefe(not any(";" in t or "&&" in t or "|" in t
                            for t in _befehl),
                    f"'{_name}' enthaelt keine Shell-Verkettung")
+        import importlib.util as _ilu_d
+
+        # --- Die Livetest-Grenze (25.08.2026) ---
+        # Tim darf hier an ECHTER Hardware arbeiten - aber nur am Dummy.
+        # Drei Dinge muessen dafuer gelten:
+        # 1. Jede dummy_-Aktion laeuft ueber dummy_bruecke.py, das den
+        #    ID-Riegel traegt. Eine Aktion, die am Modul vorbei den
+        #    Pico anspricht (mpremote, curl, das Ausrollskript direkt),
+        #    waere ein zweiter Weg ohne Riegel.
+        # 2. Keine Shell-Verkettung, wie ueberall sonst.
+        # 3. Die echte Bruecke steht in KEINER dummy_-Aktion - weder als
+        #    Adresse noch als Konfigurationsdatei.
+        for _name, (_besch, _bauen, _arg) in AKTIONEN.items():
+            if not _name.startswith("dummy_") or _bauen is None:
+                continue
+            _befehl = [str(t) for t in _bauen("probe.7")]
+            pruefe(any(t.endswith("dummy_bruecke.py") for t in _befehl),
+                   f"'{_name}' laeuft ueber dummy_bruecke.py", str(_befehl))
+            pruefe(not any(";" in t or "&&" in t or "|" in t
+                           for t in _befehl),
+                   f"'{_name}' enthaelt keine Shell-Verkettung")
+            pruefe(not any("192.168.0.147" in t or
+                           t.endswith("pico_bruecke") or
+                           "pico_bruecke" in t for t in _befehl),
+                   f"'{_name}' fasst die echte Bruecke nicht an",
+                   str(_befehl))
+        # Und der Riegel selbst muss greifen, nicht nur im Kommentar
+        # stehen - dieselbe Gegenprobe wie bei der Werkstatt-Pfadsperre.
+        _spec_d = _ilu_d.spec_from_file_location(
+            "_dummy_probe", str(HARNESS_DIR / "dummy_bruecke.py"))
+        if _spec_d and _spec_d.loader:
+            _d = _ilu_d.module_from_spec(_spec_d)
+            _spec_d.loader.exec_module(_d)
+            _echt_ruf = _d._ruf
+            try:
+                _d._ruf = lambda p, r=None, geduld=8.0: {
+                    "id": "28cdc106c5c0", "ok": True}
+                try:
+                    _d.dummy_bestaetigen()
+                    pruefe(False, "dummy_bruecke weist die ECHTE Bruecke ab",
+                           "sie wurde durchgelassen!")
+                except _d.KeinDummy:
+                    pruefe(True, "dummy_bruecke weist die ECHTE Bruecke ab")
+            finally:
+                _d._ruf = _echt_ruf
+        else:
+            pruefe(False, "dummy_bruecke.py ladbar")
+
+        # --- Die Livewerkstatt-Grenze (25.08.2026) ---
+        # Hier laeuft Tims EIGENER Code an echter Hardware. Der Riegel
+        # sitzt im Modul (Sandbox + Chip-ID). Was hier festgehalten
+        # wird: dass wirklich NUR das Modul laeuft und keine Aktion am
+        # Riegel vorbei den Pico anspricht.
+        for _name, (_besch, _bauen, _arg) in AKTIONEN.items():
+            if not _name.startswith("livewerkstatt_") or _bauen is None:
+                continue
+            _befehl = [str(t) for t in _bauen("probe.py")]
+            pruefe(any(t.endswith("livewerkstatt.py") for t in _befehl),
+                   f"'{_name}' laeuft ueber livewerkstatt.py", str(_befehl))
+            pruefe(not any(";" in t or "&&" in t or "|" in t
+                           for t in _befehl),
+                   f"'{_name}' enthaelt keine Shell-Verkettung")
+            pruefe(not any("mpremote" in t or "pico_bruecke" in t
+                           for t in _befehl),
+                   f"'{_name}' greift nicht am Modul vorbei zur Hardware")
+        # Und die Gegenprobe am Riegel selbst.
+        _spec_l = _ilu_d.spec_from_file_location(
+            "_live_probe", str(HARNESS_DIR / "livewerkstatt.py"))
+        if _spec_l and _spec_l.loader:
+            _l = _ilu_d.module_from_spec(_spec_l)
+            _spec_l.loader.exec_module(_l)
+            _echt = _l.usb_id_lesen
+            try:
+                _l.usb_id_lesen = lambda: "28cdc106c5c0"
+                try:
+                    _l.dummy_bestaetigen()
+                    pruefe(False, "livewerkstatt weist die ECHTE Bruecke ab",
+                           "durchgelassen!")
+                except _l.KeinDummy:
+                    pruefe(True, "livewerkstatt weist die ECHTE Bruecke ab")
+            finally:
+                _l.usb_id_lesen = _echt
+            pruefe("network" not in (_l.SANDBOX_PROFIL
+                                     .replace("network.WLAN", "")),
+                   "Sandbox der Livewerkstatt erlaubt kein Netzwerk")
+        else:
+            pruefe(False, "livewerkstatt.py ladbar")
+
         # Eintragen von Pruefungen gehoert NICHT in die Positivliste.
         _eintragend = []
         for _name, (_besch, _bauen, _arg) in AKTIONEN.items():

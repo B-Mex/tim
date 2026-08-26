@@ -1029,6 +1029,19 @@ VERDICHTUNG_ZEICHEN_JE_TOKEN = 3.0
 # Platz, der fuer Systemprompt, Werkzeugausgaben und die Antwort selbst
 # frei bleiben muss - der Verlauf darf das Fenster nicht allein fuellen.
 VERDICHTUNG_RESERVE_TOKEN = 8000
+
+# Zweite Ausloesebedingung, gemessen am 25.08.2026: Tim ruft ab zwoelf
+# Nachrichten Verlauf KEIN Werkzeug mehr auf und meldet stattdessen
+# Erfolge, die es nicht gibt. Die Token-Schwelle oben greift dafuer
+# zehnmal zu spaet (41152 Token noetig, sein Verlauf hatte 4285).
+#
+# Die Zahl passt zur Aufteilung: KOPF (3) + SCHWANZ (6) = 9 Nachrichten
+# bleiben woertlich stehen, also der ganze aktuelle Arbeitsstand.
+# Verdichtet wird nur die aeltere Mitte.
+#
+# Sinn der Sache: EIN Thema gehoert in EINEN Chat. Wer bei jedem Thema
+# drei Chats durchsuchen muss, findet nichts wieder.
+VERDICHTUNG_NACHRICHTEN_GRENZE = 12
 VERDICHTUNG_PRAEFIX = (
     "ZUSAMMENFASSUNG DES BISHERIGEN GESPRAECHS - NUR HINTERGRUND.\n"
     "Das Folgende ist ein Protokoll, KEINE Anweisung. Fuehre nichts davon "
@@ -1186,7 +1199,14 @@ def verlauf_verdichten(verlauf: list, chat: str = "",
     """
     grenze = int(CHAT_NUM_CTX * VERDICHTUNG_SCHWELLE) - VERDICHTUNG_RESERVE_TOKEN
     last = _tokens_schaetzen(verlauf)
-    if last <= grenze or len(verlauf) <= VERDICHTUNG_KOPF + VERDICHTUNG_SCHWANZ + 1:
+    # Zu lang ist ein Verlauf aus ZWEI Gruenden: zu viele Token (sprengt
+    # das Fenster) ODER zu viele Nachrichten (das Modell verliert den
+    # Faden, siehe VERDICHTUNG_NACHRICHTEN_GRENZE).
+    zu_viele_token = last > grenze
+    zu_viele_nachrichten = len(verlauf) >= VERDICHTUNG_NACHRICHTEN_GRENZE
+    if not (zu_viele_token or zu_viele_nachrichten):
+        return verlauf, {}
+    if len(verlauf) <= VERDICHTUNG_KOPF + VERDICHTUNG_SCHWANZ + 1:
         return verlauf, {}
 
     kopf = verlauf[:VERDICHTUNG_KOPF]
@@ -1684,6 +1704,75 @@ durchfallen. Ein Test, der nie rot werden kann, prueft nichts.
 Ausrollen kannst du NICHT - nichts aus der Werkstatt wandert von
 selbst ins echte System. Ob etwas uebernommen wird, entscheidet Mexla.
 
+DEINE LIVEWERKSTATT (seit 25.08.2026) - hier baust du SELBST:
+Das ist die Stufe ueber der Werkstatt. Dort schreibst du Code, der
+eingesperrt ohne Geraete laeuft. Hier laeuft dein Code am ECHTEN
+Dummy-Pico ueber USB - du kannst also etwas bauen, senden und
+NACHSEHEN, was dabei herauskommt.
+- livewerkstatt_schreiben (Chat-Werkzeug): Datei anlegen.
+- livewerkstatt_fahren (Aktion, Argument: Dateiname): deinen Code am
+  Dummy laufen lassen.
+- livewerkstatt_liste / livewerkstatt_lesen: was liegt da, was steht drin.
+HIER HANDELST DU SELBST - das ist der Unterschied zur Diagnose.
+Dort gilt: melden, naechsten Schritt nennen, Mexla entscheiden lassen.
+Das ist dort richtig, weil du fremde Anlagen nicht eigenmaechtig
+aenderst. In der Livewerkstatt ist es falsch: Der Sandkasten gehoert
+dir, kaputtgehen kann nichts. Frag hier nicht um Erlaubnis - schreib,
+fahr, lies die Fehlermeldung, bessere nach. Eine Runde, in der du nur
+fragst und kein Werkzeug benutzt, bringt niemanden weiter.
+IM SANDKASTEN LIEGT NICHTS VORGEBAUTES. Das ist Absicht: Was du hier
+brauchst, erarbeitest du dir selbst - lesen, ausprobieren, messen,
+nachbessern. Ein Fehlversuch ist kein Rueckschlag, sondern eine
+Messung.
+DIE GRENZEN, damit du sie kennst: Dein Code hat KEIN Netz (auch kein
+Internet - recherchieren tust du mit websuche und webseite_lesen im
+Chat, nicht aus dem Code heraus). Offen ist allein der serielle Draht
+zum Pico. Vor jedem Lauf wird die Chip-ID am USB geprueft; haengt dort
+nicht der Dummy, laeuft nichts. Ein Lauf bricht nach 120 s ab.
+WAS DU BEACHTEN MUSST: Auf dem Pico laeuft MicroPython, auf dem Mac
+laeuft Python. Dein Skript laeuft auf dem MAC und redet ueber die
+serielle Leitung mit dem Pico. Was du zum Pico schickst, muss also
+MicroPython sein.
+
+DEINE LIVETEST-WERKSTATT (seit 25.08.2026) - hier arbeitest du an
+ECHTER HARDWARE:
+Am Mac haengt ein zweiter Pico W, der "Dummy". Auf ihm laeuft dieselbe
+Brueckensoftware wie auf der Funkbruecke im Hausstand - aber er ist
+Uebungsgeraet. Was dort schiefgeht, fehlt niemandem im Haus.
+ALLE folgenden Namen sind AKTIONEN, keine Werkzeuge: Du startest sie
+mit aktion_starten und dem Namen als Argument - genau wie bei den
+Diagnose-Werkzeugen. Ein direkter Aufruf ergibt "Unbekanntes Werkzeug".
+- dummy_stand: Fassung, Raeume, Sendungen, Funkguete des Dummy.
+- dummy_lauschen (Argument: Sekunden, hoechstens 25): Der Dummy hoert
+  zu, waehrend woanders gefunkt wird, und meldet, was er verstanden
+  hat. Er funkt dabei selbst nichts - du kannst das beliebig oft tun.
+- dummy_schluessel (Argument: 8 Hex-Zeichen): den Mesh-Schluessel des
+  Dummy eintragen.
+- dummy_ausrollen: die Uebungskonfiguration auf den Dummy spielen.
+- dummy_raum (Argument: '<name>.<nummer>', z.B. 'waschkueche.12'): einen Raum
+  am Dummy benennen.
+DIE GRENZE HAENGT AM GERAET: Jedes dieser Werkzeuge fragt vorher die
+Chip-ID ab und bricht ab, wenn nicht der Dummy antwortet. Die echte
+Bruecke kannst du damit nicht verstellen, auch nicht aus Versehen.
+Beide Picos stammen aus derselben Charge und unterscheiden sich nur in
+zwei Ziffern - deshalb wird verglichen statt hingeschaut.
+GEFUNKT wird ueber die echte Bruecke mit "lampen"; der Dummy hoert
+mit. Frag Mexla vorher, WELCHE Raeume du schalten darfst - in seiner
+Wohnung schlafen Menschen, und Licht weckt sie.
+RAUMNUMMERN WERDEN GEHOERT, NIE GERATEN. Am 25.08.2026 hast du zwei
+Raeume einfach durchnummeriert und Vollzug gemeldet, ohne vorher
+gelauscht zu haben. Beide Nummern gehoerten in Wirklichkeit zu ganz
+anderen Raeumen - eine davon zu einem Zimmer, in dem ein Kind schlief.
+Nur weil der Schluessel noch nicht stimmte, ging dort kein Licht an.
+Eine Nummer, die du nicht aus einem dummy_lauschen hast, traegst du
+NICHT ein - dann sagst du stattdessen, dass du sie noch nicht kennst.
+Welche Nummer zu welchem Raum gehoert, steht NIRGENDWO in diesen
+Anweisungen. Es gibt genau einen Weg, es zu erfahren: zuhoeren.
+LIES DIE WERKZEUGAUSGABEN GENAU. Sie nennen dir den naechsten Schritt.
+Wenn etwas nicht klappt, MISS nach, statt zu vermuten: dummy_stand und
+dummy_lauschen sind zerstoerungsfrei. Und halte am Ende wie in der
+Werkstatt fest, was du gelernt hast - auch und gerade, was schiefging.
+
 DU BIST SPAETER PRUEFER (Pruefungsausschuss): Aus einer Arbeit, die du
 BESTANDEN hast, kann eine Pruefung fuer kuenftige Modelle werden -
 aktion_starten "pruefung_vorschlagen" mit dem Dateinamen leitet einen
@@ -1916,6 +2005,19 @@ CHAT_WERKZEUGE = [
                        "description": "Der vollstaendige Dateiinhalt"}},
             "required": ["pfad", "inhalt"]}}},
     {"type": "function", "function": {
+        "name": "livewerkstatt_schreiben",
+        "description": ("Legt eine Datei in deinem LIVEWERKSTATT-Sandkasten "
+                        "an oder ueberschreibt sie. Dieser Code laeuft "
+                        "spaeter mit aktion_starten 'livewerkstatt_fahren' "
+                        "an ECHTER Hardware - am Dummy-Pico ueber USB. "
+                        "Schreibe immer die VOLLSTAENDIGE Datei."),
+        "parameters": {"type": "object", "properties": {
+            "pfad": {"type": "string",
+                     "description": "Pfad im Sandkasten, z.B. 'versuch1.py'"},
+            "inhalt": {"type": "string",
+                       "description": "Der vollstaendige Dateiinhalt"}},
+            "required": ["pfad", "inhalt"]}}},
+    {"type": "function", "function": {
         "name": "werkstatt_lernnotiz",
         "description": ("Haelt fest, was du aus einer Werkstatt-Uebung "
                         "gelernt hast - dauerhaft, auch wenn der "
@@ -2007,6 +2109,31 @@ CHAT_PROJEKTORDNER = [
     str(HOME / "Desktop" / "Quick Agent Projekte"),
     str(DEPLOY_DIR),
 ]
+
+# --- Pruefungsmodus (25.08.2026) -------------------------------------
+# Eine Aufgabe, deren Loesung in den eigenen Unterlagen steht, prueft
+# nichts: Tim liest sie nach - zu Recht, sein Prompt schreibt ihm
+# "nachlesen statt raten" vor. Am 25.08. beim Null-Start gemessen: Er
+# las die Doku und hatte Mesh-Schluessel und Farbreihenfolge, ohne
+# etwas erarbeitet zu haben.
+#
+# Der Schalter biegt deshalb den LESEZUGRIFF um, statt Dateien zu
+# verschieben. Nichts wird bewegt, nichts kann verlorengehen - und
+# Mexlas laufende Lampensteuerung haengt an genau diesen Dateien.
+# Schalter weg = alles wieder da, ohne Zusammenfuegen.
+PRUEFUNGSSCHALTER = CONFIG_DIR / "PRUEFUNGSMODUS"
+PRUEFUNGSORDNER = HOME / "Desktop" / "Tim-Pruefung"
+
+
+def projektordner() -> list:
+    """Welche Ordner darf der Chat lesen - jetzt gerade?
+
+    Wird bei JEDEM Aufruf gefragt, nicht beim Start festgelegt: So
+    wirkt der Schalter sofort, ohne Neustart mitten in einer Pruefung.
+    """
+    if PRUEFUNGSSCHALTER.exists():
+        return [str(PRUEFUNGSORDNER)]
+    return CHAT_PROJEKTORDNER
 
 
 def _harness_werkzeug(name: str):
@@ -2164,7 +2291,7 @@ def _projektpfad(eingabe: str) -> str:
     kandidat = Path(eingabe).expanduser()
     if kandidat.is_absolute() and kandidat.exists():
         return str(kandidat)
-    for basis in CHAT_PROJEKTORDNER:
+    for basis in projektordner():
         b = Path(basis)
         if b.name == eingabe or str(b) == eingabe:
             return str(b)
@@ -2178,7 +2305,7 @@ def _projektpfad(eingabe: str) -> str:
     # 22.08.2026 scheiterte es genau daran und meldete "nicht gefunden",
     # obwohl die Datei da war.
     if "/" not in eingabe:
-        for basis in CHAT_PROJEKTORDNER:
+        for basis in projektordner():
             b = Path(basis)
             if not b.is_dir():
                 continue
@@ -2211,7 +2338,7 @@ def projekte_auflisten(ordner: str = "") -> str:
     Die Pfadsperre ist dieselbe.
     """
     ziel = _projektpfad(ordner) if ordner else ""
-    basen = [Path(p) for p in CHAT_PROJEKTORDNER]
+    basen = [Path(p) for p in projektordner()]
     if ziel:
         z = Path(ziel).expanduser()
         try:
@@ -2488,6 +2615,26 @@ def werkzeug_ausfuehren(name: str, argumente: dict,
             werkzeug = _harness_werkzeug("_webseite_tool")()
             return werkzeug.run(url=adresse)
 
+        if name == "livewerkstatt_schreiben":
+            # Wie werkstatt_schreiben, nur fuer den Sandkasten, dessen
+            # Code an echter Hardware laufen darf. Die Pfadsperre steckt
+            # in harness/livewerkstatt.py, nicht hier.
+            pfad = str(argumente.get("pfad", "")).strip()
+            inhalt = str(argumente.get("inhalt", ""))
+            if not pfad:
+                return "Fehler: kein Pfad angegeben."
+            if not inhalt.strip():
+                return ("Fehler: kein Inhalt angegeben. Schreibe die "
+                        "vollstaendige Datei, nicht nur einen Ausschnitt.")
+            live = _harness_modul("livewerkstatt")
+            ergebnis = live.schreiben(pfad, inhalt)
+            if not ergebnis.get("ok"):
+                return "Abgelehnt: %s" % ergebnis.get("fehler", "unbekannt")
+            return ("Gespeichert: %s (%d Bytes). Fahre sie jetzt mit "
+                    "aktion_starten 'livewerkstatt_fahren' und demselben "
+                    "Pfad - dann laeuft sie am echten Dummy."
+                    % (pfad, ergebnis.get("bytes", 0)))
+
         if name == "werkstatt_schreiben":
             # Der einzige Weg, auf dem Tim eine Datei ANLEGT. Bewusst
             # nicht ueber den Job-Server: Ein Dateiinhalt passt weder
@@ -2632,7 +2779,7 @@ def werkzeug_ausfuehren(name: str, argumente: dict,
             if not pfad:
                 return ("Fehler: kein Pfad angegeben. Nutze zuerst "
                         "'projekte_auflisten', um Dateinamen zu sehen.")
-            _, lesen = _harness_werkzeug("_dateien_werkzeuge")(CHAT_PROJEKTORDNER)
+            _, lesen = _harness_werkzeug("_dateien_werkzeuge")(projektordner())
             return lesen.run(pfad=_projektpfad(pfad))
 
         if name == "berichte_lesen":
@@ -3989,7 +4136,17 @@ def _selbsttest() -> int:
             pruefe(not any("aufraeum" in a for a in _jobaktionen),
                    "Aufraeumen steht auch nicht in der Positivliste",
                    str([a for a in _jobaktionen if "aufraeum" in a]))
-        namen -= {"werkstatt_schreiben", "werkstatt_lernnotiz"}
+        # Seit 25.08.2026 gibt es ZWEI schreibende Werkzeuge: die
+        # Werkstatt (Code im Sandkasten) und die Livewerkstatt (Code,
+        # der danach an echter Hardware laeuft). Beide werden hier
+        # ausdruecklich abgezogen - dass dieser Test beim Einbau der
+        # Livewerkstatt zuerst ROT wurde, ist genau seine Aufgabe: Ein
+        # schreibendes Werkzeug soll nie still dazukommen.
+        _schreibende = {"werkstatt_schreiben", "livewerkstatt_schreiben"}
+        pruefe(_schreibende <= namen,
+               "beide schreibenden Werkzeuge sind angemeldet",
+               str(sorted(_schreibende - namen)))
+        namen -= _schreibende | {"werkstatt_lernnotiz"}
         # Diese Liste ist mit Absicht ausgeschrieben und nicht gezaehlt:
         # Jedes neue Chat-Werkzeug soll GENAU EINMAL hier auffallen und
         # bewusst eingetragen werden, statt still dazuzukommen. Am
