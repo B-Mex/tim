@@ -39,6 +39,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -580,8 +581,22 @@ def _notaus() -> tuple[int, str]:
     return 1, "FEHLER: Der Kill-Switch konnte nirgends gesetzt werden."
 
 
+# Ab diesem Alter traegt ein Bericht die Marke VERALTET in der
+# Kopfzeile. VERALTET ist PROBLEM_MARKER der Montagsroutine - faellt der
+# woechentliche Selbsttest-Cron aus, schlaegt sie damit zu Recht an,
+# statt stumm Altdaten als aktuell zu lesen (Review-Befund 10: die
+# Routine meldete wochenlang einen laengst behobenen Fehler aus einer
+# stehengebliebenen Datei).
+BERICHT_VERALTET_TAGE = 8
+
+
 def _bericht_lesen(name: str) -> tuple[int, str]:
-    """Nur Dateien direkt aus berichte/, keine Pfadangaben."""
+    """Nur Dateien direkt aus berichte/, keine Pfadangaben.
+
+    Die erste Zeile nennt immer den Stand des Berichts - der Leser
+    (Mensch wie Routine) soll sehen, WIE ALT die Angaben sind. Sie darf
+    ausser dem gewollten VERALTET keinen Problem-Marker enthalten.
+    """
     if "/" in name or "\\" in name or name.startswith("."):
         return 1, "Ungueltiger Name - nur Dateinamen aus berichte/ sind erlaubt."
     if not name.endswith(".md"):
@@ -593,7 +608,13 @@ def _bericht_lesen(name: str) -> tuple[int, str]:
     if not ziel.is_file():
         return 1, f"Kein Bericht namens {name}."
     text = ziel.read_text(encoding="utf-8", errors="replace")
-    return 0, text[:20000]
+    alter_tage = max(0.0, (time.time() - ziel.stat().st_mtime) / 86400.0)
+    kopf = "Bericht-Stand: %s (%d Tage alt)" % (
+        time.strftime("%d.%m.%Y %H:%M", time.localtime(ziel.stat().st_mtime)),
+        int(alter_tage))
+    if alter_tage > BERICHT_VERALTET_TAGE:
+        kopf += " - VERALTET"
+    return 0, kopf + "\n\n" + text[:20000]
 
 
 def aktion_ausfuehren(schluessel: str, argument: str | None) -> dict:
@@ -1004,6 +1025,35 @@ def _selbsttest() -> int:
                        str(_mod_p.PRUEFUNGSSCHALTER))
             else:
                 pruefe(False, f"{_dateiname} ladbar")
+
+        # --- Berichts-Alter wird sichtbar (Befund 10) ---
+        # Fixture-Berichte in tmp, das echte berichte/ bleibt unberuehrt.
+        _echt_deploy = globals()["DEPLOY_DIR"]
+        with _tf_p.TemporaryDirectory() as _tmp_b:
+            try:
+                globals()["DEPLOY_DIR"] = Path(_tmp_b)
+                _bdir = Path(_tmp_b) / "berichte"
+                _bdir.mkdir()
+                (_bdir / "frisch.md").write_text("# Selbsttests\nAlles gut.")
+                (_bdir / "alt.md").write_text("# Selbsttests\nAlt.")
+                _alt_zeit = time.time() - 20 * 86400
+                os.utime(_bdir / "alt.md", (_alt_zeit, _alt_zeit))
+                _c1, _t1 = _bericht_lesen("frisch")
+                _kopf1 = _t1.splitlines()[0]
+                pruefe(_c1 == 0 and _kopf1.startswith("Bericht-Stand:")
+                       and "VERALTET" not in _kopf1,
+                       "frischer Bericht traegt Stand-Zeile ohne Marker",
+                       _kopf1)
+                pruefe(not any(m in _kopf1 for m in
+                               ("FUND", "ABWEICHUNG", "FEHLER", "PROBLEM")),
+                       "die Stand-Zeile enthaelt keinen fremden "
+                       "Problem-Marker", _kopf1)
+                _c2, _t2 = _bericht_lesen("alt")
+                pruefe(_c2 == 0 and "VERALTET" in _t2.splitlines()[0],
+                       "ein 20 Tage alter Bericht wird als VERALTET "
+                       "markiert", _t2.splitlines()[0])
+            finally:
+                globals()["DEPLOY_DIR"] = _echt_deploy
 
         # Eintragen von Pruefungen gehoert NICHT in die Positivliste.
         _eintragend = []
