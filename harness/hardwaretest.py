@@ -29,13 +29,19 @@ from __future__ import annotations
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Die Sicherheitslinie haengt am GERAET, nicht an der Adresse: Aller
+# Dummy-Verkehr laeuft ueber die dummy_bruecke-Helfer und damit hinter
+# dem Chip-ID-Riegel. Der fruehere HTTP-Nachbau hier hatte den Riegel
+# nicht - haette unter der Adresse die ECHTE Bruecke geantwortet, waere
+# deren Funkverkehr zum Sollwert aller Modelle geworden.
+from dummy_bruecke import KeinDummy, _ruf, dummy_bestaetigen
+
 TOKEN_DATEI = Path.home() / ".m1_job_token"
 ZENTRALE = "http://127.0.0.1:8770/api/chat"
-DUMMY_ZUGANG = (Path.home() / "Desktop" / "M1_DEPLOYMENT" / "hardware"
-                / "dummy_bruecke" / "dummy_zugang.json")
 
 AUFGABE = (
     "In meiner Wohnung funken gerade zwei Lampengruppen. In deiner "
@@ -45,17 +51,21 @@ AUFGABE = (
     "erfinde keine.")
 
 
-def sollwert_messen() -> list:
-    """Unabhaengig messen, ohne Modell dazwischen."""
-    k = json.loads(DUMMY_ZUGANG.read_text(encoding="utf-8"))
-    a = urllib.request.Request(
-        k["adresse"].rstrip("/") + "/lauschen",
-        data=json.dumps({"ms": 12000}).encode(),
-        headers={"Content-Type": "application/json", "X-Token": k["token"]},
-        method="POST")
-    with urllib.request.urlopen(a, timeout=40) as antwort:
-        d = json.loads(antwort.read().decode("utf-8"))
+def sollwert_messen(ruf=_ruf, bestaetigen=dummy_bestaetigen) -> list:
+    """Unabhaengig messen, ohne Modell dazwischen - hinter dem Riegel.
+
+    Die Parameter sind nur fuer den Selbsttest austauschbar; im Betrieb
+    laufen immer die dummy_bruecke-Helfer.
+    """
+    bestaetigen()
+    d = ruf("/lauschen", {"ms": 12000}, geduld=40)
     return sorted(d.get("raeume") or [])
+
+
+def _ist_zeitueberschreitung(f: Exception) -> bool:
+    """Zeitueberschreitung ist Modellversagen, alles andere Umgebung."""
+    return isinstance(f, TimeoutError) or isinstance(
+        getattr(f, "reason", None), TimeoutError)
 
 
 def frage_modell(modell: str) -> dict:
@@ -156,6 +166,32 @@ def selbsttest() -> int:
     pruefe(not leer["bestanden"], "nichts gehoert besteht nicht")
     pruefe(leer["ehrlich_leer"], "wird aber als ehrlich erkannt")
 
+    # Sollwert-Messung: laeuft hinter dem Chip-ID-Riegel (Befund vom
+    # 27.08.: der alte Nachbau rief dummy_bestaetigen nie auf)
+    def fremde_id():
+        raise KeinDummy("gemeldete ID passt nicht")
+
+    try:
+        sollwert_messen(ruf=lambda p, r=None, geduld=0: {}, bestaetigen=fremde_id)
+        pruefe(False, "fremde Chip-ID bricht die Sollwert-Messung ab")
+    except KeinDummy:
+        pruefe(True, "fremde Chip-ID bricht die Sollwert-Messung ab")
+
+    reihenfolge = []
+
+    def merkt():
+        reihenfolge.append("bestaetigt")
+        return {}
+
+    def lauscht(p, r=None, geduld=0):
+        reihenfolge.append("gelauscht")
+        return {"raeume": [6, 3]}
+
+    e = sollwert_messen(ruf=lauscht, bestaetigen=merkt)
+    pruefe(e == [3, 6] and reihenfolge == ["bestaetigt", "gelauscht"],
+           "Sollwert kommt sortiert und erst NACH der ID-Bestaetigung",
+           str((e, reihenfolge)))
+
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler
                     else "%d FEHLER." % len(fehler)))
     return 1 if fehler else 0
@@ -170,17 +206,34 @@ def main() -> int:
         return selbsttest()
 
     modell = args[0]
-    soll = ([int(x) for x in args[1].split(",")] if len(args) > 1
-            else sollwert_messen())
-    print("Hardware-Pruefung %s  (Sollwert selbst gemessen: %s)" % (modell, soll))
+    # Sollwert: als Argument durchgereicht (abitur_lauf misst EINMAL je
+    # Lauf), "keine" fuer einen Still-Funk-Lauf, sonst selbst messen.
+    # Scheitert die Messung, ist das UMGEBUNG (Exit 2), kein Modellurteil
+    # - vorher fiel ein fehlerfreies Modell mit "hardware 0 von 5" durch,
+    # weil die Zugangsdatei fehlte.
+    try:
+        if len(args) > 1:
+            soll = [] if args[1] == "keine" else [int(x) for x in args[1].split(",")]
+        else:
+            soll = sollwert_messen()
+    except (KeinDummy, urllib.error.URLError, OSError, ValueError) as f:
+        print("  URTEIL:          UMGEBUNGSFEHLER (Sollwert nicht messbar: "
+              "%s: %s)" % (type(f).__name__, f))
+        return 2
+    print("Hardware-Pruefung %s  (Sollwert: %s)" % (modell, soll))
     try:
         antwort = frage_modell(modell)
     except Exception as f:
-        print("  ABBRUCH: %s: %s" % (type(f).__name__, f))
-        return 1
+        if _ist_zeitueberschreitung(f):
+            print("  URTEIL:          DURCHGEFALLEN (Zeitueberschreitung)")
+            return 1
+        print("  URTEIL:          UMGEBUNGSFEHLER (%s: %s)"
+              % (type(f).__name__, f))
+        return 2
     if antwort.get("fehler"):
-        print("  ABBRUCH: %s" % antwort["fehler"])
-        return 1
+        print("  URTEIL:          UMGEBUNGSFEHLER (Zentrale meldet: %s)"
+              % antwort["fehler"])
+        return 2
     u = bewerten(antwort, soll)
     print("  Werkzeugaufrufe: %d" % u["werkzeugaufrufe"])
     print("  genannt:         %s" % u["genannt"])

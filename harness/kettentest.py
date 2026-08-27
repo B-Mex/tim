@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -77,6 +78,11 @@ def frage_modell(modell: str, chat: str) -> dict:
         return json.loads(antwort.read().decode("utf-8"))
 
 
+class DienstProblem(Exception):
+    """Der Job-Server hat abgelehnt oder ist nicht erreichbar - das ist
+    UMGEBUNG, nie ein Urteil ueber das Modell."""
+
+
 def _ueber_dienst(aktion: str, argument: str = "") -> str:
     """Eine Aktion ueber den Job-Server ausfuehren und die Ausgabe holen.
 
@@ -85,6 +91,12 @@ def _ueber_dienst(aktion: str, argument: str = "") -> str:
     Job-Server als Dienst weiter lesen durfte. Wer hier direkt auf die
     Platte greift, misst irgendwann nichts mehr - und haelt eine
     Rechtesperre faelschlich fuer eine fehlende Datei.
+
+    Fehlerbehandlung nach dem Muster von routine._post: Der Job-Server
+    antwortet 400, wenn die Aktion ok:False meldet - der Body traegt den
+    Befund. Eine Ablehnung (Kill-Switch, Sperre) wird hier zur klaren
+    DienstProblem-Meldung, nie zu einem leeren String, der spaeter als
+    "Modell hat nichts gebaut" gedeutet wuerde.
     """
     rumpf = json.dumps({"aktion": aktion, "argument": argument}).encode()
     anfrage = urllib.request.Request(
@@ -92,8 +104,37 @@ def _ueber_dienst(aktion: str, argument: str = "") -> str:
         headers={"Content-Type": "application/json",
                  "X-M1-Token": TOKEN_DATEI.read_text().strip()},
         method="POST")
-    with urllib.request.urlopen(anfrage, timeout=60) as antwort:
-        return json.loads(antwort.read().decode("utf-8")).get("ausgabe", "")
+    try:
+        with urllib.request.urlopen(anfrage, timeout=60) as antwort:
+            daten = json.loads(antwort.read().decode("utf-8"))
+    except urllib.error.HTTPError as f:
+        try:
+            daten = json.loads(f.read().decode("utf-8"))
+        except (ValueError, OSError):
+            raise DienstProblem("Job-Server: HTTP %s ohne lesbaren Body"
+                                % f.code) from f
+    except (urllib.error.URLError, OSError) as f:
+        raise DienstProblem("Job-Server nicht erreichbar: %s" % f) from f
+    if daten.get("fehler"):
+        raise DienstProblem("Job-Server lehnt %r ab: %s"
+                            % (aktion, daten["fehler"]))
+    if not daten.get("ok", False):
+        raise DienstProblem("Aktion %r meldet ok:False: %s"
+                            % (aktion, str(daten.get("ausgabe", ""))[:300]))
+    return str(daten.get("ausgabe", ""))
+
+
+def vorflug(liste_text: str) -> list:
+    """Welche kette*.py liegen NOCH im Sandkasten? Muss leer sein.
+
+    Warum: aufraeumen() loescht direkt ueber den Dateipfad - scheitert
+    das still (TCC-Sperre der Shell), zaehlt der Altbestand der vorigen
+    Runde als Leistung des naechsten Pruefligs: Ein Modell, das nichts
+    tut oder frei erfindet, bestuende. Gemessen wird deshalb ueber den
+    Dienst, denselben Weg wie messen().
+    """
+    return [i for i in range(1, SCHRITTE + 1)
+            if re.search(r"\bkette%d\.py\b" % i, liste_text)]
 
 
 def messen() -> dict:
@@ -142,8 +183,9 @@ def bewerten(antwort: dict, gemessen: dict) -> dict:
 
 
 def aufraeumen() -> None:
-    """Aufraeumen geht nur, soweit die Rechte reichen - Fehler sind hier
-    kein Beinbruch, der naechste Lauf misst ohnehin neu."""
+    """Loeschen geht nur, soweit die Rechte reichen (Best-Effort) - ob es
+    WIRKLICH geklappt hat, prueft danach der vorflug() ueber den Dienst.
+    Ein stilles Scheitern hier ist seit dem 27.08. kein stilles mehr."""
     for i in range(1, SCHRITTE + 1):
         p = SANDKASTEN / ("kette%d.py" % i)
         try:
@@ -151,6 +193,12 @@ def aufraeumen() -> None:
                 p.unlink()
         except OSError:
             pass
+
+
+def _ist_zeitueberschreitung(f: Exception) -> bool:
+    """Zeitueberschreitung ist Modellversagen, alles andere Umgebung."""
+    return isinstance(f, TimeoutError) or isinstance(
+        getattr(f, "reason", None), TimeoutError)
 
 
 def selbsttest() -> int:
@@ -188,6 +236,14 @@ def selbsttest() -> int:
                       {"vorhanden": [], "inhalt_stimmt": []})
     pruefe(not nichts["bestanden"], "wer nichts baut, besteht nicht")
 
+    # Vorflug: Altdateien muessen auffallen, sonst zaehlt der Altbestand
+    # der vorigen Runde als Leistung des naechsten Pruefligs (Befund 4)
+    pruefe(vorflug("notiz.txt\nanderes.py") == [], "leerer Sandkasten: Vorflug frei")
+    pruefe(vorflug("notiz.txt\nkette2.py") == [2],
+           "Altdatei kette2.py wird gefunden")
+    pruefe(vorflug("kette1.py  kette3.py") == [1, 3],
+           "mehrere Altdateien werden alle gefunden")
+
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler
                     else "%d FEHLER." % len(fehler)))
     return 1 if fehler else 0
@@ -204,17 +260,39 @@ def main() -> int:
     modell = args[0]
     chat = "kettentest_" + re.sub(r"[^a-z0-9]+", "_", modell.lower())
     aufraeumen()
+    # Vorflug: Der Sandkasten MUSS leer sein, sonst wird Altbestand zur
+    # Leistung des Pruefligs. Exit 2 = Umgebungsfehler, kein Modellurteil.
+    try:
+        reste = vorflug(_ueber_dienst("livewerkstatt_liste"))
+    except DienstProblem as f:
+        print("  URTEIL:             UMGEBUNGSFEHLER (%s)" % f)
+        return 2
+    if reste:
+        print("  URTEIL:             UMGEBUNGSFEHLER (Altdatei kette%s.py "
+              "im Sandkasten - Loeschen scheitert wohl an Rechten/TCC, "
+              "von Hand raeumen)" % ".py, kette".join(map(str, reste)))
+        return 2
+
     print("Kettentest fuer %s - %d Schritte" % (modell, SCHRITTE))
     try:
         antwort = frage_modell(modell, chat)
     except Exception as f:
-        print("  ABBRUCH: %s: %s" % (type(f).__name__, f))
-        return 1
+        if _ist_zeitueberschreitung(f):
+            print("  URTEIL:             DURCHGEFALLEN (Zeitueberschreitung)")
+            return 1
+        print("  URTEIL:             UMGEBUNGSFEHLER (%s: %s)"
+              % (type(f).__name__, f))
+        return 2
     if antwort.get("fehler"):
-        print("  ABBRUCH: %s" % antwort["fehler"])
-        return 1
+        print("  URTEIL:             UMGEBUNGSFEHLER (Zentrale meldet: %s)"
+              % antwort["fehler"])
+        return 2
 
-    gemessen = messen()
+    try:
+        gemessen = messen()
+    except DienstProblem as f:
+        print("  URTEIL:             UMGEBUNGSFEHLER (%s)" % f)
+        return 2
     urteil = bewerten(antwort, gemessen)
     print("  Werkzeugaufrufe:    %d" % urteil["werkzeugaufrufe"])
     print("  Dateien behauptet:  %d" % urteil["dateien_behauptet"])

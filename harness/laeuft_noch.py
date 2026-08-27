@@ -17,16 +17,33 @@ import sys
 import time
 from pathlib import Path
 
-ORTE = [
-    ("Fortschrittsdatei", Path.home() / "Desktop" / "M1_DEPLOYMENT" / "docs"
-     / "abitur_2026-08-26" / "FORTSCHRITT.txt"),
-    ("Pruefungschats", Path("/opt/ki-server/memory/chats")),
-    ("Werkstatt-Sandkasten", Path.home() / "Desktop" / "Tim-Werkstatt" / "sandkasten"),
-    ("Livewerkstatt", Path.home() / "Desktop" / "Tim-Livewerkstatt" / "sandkasten"),
-    ("Ergebnisse", Path.home() / "Desktop" / "M1_DEPLOYMENT" / "docs" / "abitur_2026-08-26"),
-]
+ERGEBNIS_WURZEL = Path.home() / "Desktop" / "M1_DEPLOYMENT" / "docs"
 PROZESSE = ("abitur_lauf.py", "abitur.py", "kettentest.py", "hardwaretest.py",
             "modell_benchmark.py")
+
+
+def _juengster_abiturordner() -> Path | None:
+    """Der Ergebnisordner traegt seit dem 27.08. einen Zeitstempel je
+    Lauf (abitur_lauf._lauf_ordner) - hartkodiert waere er beim ersten
+    neuen Lauf stumm falsch und meldete 'keine Spuren' fuer einen
+    lebenden Durchgang."""
+    kandidaten = [p for p in ERGEBNIS_WURZEL.glob("abitur_*") if p.is_dir()]
+    if not kandidaten:
+        return None
+    return max(kandidaten, key=lambda p: p.stat().st_mtime)
+
+
+def orte() -> list:
+    liste = [
+        ("Pruefungschats", Path("/opt/ki-server/memory/chats")),
+        ("Werkstatt-Sandkasten", Path.home() / "Desktop" / "Tim-Werkstatt" / "sandkasten"),
+        ("Livewerkstatt", Path.home() / "Desktop" / "Tim-Livewerkstatt" / "sandkasten"),
+    ]
+    o = _juengster_abiturordner()
+    if o is not None:
+        liste.insert(0, ("Fortschrittsdatei", o / "FORTSCHRITT.txt"))
+        liste.append(("Ergebnisse", o))
+    return liste
 
 
 def juengste(pfad: Path) -> float:
@@ -61,7 +78,7 @@ def main() -> int:
 
     print("\nJuengste Spur je Ort:")
     neuste_gesamt = 0.0
-    for name, pfad in ORTE:
+    for name, pfad in orte():
         t = juengste(pfad)
         if not t:
             print("  %-22s (nichts)" % name)
