@@ -46,7 +46,16 @@ LIVEWERKSTATT = Path.home() / "Desktop" / "Tim-Livewerkstatt"
 SANDKASTEN = LIVEWERKSTATT / "sandkasten"
 PROTOKOLL = Path("/opt/ki-server/memory/livewerkstatt_log.jsonl")
 
-DUMMY_ID = "28cdc106c5be"
+# Chip-IDs, KeinDummy und der USB-Leser kommen aus dummy_bruecke - EINE
+# Quelle. Bis 27.08. standen hier wortgleiche Kopien: Beim Dummy-Tausch
+# haette man eine Stelle aktualisiert, die andere uebersehen, und beide
+# Selbsttests waeren gruen geblieben (Review-Befund 13). Der
+# sys.path-Eintrag macht den Import auch dann moeglich, wenn diese
+# Datei per Pfad geladen wird (Job-Server-Selbsttest).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dummy_bruecke import (DUMMY_ID, ECHTE_BRUECKE_ID,  # noqa: E402
+                           KeinDummy, usb_id_lesen)
+
 ERLAUBTE_ENDUNGEN = (".py", ".json", ".txt", ".md")
 ZEITGRENZE_S = 120
 
@@ -80,10 +89,6 @@ PRUEFUNGS_SPERREN = """
        Path.home() / "Desktop" / "brmesh-bridge")
 
 
-class KeinDummy(Exception):
-    """Am USB haengt nicht der Dummy - es wird nichts gefahren."""
-
-
 def pfad_erlaubt(relpfad: str):
     """Nur innerhalb des Sandkastens, nur erlaubte Endungen."""
     if not relpfad or relpfad.startswith("/") or ".." in relpfad:
@@ -94,31 +99,6 @@ def pfad_erlaubt(relpfad: str):
     if ziel.suffix not in ERLAUBTE_ENDUNGEN:
         return None, "Endung nicht erlaubt (%s)" % ", ".join(ERLAUBTE_ENDUNGEN)
     return ziel, ""
-
-
-def usb_id_lesen() -> str | None:
-    """Wer haengt am USB? Gibt die WLAN-MAC zurueck (wie in /status)."""
-    sys.path.insert(0, str(Path.home() / "Desktop" / "brmesh-bridge" / "tools"))
-    try:
-        import pico_draht
-    except ImportError:
-        return None
-    if not pico_draht.anschluss_finden():
-        return None
-    try:
-        with pico_draht.Draht() as draht:
-            draht.abbrechen()
-            draht.schreiben(
-                "import network; print('MAC', "
-                "network.WLAN(network.STA_IF).config('mac').hex())")
-            roh = draht.lesen_bis("MAC ", 8.0)
-    except Exception:
-        return None
-    for zeile in roh.splitlines():
-        zeile = zeile.strip()
-        if zeile.startswith("MAC ") and len(zeile) > 4:
-            return zeile[4:].strip().lower()
-    return None
 
 
 def dummy_bestaetigen() -> str:
@@ -256,7 +236,7 @@ def selbsttest() -> int:
     # Der ID-Riegel
     echt = globals()["usb_id_lesen"]
     try:
-        globals()["usb_id_lesen"] = lambda: "28cdc106c5c0"   # echte Bruecke
+        globals()["usb_id_lesen"] = lambda: ECHTE_BRUECKE_ID  # echte Bruecke
         try:
             dummy_bestaetigen()
             pruefe(False, "ECHTE Bruecke am USB wird abgewiesen",

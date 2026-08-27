@@ -44,7 +44,15 @@ from pathlib import Path
 # Die Chip-ID des Dummy - der einzige Pico, den dieses Werkzeug anfassen
 # darf. Steht hier im Klartext, weil sie kein Geheimnis ist: Sie steht
 # in jeder /status-Antwort und auf dem Geraet selbst.
+#
+# Seit 27.08.2026 ist DIES die einzige Quelle beider IDs: livewerkstatt
+# importiert sie. Vorher standen Kopien in zwei Dateien - beim
+# Dummy-Tausch haette man eine uebersehen, und beide Selbsttests waeren
+# gruen geblieben (Review-Befund 13).
 DUMMY_ID = "28cdc106c5be"
+# Die WLAN-MAC der ECHTEN Bruecke - nur fuer die Gegenproben der
+# Selbsttests (unterscheidet sich vom Dummy in zwei Zeichen).
+ECHTE_BRUECKE_ID = "28cdc106c5c0"
 
 # Die Konfiguration des Uebungsordners (Adresse + Token des Dummy).
 ZUGANG = Path.home() / "Desktop" / "M1_DEPLOYMENT" / "hardware" / \
@@ -256,7 +264,7 @@ def selbsttest() -> int:
     echt = _ruf
     try:
         _ruf = lambda p, r=None, geduld=8.0: {  # noqa: E731
-            "id": "28cdc106c5c0", "ok": True, "version": "2.6"}
+            "id": ECHTE_BRUECKE_ID, "ok": True, "version": "2.6"}
         try:
             dummy_bestaetigen()
             pruefe(False, "die ECHTE Bruecke wird abgewiesen",

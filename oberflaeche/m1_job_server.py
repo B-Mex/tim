@@ -98,10 +98,18 @@ _FILTER_AUS = False
 
 
 def _verborgen(name: str) -> bool:
-    """Aktionen, die waehrend einer Pruefung nicht angeboten werden."""
+    """Aktionen, die waehrend einer Pruefung weder angeboten noch
+    ausgefuehrt werden (seit 27.08.: verborgen heisst auch VERBOTEN,
+    aktion_ausfuehren prueft mit).
+
+    Nur die werkstatt_-Familie: Der Filter existiert allein wegen der
+    Kisten-Verwechslung vom 25.08. (siehe oben). dummy_* stand ohne
+    Begruendung mit darin - und genau diese Familie braucht die
+    Hardware-Pruefung, der Systemprompt nennt dummy_lauschen als
+    einzigen Weg zu Raumnummern (Review-Befund 9)."""
     if _FILTER_AUS or not PRUEFUNGSSCHALTER.exists():
         return False
-    return name.startswith("werkstatt_") or name.startswith("dummy_")
+    return name.startswith("werkstatt_")
 
 
 def _py() -> str:
@@ -609,6 +617,16 @@ def aktion_ausfuehren(schluessel: str, argument: str | None) -> dict:
             return {"ok": False, "aktion": schluessel,
                     "fehler": f"Kill-Switch aktiv ({stop}) - es wird nichts ausgefuehrt."}
 
+    # Verborgen heisst auch VERBOTEN: Bis zum 27.08. wirkte der
+    # Pruefungsfilter nur auf die GET-/aktionen-Anzeige - wer den Namen
+    # kannte oder riet, fuehrte die Aktion ueber POST /start trotzdem
+    # aus (Review-Befund 9).
+    if _verborgen(schluessel):
+        return {"ok": False, "aktion": schluessel,
+                "fehler": f"'{schluessel}' ist waehrend einer Pruefung "
+                          "verborgen (PRUEFUNGSMODUS liegt) - nicht "
+                          "ausgefuehrt."}
+
     if braucht_arg and not argument:
         return {"ok": False, "aktion": schluessel,
                 "fehler": f"'{schluessel}' braucht ein Argument."}
@@ -759,7 +777,7 @@ def _selbsttest() -> int:
             print(f"  FEHLER  {text}" + (f"  [{zusatz}]" if zusatz else ""))
             fehler += 1
 
-    global _FILTER_AUS
+    global _FILTER_AUS, PRUEFUNGSSCHALTER
     _FILTER_AUS = True          # die ganze Liste pruefen, nicht die gefilterte
     print("m1_job_server Selbsttest:")
     if PRUEFUNGSSCHALTER.exists():
@@ -932,6 +950,60 @@ def _selbsttest() -> int:
                    "Sandbox der Livewerkstatt erlaubt kein Netzwerk")
         else:
             pruefe(False, "livewerkstatt.py ladbar")
+
+        # --- Pruefungsmodus: verborgen heisst auch VERBOTEN (27.08.) ---
+        # Der Filter wirkte vorher nur auf die Anzeige; POST /start
+        # fuehrte Verborgenes trotzdem aus, und dummy_* stand ohne
+        # Begruendung mit im Filter (Review-Befund 9). Schalter nur als
+        # tmp-Doppelgaenger - die echte PRUEFUNGSMODUS-Datei wird nie
+        # angefasst.
+        import tempfile as _tf_p
+        _echt_schalter, _echt_filter = PRUEFUNGSSCHALTER, _FILTER_AUS
+        with _tf_p.TemporaryDirectory() as _tmp_p:
+            try:
+                PRUEFUNGSSCHALTER = Path(_tmp_p) / "PRUEFUNGSMODUS"
+                PRUEFUNGSSCHALTER.write_text("probe")
+                _FILTER_AUS = False
+                pruefe(_verborgen("werkstatt_liste"),
+                       "werkstatt_* ist im Pruefungsmodus verborgen")
+                pruefe(not _verborgen("dummy_stand"),
+                       "dummy_* bleibt sichtbar - die Hardware-Pruefung "
+                       "braucht es")
+                pruefe(not _verborgen("livewerkstatt_liste"),
+                       "livewerkstatt_* bleibt sichtbar - die Pruefungs-Kiste")
+                _st, _tx = anfrage("/aktionen")
+                # Gezielt die AKTIONS-Schluessel pruefen - im
+                # ablaeufe-Abschnitt derselben Antwort duerfen
+                # werkstatt_-Namen weiterhin vorkommen.
+                _ak = set(json.loads(_tx).get("aktionen", {}))
+                pruefe(_st == 200
+                       and not any(a.startswith("werkstatt_") for a in _ak)
+                       and any(a.startswith("dummy_") for a in _ak)
+                       and any(a.startswith("livewerkstatt_") for a in _ak),
+                       "GET /aktionen verbirgt werkstatt_, zeigt dummy_",
+                       str(sorted(_ak))[:160])
+                _st, _tx = anfrage("/start", methode="POST",
+                                   koerper={"aktion": "werkstatt_liste"})
+                pruefe(_st == 400 and "verborgen" in _tx,
+                       "POST /start fuehrt Verborgenes NICHT aus",
+                       "%s %s" % (_st, _tx[:120]))
+            finally:
+                PRUEFUNGSSCHALTER, _FILTER_AUS = _echt_schalter, _echt_filter
+
+        # Vier Definitionen, EIN Schalter: Alle muessen auf denselben
+        # Pfad zeigen - Auseinanderlaufen wird hier rot statt still.
+        for _dateiname in ("livewerkstatt.py", "abitur_lauf.py"):
+            _spec_p = _ilu_d.spec_from_file_location(
+                "_schalter_" + _dateiname[:-3],
+                str(HARNESS_DIR / _dateiname))
+            if _spec_p and _spec_p.loader:
+                _mod_p = _ilu_d.module_from_spec(_spec_p)
+                _spec_p.loader.exec_module(_mod_p)
+                pruefe(_mod_p.PRUEFUNGSSCHALTER == PRUEFUNGSSCHALTER,
+                       f"{_dateiname} zeigt auf denselben Pruefungsschalter",
+                       str(_mod_p.PRUEFUNGSSCHALTER))
+            else:
+                pruefe(False, f"{_dateiname} ladbar")
 
         # Eintragen von Pruefungen gehoert NICHT in die Positivliste.
         _eintragend = []

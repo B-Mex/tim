@@ -2519,6 +2519,24 @@ def _werkzeuge_anbieten(erlaubt: set) -> list:
             if w["function"]["name"] in erlaubt]
 
 
+def _chat_werkzeuge() -> list:
+    """Das Werkzeugangebot des Haupt-Chats - jetzt gerade.
+
+    Im Pruefungsmodus ohne werkstatt_schreiben: Die Kisten-Verwechslung
+    vom 25.08. (Tim legte Pruefungsdateien viermal in die werkstatt_-
+    statt die livewerkstatt_-Kiste) war nur ueber das CHAT-Werkzeug
+    moeglich - der Job-Server-Filter kannte den Schalter, dieses Angebot
+    hier nicht (Review-Befund 9). livewerkstatt_schreiben bleibt (die
+    Pruefungs-Kiste selbst), werkstatt_lernnotiz bleibt (Lernnotizen
+    werden auch in der Pruefung verlangt). Wie projektordner() bei jedem
+    Aufruf gefragt, damit der Schalter ohne Neustart wirkt.
+    """
+    if not PRUEFUNGSSCHALTER.exists():
+        return CHAT_WERKZEUGE
+    return [w for w in CHAT_WERKZEUGE
+            if w["function"]["name"] != "werkstatt_schreiben"]
+
+
 # Was ein Zuarbeiter zurueckmeldet, muss BELEGT sein, nicht behauptet.
 #
 # Der Anlass (24.08.2026, gemessen im Trainingslauf): Das grosse Modell
@@ -2955,7 +2973,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 "options": dict(modell_grenzen(modell), temperature=0.3),
             }
             if not letzte:
-                koerper["tools"] = CHAT_WERKZEUGE
+                koerper["tools"] = _chat_werkzeuge()
             anfrage = urllib.request.Request(
                 OLLAMA + "/api/chat",
                 data=json.dumps(koerper).encode("utf-8"), method="POST")
@@ -3622,6 +3640,43 @@ def _selbsttest() -> int:
            "unbekannte Modelle bekommen den vorsichtigen Standard")
     pruefe(STANDARD_MODELL in MODELL_GRENZEN,
            "das Standardmodell hat einen eigenen Grenzen-Eintrag")
+
+    # --- Pruefungsmodus nimmt dem Chat das werkstatt_schreiben ---
+    # Die Kisten-Verwechslung vom 25.08. lief ueber das CHAT-Werkzeug;
+    # der Schalter kannte es bis zum 27.08. nicht (Review-Befund 9).
+    # Nur ein tmp-Doppelgaenger - die echte Datei wird nie angefasst.
+    global PRUEFUNGSSCHALTER
+    import tempfile as _tf_s
+    _echt_schalter = PRUEFUNGSSCHALTER
+    with _tf_s.TemporaryDirectory() as _tmp_s:
+        try:
+            PRUEFUNGSSCHALTER = Path(_tmp_s) / "PRUEFUNGSMODUS"
+            _namen = {w["function"]["name"] for w in _chat_werkzeuge()}
+            pruefe("werkstatt_schreiben" in _namen,
+                   "ohne Schalter bietet der Chat werkstatt_schreiben an")
+            PRUEFUNGSSCHALTER.write_text("probe")
+            _namen = {w["function"]["name"] for w in _chat_werkzeuge()}
+            pruefe("werkstatt_schreiben" not in _namen
+                   and "livewerkstatt_schreiben" in _namen
+                   and "werkstatt_lernnotiz" in _namen,
+                   "im Pruefungsmodus fehlt genau werkstatt_schreiben",
+                   str(sorted(_namen)))
+        finally:
+            PRUEFUNGSSCHALTER = _echt_schalter
+
+    # Ein Schalter, ein Pfad - Abgleich mit der Livewerkstatt, damit
+    # ein Auseinanderlaufen der Definitionen rot wird statt still.
+    import importlib.util as _ilu_s
+    _spec_s = _ilu_s.spec_from_file_location(
+        "_lw_probe", "/opt/ki-server/harness/livewerkstatt.py")
+    if _spec_s and _spec_s.loader:
+        _lw = _ilu_s.module_from_spec(_spec_s)
+        _spec_s.loader.exec_module(_lw)
+        pruefe(_lw.PRUEFUNGSSCHALTER == PRUEFUNGSSCHALTER,
+               "Livewerkstatt zeigt auf denselben Pruefungsschalter",
+               str(_lw.PRUEFUNGSSCHALTER))
+    else:
+        pruefe(False, "livewerkstatt.py ladbar")
 
     # --- Die Oberflaeche selbst: ist ihr JavaScript ueberhaupt heil? ---
     # Am 23.08.2026 hat ein beim Bearbeiten zerrissener Blockkommentar
