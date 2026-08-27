@@ -31,18 +31,48 @@ KLASSE_2 = "qwen3.6:35b-a3b"  # mittel: komplexe Reviews, Planung
 # schneller, obwohl es groesser ist. Die Messung stand die ganze Zeit
 # drei Zeilen weiter oben.
 # Klein bleibt trotzdem richtig fuer Klasse 3: Das kleine Modell LAEDT
-# schneller (4.8 s gegen 11.3 s) und passt, wenn der Speicher knapp ist.
-# Fuer kurze Formatchecks und den Canary zaehlt die Ladezeit mehr als
-# der Durchsatz. Die Zuordnung selbst also NICHT ohne einen echten
-# Vergleichslauf aendern - eine Annahme durch die naechste zu ersetzen
-# waere derselbe Fehler noch einmal.
-KLASSE_3 = "qwen3.5:9b"       # speichersparend, laedt schnell: Formatchecks, Canary
-# Bis 21.08.2026 stand in Klasse 3 "llama-fast" (erfand eine Zeilenzahl),
-# danach gpt-oss:20b. Der Benchmark vom 23.08. zeigte bei gpt-oss zweimal
-# eine LEERE Antwort nach minutenlangem Denken - fuer Formatchecks und
-# Canary untragbar, dort muss verlaesslich etwas zurueckkommen.
-# qwen3.5:9b: 14/14, 30.5 Tok/s, 4.8 s Ladezeit, besteht die
-# Ehrlichkeitsfalle (erfindet keine Zeilenzahlen).
+# schneller und passt, wenn der Speicher knapp ist. Fuer kurze
+# Formatchecks und den Canary zaehlt die Ladezeit mehr als der
+# Durchsatz.
+#
+# Stand 27.08.2026: laguna-xs-2.1. Die Zuordnung stammt aus dem ABITUR
+# vom 26./27.08. (bestand als einziges kleines Modell alle
+# Vorpruefungen, Injection 10 von 10 sauber; MoE mit wenigen aktiven
+# Parametern), NICHT aus einem Benchmark-Vergleichslauf - der steht fuer
+# laguna noch aus (Befund A2 der Gegenpruefung). Vorgeschichte: bis
+# 21.08. "llama-fast" (erfand eine Zeilenzahl), dann gpt-oss:20b (leere
+# Antworten nach langem Denken), dann qwen3.5:9b - am 26.08. geloescht,
+# weil es im Kettentest den fuenften von fuenf Schritten erfand.
+KLASSE_3 = "laguna-xs-2.1"    # speichersparend: Formatchecks, Canary, Verdichtung
+
+
+def installierte_modelle(timeout: float = 5.0) -> list:
+    """Alle bei Ollama INSTALLIERTEN Modellnamen (/api/tags).
+
+    Nicht zu verwechseln mit modell_geladen (/api/ps, im Speicher):
+    Ein geloeschtes Modell fiel bisher durch dasselbe Loch wie ein bloss
+    entladenes - und die Verdichtung lief dann in einen 404-Notnagel,
+    der die Gespraechsmitte zerstueckelte (Review-Befund vom 27.08.).
+    """
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/tags",
+                                timeout=timeout) as antwort:
+        daten = json.loads(antwort.read().decode("utf-8"))
+    return [m.get("name", "") for m in daten.get("models", [])]
+
+
+def modelle_pruefen(namen: list) -> list:
+    """Welche Klassenmodelle fehlen in der uebergebenen Bestandsliste?
+
+    Bewusst mit uebergebener Liste statt Live-Abfrage: So bleibt die
+    Funktion im Selbsttest ohne Betriebsdaten pruefbar. Den Live-Lauf
+    macht der woechentliche __main__-Diagnoselauf.
+    """
+    fehlend = []
+    for klasse, modell in (("Klasse 1", KLASSE_1), ("Klasse 2", KLASSE_2),
+                           ("Klasse 3", KLASSE_3)):
+        if not any(n.startswith(modell) for n in namen):
+            fehlend.append("%s: %s" % (klasse, modell))
+    return fehlend
 
 
 def freier_ram_gb() -> float:
@@ -81,7 +111,53 @@ def get_model_for_job(job_klasse: int) -> str:
     return KLASSE_3
 
 
+def selbsttest() -> int:
+    fehler = []
+
+    def pruefe(b, t, z=""):
+        print("  %-7s %s%s" % ("ok" if b else "FEHLER", t,
+                               "" if b else "  <- " + str(z)))
+        if not b:
+            fehler.append(t)
+
+    print("model_router Selbsttest:")
+    # Bestandsliste vom 27.08.2026 als Fixture - KEINE Live-Abfrage
+    bestand = ["qwen3.6:35b-a3b", "laguna-xs-2.1:latest",
+               "nemotron-3.5-lightning:latest", "muse-glimmer:latest"]
+    pruefe(modelle_pruefen(bestand) == [],
+           "alle Klassenmodelle stehen im Bestand vom 27.08.",
+           str(modelle_pruefen(bestand)))
+    pruefe(any("Klasse 3" in f for f in
+               modelle_pruefen(["qwen3.6:35b-a3b"])),
+           "ein fehlendes Klasse-3-Modell wird gemeldet")
+    pruefe(modelle_pruefen([]) != [], "leerer Bestand meldet alle Klassen")
+    pruefe(KLASSE_3 != "qwen3.5:9b",
+           "Klasse 3 zeigt nicht mehr auf das geloeschte qwen3.5:9b")
+    print("\n%s" % ("Alle Pruefungen bestanden." if not fehler
+                    else "%d FEHLER." % len(fehler)))
+    return 1 if fehler else 0
+
+
 if __name__ == "__main__":
+    import sys
+    if "--selbsttest" in sys.argv:
+        sys.exit(selbsttest())
     print(f"Freier RAM: {freier_ram_gb():.1f} GB (psutil {'gefunden' if psutil else 'FEHLT - pip3 install psutil'})")
     for klasse in (1, 2, 3):
         print(f"Job-Klasse {klasse} -> {get_model_for_job(klasse)}")
+    # Diagnose (laeuft woechentlich ueber 14_MAC_selbsttests.sh): Sind
+    # die Klassenmodelle ueberhaupt noch installiert? FEHLER ist hier
+    # PROBLEM_MARKER der Montagsroutine; ein stummer Ollama ist dagegen
+    # nur ein HINWEIS - nicht pruefbar ist kein Befund.
+    try:
+        namen = installierte_modelle()
+    except (urllib.error.URLError, OSError, ValueError) as f:
+        print("HINWEIS: Ollama nicht erreichbar (%s) - Modellbestand "
+              "nicht pruefbar." % type(f).__name__)
+        raise SystemExit(0)
+    fehlend = modelle_pruefen(namen)
+    if fehlend:
+        print("FEHLER: Klassenmodell(e) nicht installiert: "
+              + "; ".join(fehlend))
+        raise SystemExit(1)
+    print("Alle Klassenmodelle installiert.")

@@ -21,7 +21,8 @@ Warum das deterministisch pruefbar ist: Der Sollwert laesst sich
 unabhaengig messen (dieselbe Schnittstelle, ohne Modell dazwischen).
 Erfundene Nummern fallen sofort auf.
 
-    hardwaretest.py <modell> [sollwert]     z.B.  hardwaretest.py gpt-oss:20b 3,6
+    hardwaretest.py <modell> [sollwert]   z.B. hardwaretest.py laguna-xs-2.1 3,6
+                                          ("keine" = stiller Funk erwartet)
     hardwaretest.py --selbsttest
 """
 from __future__ import annotations

@@ -1360,32 +1360,31 @@ AUFGABEN = [
 # Sprachweg waere das Schweigen. llama-fast flog am 21.08. (erfundene
 # Zeilenzahl) und erfand spaeter zwei Bundespraesidenten.
 #
-# Stand 26.08.2026: Es sind nur noch zwei Modelle installiert, gpt-oss
-# ist eines davon und traegt jetzt Chat, Sprache und Werkzeuge. Deshalb
-# nachgemessen statt geerbt: fuenf kurze Fragen hintereinander, fuenfmal
-# vollstaendige Antwort, kein einziges Schweigen. Im Kettentest loeste es
-# fuenf Schritte mit acht Werkzeugaufrufen, sauber.
+# Stand 27.08.2026 (Abitur, abitur_lauf.py + Gegenpruefung): Von den
+# sechs geprueften Modellen bestanden nur nemotron-3.5-lightning und
+# laguna-xs-2.1 alle Vorpruefungen samt Finale. gpt-oss:20b fiel an der
+# Injection (befolgte in 4 von 5 Laeufen eine eingeschleuste Anweisung)
+# und wird nach Mexlas Entscheidung deinstalliert. laguna-xs-2.1
+# uebernimmt Werkzeuge, Kurzfragen und die Standardrolle: Injection
+# 10 von 10 sauber, MoE mit wenigen aktiven Parametern (schnell, klein
+# genug neben dem grossen Modell). nemotron bleibt installiert, ist aber
+# mit ~25 GB kein Nebenher-Modell.
 #
-# WAS DAMIT NICHT WIDERLEGT IST: Der alte Fund stammt aus LANGEN
-# Denkaufgaben, nicht aus kurzen Fragen. Wer gpt-oss eine schwere
-# Einzelaufgabe gibt, sollte auf leere Antworten achten - dafuer steht
-# qwen3.6:35b-a3b in der Tabelle.
-# Stand 26.08.2026: Von zehn Modellen sind zwei uebrig. qwen3.5:9b ist
-# geloescht - es fiel im neuen Kettentest durch (erfand den fuenften von
-# fuenf Schritten), obwohl es im Benchmark 19/19 hatte. Der Name des
-# grossen Modells lautet vollstaendig "qwen3.6:35b-a3b"; die verkuerzte
-# Schreibweise hier hat frueher ins Leere gezeigt.
+# qwen3.6:35b-a3b behaelt Code und Denken OHNE Werkzeugketten: Es fiel
+# im Abitur am Kettentest (erfand in 2 von 5 Laeufen einen Schritt) -
+# fuer reine Denk-/Codearbeit traegt diese Schwaeche nicht, fuer
+# Werkzeugarbeit steht deshalb laguna in der Tabelle.
 AUFGABE_MODELL = {
     "code": "qwen3.6:35b-a3b",
-    "werkzeuge": "gpt-oss:20b",
+    "werkzeuge": "laguna-xs-2.1",
     "denken": "qwen3.6:35b-a3b",
-    "kurz": "gpt-oss:20b",
+    "kurz": "laguna-xs-2.1",
 }
 
 # Wenn die Aufgabenart nichts Bestimmtes ergibt, nimmt der Orchestrator
 # dieses Modell - nicht mehr blind das staerkste. Das staerkste ist hier
 # ein 23-GB-Modell, das fuer eine kurze Frage erst 11 s laedt.
-STANDARD_MODELL = "gpt-oss:20b"
+STANDARD_MODELL = "laguna-xs-2.1"
 
 # Ab wann eine Frage als "kurz" gilt und das kleine Modell reicht.
 KURZ_ZEICHEN = 80
@@ -1886,11 +1885,12 @@ Lampe kommt, steht oben und in den Unterlagen, nicht dort."""
 #     num_ctx 32768 -> 22 GB
 #     num_ctx 65536 -> 23 GB
 # Warum trotzdem nicht mehr, obwohl das Modell 262144 koennte: Die
-# Kontext-Verdichtung (verlauf_verdichten) laesst qwen3.5:9b als kleines
-# Modell mitlaufen, das noch einmal 6,6 GB belegt. 23 + 6,6 = 29,6 GB von
-# 34,4 GB - darueber wuerfen sich beide gegenseitig aus dem Speicher, und
-# genau das war frueher die Ursache fuer leere Antworten. Wer mehr will,
-# misst erst mit "ollama ps" nach.
+# Kontext-Verdichtung (verlauf_verdichten) laesst ein kleines Modell
+# mitlaufen (seit 27.08. laguna-xs-2.1, vorher qwen3.5:9b mit 6,6 GB).
+# Beide zusammen muessen unter das iogpu-Limit passen - darueber werfen
+# sie sich gegenseitig aus dem Speicher, und genau das war frueher die
+# Ursache fuer leere Antworten. Wer mehr will, misst erst mit
+# "ollama ps" nach.
 CHAT_NUM_CTX = 65536
 
 # --- Modellspezifische Grenzen (26.08.2026) --------------------------
@@ -1909,12 +1909,13 @@ CHAT_NUM_CTX = 65536
 # Deshalb: num_predict ausdruecklich setzen statt dem Ollama-Standard zu
 # vertrauen, und zwar grosszuegig genug fuer Denkweg UND Antwort.
 MODELL_GRENZEN = {
-    "gpt-oss:20b":     {"num_ctx": 65536, "num_predict": 8192},
+    # gpt-oss:20b stand hier bis zum 27.08.2026 - im Abitur an der
+    # Injection durchgefallen und nach Mexlas Entscheidung deinstalliert.
     "qwen3.6:35b-a3b": {"num_ctx": 65536, "num_predict": 8192},
-    # Am 26.08.2026 nachgeladen, weil beide obigen im Abitur durchfielen.
-    # Beide koennen viel mehr Kontext (nemotron 1048576, laguna 262144),
-    # aber der Speicher setzt die Grenze, nicht das Modell: nemotron
-    # belegt allein schon 25 GB von 26 GB Limit.
+    # Am 26.08.2026 nachgeladen. Beide koennen viel mehr Kontext
+    # (nemotron 1048576, laguna 262144), aber der Speicher setzt die
+    # Grenze, nicht das Modell: nemotron belegt allein schon 25 GB von
+    # 26 GB Limit.
     "nemotron-3.5-lightning": {"num_ctx": 32768, "num_predict": 8192},
     "laguna-xs-2.1":          {"num_ctx": 65536, "num_predict": 8192},
 }
@@ -1924,10 +1925,19 @@ MODELL_GRENZEN_STANDARD = {"num_ctx": CHAT_NUM_CTX, "num_predict": 4096}
 def modell_grenzen(modell: str) -> dict:
     """Kontext- und Antwortgrenze fuer ein Modell.
 
+    Erst exakter Treffer, dann ohne ":latest"-Anhang: Ollama liefert
+    Installationsnamen MIT Tag (laguna-xs-2.1:latest), die Tabelle
+    traegt sie ohne. Der exakte Vergleich allein liess beide neuen
+    Eintraege ins Leere laufen - die Speichergrenze, fuer die die
+    Tabelle gebaut wurde, griff nie (Review-Befund vom 27.08.2026;
+    AUFGABE_MODELL loest dasselbe Problem seit jeher per Namensteil).
     Unbekannte Modelle bekommen den vorsichtigen Standard - lieber eine
     knappe Grenze als eine, die den Speicher sprengt.
     """
-    return dict(MODELL_GRENZEN.get(modell, MODELL_GRENZEN_STANDARD))
+    name = modell or ""
+    treffer = (MODELL_GRENZEN.get(name)
+               or MODELL_GRENZEN.get(name.removesuffix(":latest")))
+    return dict(treffer or MODELL_GRENZEN_STANDARD)
 # Notnagel gegen Ausreisser. Seit dem 24.08.2026 ist das NICHT mehr der
 # eigentliche Schutz - der heisst verlauf_verdichten und misst die
 # Tokenlast, statt Nachrichten zu zaehlen. Die Zahl steht trotzdem noch
@@ -3600,6 +3610,18 @@ def _selbsttest() -> int:
             fehler += 1
 
     print("m1_zentrale Selbsttest:")
+
+    # --- Modellgrenzen treffen auch Ollama-Namen mit :latest-Anhang ---
+    # Review-Befund 27.08.2026: Der exakte Vergleich liess die Eintraege
+    # der neuen Modelle ins Leere laufen - die Speichergrenze griff nie.
+    pruefe(modell_grenzen("nemotron-3.5-lightning:latest")["num_ctx"] == 32768,
+           "Modellgrenzen greifen mit :latest-Anhang")
+    pruefe(modell_grenzen("nemotron-3.5-lightning")["num_ctx"] == 32768,
+           "Modellgrenzen greifen ohne Anhang")
+    pruefe(modell_grenzen("voellig-unbekannt:7b") == MODELL_GRENZEN_STANDARD,
+           "unbekannte Modelle bekommen den vorsichtigen Standard")
+    pruefe(STANDARD_MODELL in MODELL_GRENZEN,
+           "das Standardmodell hat einen eigenen Grenzen-Eintrag")
 
     # --- Die Oberflaeche selbst: ist ihr JavaScript ueberhaupt heil? ---
     # Am 23.08.2026 hat ein beim Bearbeiten zerrissener Blockkommentar

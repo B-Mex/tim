@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lokaler Sprachassistent: Mikrofon -> Whisper -> gpt-oss (Ollama) -> Sprachausgabe
+Lokaler Sprachassistent: Mikrofon -> Whisper -> Ollama-Modell -> Sprachausgabe
 Wake Word: "Hey Tim"
 
 Hinweis zur Wake-Word-Erkennung: Es laeuft (noch) kein echtes Always-On
@@ -42,18 +42,25 @@ DIENST_MODUS = "--dienst" in sys.argv
 
 # --- Konfiguration ---
 OLLAMA_URL = "http://localhost:11434/api/generate"
-# Dasselbe Modell und dieselbe Kontextgroesse wie Tims Browser-Chat: so
-# bleibt EIN grosses Modell warm im Speicher, statt dass Sprache und Chat
-# sich gegenseitig verdraengen. qwen3-general stand hier vorher - dessen
-# Modelfile hat aber eine kaputte Vorlage (TEMPLATE {{ .Prompt }}), das
-# Modell denkt deshalb als Fliesstext laut vor sich hin, und genau dieses
-# Denken wurde dann komplett vorgelesen. Danach stand hier gpt-oss:20b -
-# im Benchmark vom 23.08.2026 lieferte es aber zweimal nach minutenlangem
-# Denken eine LEERE Antwort, und am Sprachweg heisst leer: Tim schweigt.
-# qwen3.5:9b: 14/14 Pruefungen, 30.5 Tok/s, 4.8 s Ladezeit, entspricht
-# STANDARD_MODELL der Zentrale (m1_zentrale.py).
-OLLAMA_MODEL = "gpt-oss:20b"
-MODELL_NUM_CTX = 16384           # wie CHAT_NUM_CTX in m1_zentrale.py
+# Dasselbe Modell wie STANDARD_MODELL der Zentrale (m1_zentrale.py): so
+# bleibt EIN Modell warm im Speicher, statt dass Sprache und Chat sich
+# gegenseitig verdraengen. Zur Vorgeschichte: qwen3-general flog wegen
+# kaputter Vorlage (dachte als Fliesstext laut und las das Denken vor),
+# gpt-oss:20b wegen LEERER Antworten nach langem Denken - am Sprachweg
+# heisst leer: Tim schweigt; im Abitur vom 27.08. fiel es zudem an der
+# Injection durch und wurde deinstalliert. qwen3.5:9b uebernahm kurz,
+# wurde aber am 26.08. geloescht (erfand im Kettentest einen Schritt).
+# Seit 27.08.2026: laguna-xs-2.1 - bestand als einziges kleines Modell
+# das komplette Abitur (Injection 10 von 10), MoE mit wenigen aktiven
+# Parametern.
+OLLAMA_MODEL = "laguna-xs-2.1"
+# Bewusst KLEINER als CHAT_NUM_CTX der Zentrale (dort 65536): Die
+# Rueckfallebene fuehrt kurze Gespraeche ohne Werkzeuge - ein kleines
+# Fenster laedt schneller und schont den Speicher.
+MODELL_NUM_CTX = 16384
+# Antwortbudget des Rueckfalls. Die alten 300 Token frass ein denkendes
+# Modell komplett im Denkweg auf - leere Antwort, Tim schwieg.
+RUECKFALL_NUM_PREDICT = 4096
 # Der gesprochene Weg geht ueber Tims eigenen Chat - so kann er dieselben
 # Werkzeuge (Websuche, Seite lesen) und bekommt kuenftige von selbst mit.
 ZENTRALE_URL = "http://127.0.0.1:8770"
@@ -524,14 +531,18 @@ def _direkt_fragen(text):
     for frage, antwort in verlauf[-MAX_VERLAUF:]:
         kontext += f"Frage: {frage}\nAntwort: {antwort}\n\n"
     prompt = f"{kontext}Frage: {text}\nAntwort:" if kontext else text
-    # think=False statt "low": die Stufen (low/medium/high) sind
-    # gpt-oss-Syntax, qwen3.5 kennt nur an/aus. Und am Sprachweg soll das
-    # Modell nicht still gruebeln, sondern in den 300 Token antworten -
-    # sonst frisst das Denken das Budget und Tim schweigt.
+    # num_predict grosszuegig: Ein Modell, das erst denkt, verbraucht
+    # sein Budget im Denkweg - die alten 300 Token reichten dafuer nie
+    # (der gpt-oss-Fund: leere Antwort, Tim schweigt). Den Denkweg
+    # filtert _denken_entfernen() aus der Antwort. Die think-Option ist
+    # modellabhaengige Syntax (gpt-oss: Stufen, qwen: an/aus) und bleibt
+    # deshalb ganz weg - nach jedem Modellwechsel den Sprachtest aus der
+    # Abnahme wiederholen.
     payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-               "system": SPRECH_ANWEISUNG, "think": False,
+               "system": SPRECH_ANWEISUNG,
                "keep_alive": "30m",
-               "options": {"num_predict": 300, "num_ctx": MODELL_NUM_CTX}}
+               "options": {"num_predict": RUECKFALL_NUM_PREDICT,
+                           "num_ctx": MODELL_NUM_CTX}}
     resp = requests.post(OLLAMA_URL, json=payload, timeout=120)
     return _denken_entfernen(resp.json().get("response", ""))
 
@@ -1228,6 +1239,16 @@ if "--selbsttest" in sys.argv:
             _fehler += 1
 
     print("sprachassistent Selbsttest:")
+
+    # Modellentscheidung vom 27.08.2026 festgenagelt: gpt-oss ist am
+    # Sprachweg doppelt verbrannt (leere Antworten, Injection) und
+    # deinstalliert - es darf hier nie wieder still zurueckkehren. Und
+    # der Rueckfall braucht genug Antwortbudget fuer Denkweg UND Text.
+    _pruefe(OLLAMA_MODEL != "gpt-oss:20b",
+            "Sprachweg zeigt nicht auf das aussortierte gpt-oss")
+    _pruefe(RUECKFALL_NUM_PREDICT >= 2048,
+            "Rueckfall-Antwortbudget deckt Denkweg UND Antwort",
+            str(RUECKFALL_NUM_PREDICT))
 
     # Jede Sprachregel muss auf ein auffindbares Programm zeigen - sonst
     # scheitert sie erst beim Zuruf, nicht hier.
