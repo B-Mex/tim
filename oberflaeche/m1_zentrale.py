@@ -1911,6 +1911,12 @@ CHAT_NUM_CTX = 65536
 MODELL_GRENZEN = {
     "gpt-oss:20b":     {"num_ctx": 65536, "num_predict": 8192},
     "qwen3.6:35b-a3b": {"num_ctx": 65536, "num_predict": 8192},
+    # Am 26.08.2026 nachgeladen, weil beide obigen im Abitur durchfielen.
+    # Beide koennen viel mehr Kontext (nemotron 1048576, laguna 262144),
+    # aber der Speicher setzt die Grenze, nicht das Modell: nemotron
+    # belegt allein schon 25 GB von 26 GB Limit.
+    "nemotron-3.5-lightning": {"num_ctx": 32768, "num_predict": 8192},
+    "laguna-xs-2.1":          {"num_ctx": 65536, "num_predict": 8192},
 }
 MODELL_GRENZEN_STANDARD = {"num_ctx": CHAT_NUM_CTX, "num_predict": 4096}
 

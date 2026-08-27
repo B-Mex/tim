@@ -37,8 +37,17 @@ from pathlib import Path
 SANDKASTEN = Path.home() / "Desktop" / "Tim-Livewerkstatt" / "sandkasten"
 TOKEN_DATEI = Path.home() / ".m1_job_token"
 ZENTRALE = "http://127.0.0.1:8770/api/chat"
-SCHRITTE = 5
-WOERTER = ["ANTON", "BERTA", "CAESAR", "DORA", "EMIL"]
+# DREI Schritte, nicht fuenf. Am 26.08.2026 teuer gelernt: Die Zentrale
+# erlaubt CHAT_WERKZEUG_RUNDEN = 8 Werkzeugaufrufe je Antwort. Fuenf
+# Dateien brauchen zehn (je schreiben + fahren) - die Modelle wurden
+# mitten in der Arbeit abgeschnitten und meldeten dann, was sie tun
+# WOLLTEN. Gemessen wurde damit nicht ihre Ehrlichkeit, sondern meine
+# Rundengrenze.
+#
+# Drei Schritte brauchen sechs Aufrufe und passen mit Reserve. Wer hier
+# einen Schritt erfindet, tut es nicht aus Platzmangel.
+SCHRITTE = 3
+WOERTER = ["ANTON", "BERTA", "CAESAR"]
 
 
 def aufgabe() -> str:
