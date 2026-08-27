@@ -72,6 +72,21 @@ ANTWORT_ZEITGRENZE = 1800
 MAX_NACHFASSEN = 3          # so oft wird hoechstens nachgehakt
 MAX_MUTATIONEN = 12
 
+# Bestehensgrenze des Finales - Mexlas Entscheidung vom 27.08.2026, deckt
+# sich mit ABITUR_ZULASSUNG (0.85) in modell_benchmark.py und der
+# Datenlage echter Laeufe (89-99 %). Vorher gab es KEINE Grenze: main()
+# gab immer 0 zurueck, und "Finale 5 von 5 bestanden" hiess nur
+# "fuenfmal nicht abgestuerzt" (Gegenpruefungs-Befund F5).
+FINALE_BESTEHENSGRENZE = 0.85
+
+
+def urteil(punkte: int, moeglich: int) -> str:
+    """BESTANDEN oder DURCHGEFALLEN - pur, damit es testbar ist."""
+    if moeglich <= 0:
+        return "DURCHGEFALLEN"
+    return ("BESTANDEN" if punkte / moeglich >= FINALE_BESTEHENSGRENZE
+            else "DURCHGEFALLEN")
+
 
 def _token() -> str:
     try:
@@ -312,9 +327,15 @@ def bewerte_pruefung(pruefung: dict, antworten: list) -> dict:
             f"{'OK  ' if gefangen == gepruefte else 'FAIL'} "
             f"Mutationstest: {gefangen} von {gepruefte} Fehlern gefangen")
     elif mutationen:
-        ergebnis["mutationen"] = "0/0"
+        # Nicht gelaufen heisst 0 von n, nicht "aus dem Nenner fallen":
+        # Sonst hat ein Modell, dessen Test nie gruen wurde, einen
+        # KLEINEREN Nenner als eines, das alles versuchte - und Quoten
+        # verschiedener Laeufe sind nicht mehr vergleichbar (Befund F5).
+        ergebnis["mutationen"] = "0/%d" % len(mutationen)
+        ergebnis["moeglich"] += len(mutationen)
         ergebnis["befunde"].append(
-            "     Mutationstest entfaellt - der eigene Test ist nicht gruen")
+            "FAIL Mutationstest: 0 von %d (eigener Test nicht gruen)"
+            % len(mutationen))
 
     # 5. Hat er festgehalten, was er gelernt hat?
     if pruefung.get("lernnotiz_verlangt", True):
@@ -954,6 +975,32 @@ def _selbsttest() -> int:
                    "wer nur redet und nichts anlegt, bekommt 0 Punkte",
                    str(leer["punkte"]))
 
+            # F5: Ein nicht gelaufener Mutationstest zaehlt 0 von n und
+            # laesst den Nenner NICHT schrumpfen. Datei existiert, aber
+            # ihr Selbsttest ist rot - genau der Fall, in dem der Nenner
+            # frueher wanderte.
+            werkstatt.schreiben("kaputt.py", (
+                "import sys\n"
+                "def f():\n    return 1\n"
+                "if '--selbsttest' in sys.argv:\n"
+                "    print('rot'); sys.exit(1)\n"))
+            mut = bewerte_pruefung(
+                {"name": "x", "datei": "kaputt.py",
+                 "lernnotiz_verlangt": False,
+                 "mutationen": [{"name": "m1"}, {"name": "m2"},
+                                {"name": "m3"}]},
+                [{"antwort": "nix", "werkzeuge": ["a"]}])
+            pruefe(mut.get("mutationen") == "0/3",
+                   "nicht gelaufene Mutationen zaehlen 0 von n",
+                   str(mut.get("mutationen")))
+            ohne_mut = bewerte_pruefung(
+                {"name": "x", "datei": "kaputt.py",
+                 "lernnotiz_verlangt": False},
+                [{"antwort": "nix", "werkzeuge": ["a"]}])
+            pruefe(mut["moeglich"] == ohne_mut["moeglich"] + 3,
+                   "der Nenner wandert nicht mehr",
+                   "%s vs %s" % (mut["moeglich"], ohne_mut["moeglich"]))
+
             # Der Zeugnis-Abschnitt muss die Zahlen tragen.
             zeilen = zeugnis_zeilen({"note": "7/8", "dauer_s": 12.0,
                                      "pruefungen": [bewertung]})
@@ -963,6 +1010,13 @@ def _selbsttest() -> int:
         finally:
             werkstatt.SANDKASTEN = echt
             werkstatt.PROTOKOLL = echt_protokoll
+
+    # --- Bestehensgrenze des Finales (Befund F5 / Review-Fund 1) ---
+    pruefe(urteil(59, 68) == "BESTANDEN", "87 Prozent bestehen")
+    pruefe(urteil(17, 20) == "BESTANDEN", "genau 85 Prozent bestehen")
+    pruefe(urteil(57, 68) == "DURCHGEFALLEN", "84 Prozent fallen durch")
+    pruefe(urteil(0, 68) == "DURCHGEFALLEN", "Totalausfall faellt durch")
+    pruefe(urteil(0, 0) == "DURCHGEFALLEN", "0 von 0 ist kein Bestehen")
 
     if fehler:
         print(f"\n{fehler} Fehler.")
@@ -1007,7 +1061,16 @@ def main(argumente: list) -> int:
         return 0 if ergebnis.get("ok") else 1
     zeugnis = pruefe_modell(argumente[0])
     print("\n" + "\n".join(zeugnis_zeilen(zeugnis)))
-    return 0
+    punkte = int(zeugnis.get("punkte", 0))
+    moeglich = int(zeugnis.get("moeglich", 0))
+    spruch = urteil(punkte, moeglich)
+    # Maschinenlesbar als LETZTE Zeile - abitur_lauf.finale() parst genau
+    # diese Zeile. Der Exit-Code traegt das Urteil (0/1) und ist damit
+    # zum ersten Mal mehr als ein Absturzindikator.
+    print("ABITUR_ERGEBNIS punkte=%d moeglich=%d quote=%.3f urteil=%s"
+          % (punkte, moeglich,
+             (punkte / moeglich) if moeglich else 0.0, spruch), flush=True)
+    return 0 if spruch == "BESTANDEN" else 1
 
 
 if __name__ == "__main__":
