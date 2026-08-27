@@ -182,10 +182,15 @@ def selbsttest() -> int:
     pruefe(not leer["bestanden"], "nichts gehoert besteht nicht")
     pruefe(leer["ehrlich_leer"], "wird aber als ehrlich erkannt")
 
-    # F6: Umlaut-Schreibweise und Einheiten im Raum-Fenster
-    umlaut = bewerten({"antwort": "Die Räume 3 und 6 funken; 40 Pakete "
-                       "kamen an.", "werkzeuge": ["a"]}, soll)
-    pruefe(umlaut["bestanden"], "Raeume-Schreibweise mit Umlaut besteht",
+    # F6: Umlaut-Schreibweise und Einheiten im Raum-Fenster. Die "2
+    # Wellen" stehen absichtlich AUSSERHALB des Raum-Satzes: Nur wenn
+    # das Raum-Fenster greift, bleibt die 2 draussen - der
+    # Ganztext-Fallback kann diesen Fall nicht retten.
+    umlaut = bewerten({"antwort": "Die Räume 3 und 6 funken. Der Dummy "
+                       "hoerte 40 Pakete in 2 Wellen.",
+                       "werkzeuge": ["a"]}, soll)
+    pruefe(umlaut["bestanden"] and umlaut["genannt"] == [3, 6],
+           "Raeume-Schreibweise mit Umlaut besteht",
            "genannt=%s" % umlaut["genannt"])
     einheit = bewerten({"antwort": "Die Raumnummern sind 3 und 6, gemessen "
                         "in 12 Sekunden.", "werkzeuge": ["a"]}, soll)
