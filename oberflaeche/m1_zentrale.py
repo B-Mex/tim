@@ -57,8 +57,32 @@ TELEMETRIE = Path("/opt/ki-server/memory/harness_log.jsonl")
 CONFIG_DIR = Path("/opt/ki-server/config")
 TOKEN_DATEI = HOME / ".m1_job_token"
 OBERFLAECHE = Path(__file__).parent / "zentrale.html"
-# Im Bau; fehlt sie, antwortet /neu mit 404 statt zu stolpern.
+# GEPARKT seit dem Entscheid vom 28.08.2026: Die alte Oberflaeche bleibt
+# die eine Betriebs-Oberflaeche; ein neues Kleid entsteht erst, wenn Tim
+# Abitur und Terminal-Fuehrerschein bestanden hat - dann von Anfang an
+# git-versioniert. Die Datei bleibt liegen (SSD-Kopie mit Hash-Beleg:
+# /Volumes/Austausch/ki-server-archiv/oberflaeche-alt_2026-08-28/), aber
+# /neu liefert den Hinweis unten statt des Kleids - alte Lesezeichen
+# (Handy!) sollen nicht ins Leere laufen.
 OBERFLAECHE_NEU = Path(__file__).parent / "zentrale_neu.html"
+
+GEPARKT_HINWEIS = """<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M1 - /neu ist geparkt</title>
+<style>
+  body{font-family:-apple-system,'Helvetica Neue',sans-serif;
+       background:#14161a;color:#e8e8e8;display:flex;align-items:center;
+       justify-content:center;min-height:92vh;margin:0}
+  main{max-width:34em;padding:2em;text-align:center}
+  a{color:#8ab4ff}
+</style></head><body><main>
+<h1>Geparkt</h1>
+<p>Das neue Kleid ruht seit dem 28.08.2026 (Entscheid Mexla): Die
+Betriebs-Oberflaeche ist die bewaehrte Zentrale. Neu aufgesetzt wird erst,
+wenn Tim Abitur und Terminal-Fuehrerschein bestanden hat.</p>
+<p><a href="/">Zur Zentrale</a></p>
+</main></body></html>"""
 
 JOB_SERVER = os.environ.get("M1_JOB_SERVER", "http://127.0.0.1:8765")
 OLLAMA = os.environ.get("M1_OLLAMA", "http://127.0.0.1:11434")
@@ -3243,17 +3267,12 @@ class Handler(BaseHTTPRequestHandler):
         # Die Oberflaeche selbst ist nicht token-geschuetzt: sie enthaelt
         # keine Daten. Das Token gibt der Benutzer im Browser ein, und
         # jede Datenabfrage prueft es.
-        # Die neue Oberflaeche liegt NEBEN der alten, nicht darueber.
-        # Zurueckrudern heisst deshalb nicht "wiederherstellen", sondern
-        # die alte Adresse aufrufen - ohne Neustart, ohne Rueckbau. Erst
-        # wenn die neue die Abnahmeliste Punkt fuer Punkt besteht,
-        # entscheidet Mexla, ob sie auf "/" wandert.
+        # /neu ist GEPARKT (Entscheid Mexla 28.08.2026, Begruendung am
+        # Kopf bei OBERFLAECHE_NEU): ein ehrlicher Hinweis mit Rueckweg
+        # statt des Kleids. Die Datei bleibt liegen und wird bewusst
+        # NICHT mehr ausgeliefert.
         if pfad == "/neu":
-            if not OBERFLAECHE_NEU.exists():
-                self._json(404, {"fehler": "%s gibt es (noch) nicht"
-                                           % OBERFLAECHE_NEU.name})
-                return
-            roh = OBERFLAECHE_NEU.read_bytes()
+            roh = GEPARKT_HINWEIS.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(roh)))
@@ -4055,6 +4074,18 @@ def _selbsttest() -> int:
         pruefe('data-ansicht="benchmark"' in html
                and "zeigeBenchmark" in html,
                "zentrale.html hat den Benchmark-Reiter")
+        # --- /neu ist geparkt: beide Seiten des Beweises ---
+        # Gesund: Hinweis mit Rueckweg, ohne Token erreichbar (Lesezeichen).
+        # Krank: Wuerde die Route wieder das Kleid ausliefern
+        # (zentrale_neu.html traegt "benchAktion"), faellt die zweite
+        # Pruefung durch - stilles Rueckdrehen ohne Entscheid fliegt auf.
+        code, neu_body = anfrage("/neu", token=None)
+        pruefe(code == 200 and "geparkt" in neu_body.lower()
+               and 'href="/"' in neu_body,
+               "/neu liefert den Geparkt-Hinweis mit Rueckweg",
+               f"HTTP {code}")
+        pruefe("benchAktion" not in neu_body,
+               "/neu liefert NICHT mehr das Kleid (geparkt bleibt geparkt)")
         # --- Werkzeuge des Chats: nur lesen, niemals ausfuehren ---
         namen = {w["function"]["name"] for w in CHAT_WERKZEUGE}
         for neu_name in ("kamerabild", "aktionen_zeigen", "aktion_starten"):
