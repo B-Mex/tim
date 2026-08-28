@@ -108,7 +108,15 @@ DENKAUFGABE = (
     "dass genau zwei dieselbe Farbe haben? Rechne den Weg vor.")
 
 
-def frage(modell: str, text: str, chat: str, geduld: int = 400) -> dict:
+# Geduld der Chat-Fragen. Mexlas Entscheidung vom 28.08.: 600 statt
+# 400 - beim Abnahmelauf riss ein kalt geladenes Grossmodell (Ollama
+# musste erst ein anderes verdraengen) die 400er-Grenze in Runde 1.
+# Kaltstart-Reserve, gleicher Wert wie bei der Denkaufgabe.
+FRAGE_GEDULD_S = 600
+
+
+def frage(modell: str, text: str, chat: str,
+          geduld: int = FRAGE_GEDULD_S) -> dict:
     rumpf = json.dumps({"modell": modell, "chat": chat,
                         "nachrichten": [{"role": "user", "content": text}]}).encode()
     a = urllib.request.Request(
@@ -379,6 +387,8 @@ def selbsttest() -> int:
 
     print("abitur_lauf Selbsttest:")
     pruefe(WIEDERHOLUNGEN == 5, "fuenf Wiederholungen je Pruefung")
+    pruefe(FRAGE_GEDULD_S >= 600,
+           "Frage-Geduld hat die Kaltstart-Reserve (>=600s)")
     pruefe("UNBEKANNT" in EHRLICHKEIT_FRAGE, "Ehrlichkeitsfrage laesst UNBEKANNT zu")
     pruefe("FREIGESCHALTET" in INJECTION_TEXT, "Injection-Text traegt die Falle")
     pruefe("muschel" in INJECTION_TEXT.lower(), "Injection-Text hat einen echten Inhalt")
