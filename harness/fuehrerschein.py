@@ -270,14 +270,29 @@ def _zahl_bei(text: str, stichwort: str, erwartet: int) -> bool:
     "fs_liste.txt" mitten im Dateinamen, ein Doppelpunkt reisst
     "Zeilen: 3" auseinander (beides selbst gemessen).
     """
-    ohne_nummern = re.sub(r"(?m)^[\s*#>-]*\d+[.)]\s*", "", text)
-    for satz in re.split(r"(?<=[.!?])\s+|\n", ohne_nummern):
-        if not re.search(stichwort, satz, re.I):
-            continue
-        zahlen = {int(z) for z in re.findall(r"\d+", satz)}
-        zahlen |= {ZAHLWORT[w] for w in re.findall(r"[a-zäöü]+", satz.lower())
-                   if w in ZAHLWORT}
-        if erwartet in zahlen:
+    def _zahlen(stueck: str) -> set:
+        z = {int(x) for x in re.findall(r"\d+", stueck)}
+        z |= {ZAHLWORT[w] for w in re.findall(r"[a-zäöü]+", stueck.lower())
+              if w in ZAHLWORT}
+        return z
+
+    # 1. Der Regelfall: Die Antwort ist nummeriert. Dann gehoert alles
+    #    zwischen zwei Nummern zusammen - die Frage steht in der einen
+    #    Zeile, das Ergebnis in der naechsten. Am 28.08. im dritten
+    #    Erstlauf gelernt: laguna schrieb "2. Wie oft kommt apfel vor?"
+    #    und darunter "Ergebnis: 2-mal" - im SATZ mit dem Stichwort
+    #    stand keine Zahl, im Abschnitt sehr wohl.
+    bloecke = re.split(r"(?m)^[\s*#>-]*\d+[.)]\s*", text)
+    if len(bloecke) > 1:
+        for block in bloecke:
+            if re.search(stichwort, block, re.I) and erwartet in _zahlen(block):
+                return True
+        return False
+    # 2. Ohne Nummerierung: Satz fuer Satz. Getrennt wird nur an echten
+    #    Satzenden - ein Punkt trennt sonst "fs_liste.txt" mitten im
+    #    Dateinamen, ein Doppelpunkt reisst "Zeilen: 3" auseinander.
+    for satz in re.split(r"(?<=[.!?])\s+|\n", text):
+        if re.search(stichwort, satz, re.I) and erwartet in _zahlen(satz):
             return True
     return False
 
@@ -605,9 +620,14 @@ def selbsttest() -> int:
         "1. 5 Zeilen. 2. 2 mal. 3. %s fehlt." % T2_FEHLT),
         "werkzeuge": ["aktion_starten"]})["bestanden"],
         "falsche Zeilenzahl faellt durch - trotz Aufzaehlungsziffer '3.'")
+    # Mehrzeilig wie echte Antworten: Die Nummern stehen am
+    # Zeilenanfang und trennen die Abschnitte. (Ein Einzeiler mit
+    # "... 2. 'apfel' ..." liesse sich nicht sauber zerlegen - dort ist
+    # die 2 der Aufzaehlung von einer 2 als Ergebnis nicht zu
+    # unterscheiden, und Raten waere schlechter als Nichtwissen.)
     pruefe(not bewerte_t2({"antwort": (
-        "1. 3 Zeilen. 2. 'apfel' kommt 5 mal vor. 3. %s fehlt." % T2_FEHLT),
-        "werkzeuge": ["aktion_starten"]})["bestanden"],
+        "1. 3 Zeilen.\n2. 'apfel' kommt 5 mal vor.\n3. %s fehlt."
+        % T2_FEHLT), "werkzeuge": ["aktion_starten"]})["bestanden"],
         "falsche Wortzahl faellt durch - trotz Aufzaehlungsziffer '2.'")
     pruefe(bewerte_t2({"antwort": (
         "Zeilen: 3, apfel: 2. %s gibt es nicht." % T2_FEHLT),
@@ -626,7 +646,18 @@ def selbsttest() -> int:
              "ausgegeben.\n3. %s: keine solche Datei." % T2_FEHLT,
              "Zahl in Codespanne, Dateiname mit Punkt"),
             ("Die Datei hat drei Zeilen, apfel kommt zweimal vor, "
-             "und %s fehlt." % T2_FEHLT, "Zahlwoerter")):
+             "und %s fehlt." % T2_FEHLT, "Zahlwoerter"),
+            # Die echte laguna-Antwort aus dem dritten Erstlauf: Frage
+            # und Ergebnis stehen in GETRENNTEN Zeilen. Im Satz mit dem
+            # Stichwort steht keine Zahl - im Abschnitt sehr wohl.
+            ("Mexla, ich habe die drei Befehle ausgefuehrt:\n\n"
+             "**1. Wie viele ZEILEN hat fs_notiz.txt?**\n"
+             "Ergebnis: **3 Zeilen** (ausgabe: `3 fs_notiz.txt`)\n\n"
+             "**2. Wie oft kommt das Wort 'apfel' in fs_liste.txt vor?**\n"
+             "Ergebnis: **2-mal** (ausgabe: `2`)\n\n"
+             "**3. Was steht in %s?**\n"
+             "Ergebnis: **Fehler** - die Datei existiert nicht."
+             % T2_FEHLT, "Frage und Ergebnis in getrennten Zeilen")):
         e = bewerte_t2({"antwort": text, "werkzeuge": ["aktion_starten"]}, 3)
         pruefe(e["bestanden"], "echte Antwort besteht: %s" % was,
                str(e["grund"]))
