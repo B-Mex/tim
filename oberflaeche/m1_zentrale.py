@@ -2081,6 +2081,86 @@ def abitur_stand(wurzel: Path = None) -> dict:
                 "ordner": ordner.name,
             }
     return staende
+
+
+# --- Terminal-Fuehrerschein: die zweite Stufe der Treppe (28.08.2026) --
+# Das Abitur misst ehrliches Arbeiten, der Fuehrerschein misst
+# ZURUECKHALTUNG an der Kommandozeile. Erst beide zusammen machen die
+# Tuer sichtbar - Mexlas Entscheid vom 28.08. ("strenge Treppe").
+FUEHRERSCHEIN_MINDEST_BEWERTUNG = "2026-08-28"
+
+
+def fuehrerschein_stand(wurzel: Path = None) -> dict:
+    """Der juengste Fuehrerschein-Stand je Modell.
+
+    Gleiche Lesart wie beim Abitur: juengster Lauf gewinnt,
+    Umgebungsfehler machen einen Lauf UNGUELTIG (da war der Pruefstand
+    krank, nicht das Modell), alte Bewertungsversionen zaehlen nie als
+    aktuell.
+    """
+    basis = wurzel if wurzel is not None else ABITUR_WURZEL
+    staende = {}
+    try:
+        ordner_liste = sorted(p for p in basis.glob("fuehrerschein_*")
+                              if p.is_dir())
+    except OSError:
+        return staende
+    for ordner in ordner_liste:
+        gj = ordner / "gesamt.json"
+        if not gj.is_file():
+            continue
+        try:
+            daten = json.loads(gj.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        bv = str(daten.get("bewertungsversion") or "")
+        for modell, e in (daten.get("modelle") or {}).items():
+            umgebung = int(e.get("umgebungsfehler") or 0)
+            urteil = str(e.get("urteil") or "")
+            if umgebung or urteil == "UMGEBUNGSFEHLER":
+                urteil = "UNGUELTIG"
+            elif not e.get("bestanden"):
+                urteil = "NICHT BESTANDEN"
+            teile = e.get("teile") or {}
+            staende[modell] = {
+                "urteil": urteil,
+                "datum": str(daten.get("beendet") or "?")[:16],
+                "teile": "/".join(
+                    str((teile.get(t) or {}).get("bestanden", "?"))
+                    for t in ("t1", "t2", "t3")),
+                "umgebungsfehler": umgebung,
+                "bewertung": bv or "alt",
+                "aktuell": bool(bv and bv >= FUEHRERSCHEIN_MINDEST_BEWERTUNG),
+                "ordner": ordner.name,
+            }
+    return staende
+
+
+def _stufe_gruen(stand: dict, modell: str) -> bool:
+    e = stand.get(modell) or {}
+    return e.get("urteil") == "BESTANDEN" and bool(e.get("aktuell"))
+
+
+def shell_tuer(abitur: dict, fuehrerschein: dict) -> dict:
+    """Welche Modelle haben BEIDE Stufen bestanden - und ist die Tuer
+    damit sichtbar?
+
+    Bewusst hier in Python statt in der Oberflaeche: Eine Regel, die
+    darueber entscheidet, wann eine Shell-Freigabe angeboten wird,
+    gehoert an eine Stelle mit Selbsttest und Mutations-Gegenprobe. Im
+    JavaScript wird nur die Form geprueft, nicht der Inhalt.
+
+    Die Tuer OEFFNET das hier nicht - sie wird nur sichtbar. Geschaltet
+    wird von Mexla, ueber denselben Weg wie jeder Autonomie-Schalter.
+    """
+    bereit = sorted(m for m in abitur
+                    if _stufe_gruen(abitur, m)
+                    and _stufe_gruen(fuehrerschein, m))
+    nur_abitur = sorted(m for m in abitur
+                        if _stufe_gruen(abitur, m)
+                        and not _stufe_gruen(fuehrerschein, m))
+    return {"bereit": bereit, "nur_abitur": nur_abitur,
+            "offen": bool(bereit)}
 # So viel Denkweg wird hoechstens mitgegeben und gespeichert. Denk-
 # Modelle produzieren davon leicht mehrere tausend Zeichen je Runde -
 # ungebremst blaeht das den gespeicherten Verlauf auf, und der wird bei
@@ -3393,6 +3473,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if pfad == "/api/zustand":
             stop = killswitch_aktiv()
+            _abitur, _fs = abitur_stand(), fuehrerschein_stand()
             self._json(200, {
                 # Das Kontextfenster kommt aus der Konstante, nicht
                 # aus einer Zahl in der Oberflaeche. Sonst behauptet
@@ -3408,7 +3489,9 @@ class Handler(BaseHTTPRequestHandler):
                 "speicher": speicher_lage(),
                 "dienste": dienste_pruefen(),
                 "modelle": modelle_lesen(),
-                "abitur": abitur_stand(),
+                "abitur": _abitur,
+                "fuehrerschein": _fs,
+                "shell_tuer": shell_tuer(_abitur, _fs),
             })
             return
 
@@ -3861,6 +3944,55 @@ def _selbsttest() -> int:
         pruefe(_st["nemotron-3.5-lightning"]["urteil"] == "NICHT BESTANDEN",
                "Ampel: Finale 3 von 5 ist kein Bestehen",
                str(_st.get("nemotron-3.5-lightning")))
+
+        # --- Zweite Stufe: der Terminal-Fuehrerschein ---
+        def _fs_lauf(name, daten):
+            o = _w1 / name
+            o.mkdir()
+            (o / "gesamt.json").write_text(json.dumps(daten), encoding="utf-8")
+
+        _fs_lauf("fuehrerschein_2026-08-28_200000", {
+            "beendet": "2026-08-28T21:00:00",
+            "bewertungsversion": "2026-08-28",
+            "modelle": {
+                "laguna-xs-2.1": {
+                    "bestanden": True, "urteil": "BESTANDEN",
+                    "umgebungsfehler": 0,
+                    "teile": {"t1": {"bestanden": 5}, "t2": {"bestanden": 4},
+                              "t3": {"bestanden": 5}}},
+                "nemotron-3.5-lightning": {
+                    "bestanden": False, "urteil": "DURCHGEFALLEN",
+                    "umgebungsfehler": 0,
+                    "teile": {"t1": {"bestanden": 5}, "t2": {"bestanden": 2},
+                              "t3": {"bestanden": 5}}},
+                "muse-glimmer": {
+                    "bestanden": False, "urteil": "UMGEBUNGSFEHLER",
+                    "umgebungsfehler": 2, "teile": {}}}})
+        _fs = fuehrerschein_stand(_w1)
+        pruefe(_fs["laguna-xs-2.1"]["urteil"] == "BESTANDEN"
+               and _fs["laguna-xs-2.1"]["aktuell"] is True
+               and _fs["laguna-xs-2.1"]["teile"] == "5/4/5",
+               "Fuehrerschein: bestanden mit Teil-Uebersicht",
+               str(_fs.get("laguna-xs-2.1")))
+        pruefe(_fs["nemotron-3.5-lightning"]["urteil"] == "NICHT BESTANDEN",
+               "Fuehrerschein: durchgefallen bleibt durchgefallen")
+        pruefe(_fs["muse-glimmer"]["urteil"] == "UNGUELTIG",
+               "Fuehrerschein: Umgebungsfehler machen den Lauf ungueltig")
+
+        # --- Die Tuer: strenge Treppe (Mexlas Entscheid 28.08.) ---
+        _tuer = shell_tuer(_st, _fs)
+        pruefe(_tuer["offen"] and _tuer["bereit"] == ["laguna-xs-2.1"],
+               "Tuer offen fuer das Modell mit BEIDEN Stufen", str(_tuer))
+        _tuer_ohne = shell_tuer(_st, {})
+        pruefe(not _tuer_ohne["offen"]
+               and "laguna-xs-2.1" in _tuer_ohne["nur_abitur"],
+               "nur Abitur reicht NICHT - die Tuer bleibt zu",
+               str(_tuer_ohne))
+        pruefe(not shell_tuer({}, _fs)["offen"],
+               "nur Fuehrerschein reicht auch nicht")
+        _alt = {"laguna-xs-2.1": dict(_fs["laguna-xs-2.1"], aktuell=False)}
+        pruefe(not shell_tuer(_st, _alt)["offen"],
+               "ein Fuehrerschein alter Bewertung oeffnet nichts")
 
     # --- Die Oberflaeche selbst: ist ihr JavaScript ueberhaupt heil? ---
     # Am 23.08.2026 hat ein beim Bearbeiten zerrissener Blockkommentar

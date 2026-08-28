@@ -314,8 +314,11 @@ async function zeigeUebersicht(ziel) {
     .join("") || `<div class="hinweis">keine Angaben</div>`;
 
   const ab = d.abitur || {};
+  const fs = d.fuehrerschein || {};
   const abiturZeilen = Object.entries(ab).map(([m, s]) => abiturZeile(m, s))
     .join("") || `<div class="hinweis">noch kein Abitur-Lauf gefunden</div>`;
+  const fsZeilen = Object.entries(fs).map(([m, s]) => fuehrerscheinZeile(m, s))
+    .join("") || `<div class="hinweis">noch kein Führerschein-Lauf</div>`;
 
   ziel.innerHTML = `
     <h1>Übersicht</h1>
@@ -338,15 +341,20 @@ async function zeigeUebersicht(ziel) {
            an der Tastatur: <code>m1-weiter</code></p>
       </div>
       <div class="karte">
-        <h3>Abitur-Ampel</h3>
+        <h3>Ampel: Abitur und Führerschein</h3>
+        <div class="unterzeile">Stufe 1 — Abitur</div>
         ${abiturZeilen}
-        ${abiturFreigabe(ab, a)}
+        <div class="unterzeile" style="margin-top:10px">Stufe 2 —
+          Terminal-Führerschein <span class="hinweis">(T1 Deutung / T2
+          Handwerk / T3 Gefahr)</span></div>
+        ${fsZeilen}
+        ${abiturFreigabe(d.shell_tuer || {}, a)}
         <p class="hinweis" style="margin:10px 0 0">Bestehen macht die Tür
           sichtbar — geöffnet wird sie von dir: Der Knopf legt
           <code>ERLAUBE_SHELL</code> um, über denselben Weg wie die
-          Autonomie-Schalter (für Tim aus dem Chat gesperrt). Die Treppe:
-          Abitur → Mitarbeiter-Recht am Dummy → Terminal-Führerschein →
-          Terminal.</p>
+          Autonomie-Schalter (für Tim aus dem Chat gesperrt). Er erscheint
+          erst, wenn <b>beide</b> Stufen bestanden sind. Zum Wirken braucht
+          es zusätzlich den Modus <code>autonom</code>.</p>
       </div>
       <div class="karte">
         <h3>Autonomie</h3>
@@ -357,9 +365,11 @@ async function zeigeUebersicht(ziel) {
             ⟲ Alles zurück auf sicher</button>
         </div>
         <p class="hinweis" style="margin:10px 0 0">Die erlaube-Schalter greifen
-          erst ab Modus <code>assist</code> oder <code>autonom</code>. Beim
-          Hochstufen fragt Tim nach; bei gesetztem Kill-Switch geht es gar
-          nicht. Zurück auf sicher geht immer.</p>
+          erst im Modus <code>autonom</code> — <code>assist</code> fragt bei
+          jedem Bereich nach und führt nichts selbst aus (am 28.08.2026
+          nachgemessen; hier stand vorher fälschlich „assist oder autonom").
+          Bei gesetztem Kill-Switch geht Hochstufen gar nicht. Zurück auf
+          sicher geht immer.</p>
       </div>
       <div class="karte" style="grid-column:1/-1">
         <h3>Modelle (${MODELLE.length})</h3>
@@ -421,26 +431,52 @@ function abiturZeile(modell, s) {
     <span class="wert">${lage} · ${esc(s.datum)}</span></div>`;
 }
 
-function abiturFreigabe(ab, autonomie) {
-  const gruen = Object.entries(ab)
-    .filter(([, s]) => s.urteil === "BESTANDEN" && s.aktuell);
-  if (!gruen.length)
-    return `<div class="hinweis" style="margin-top:10px">Kein Modell hat das
-      aktuelle Abitur bestanden — die Freigabe bleibt zu.</div>`;
+/* Die Führerschein-Zeile. „teile" ist die Kurzform T1/T2/T3, damit man
+   auf einen Blick sieht, WO es geklemmt hat. */
+function fuehrerscheinZeile(modell, s) {
+  let lage;
+  if (s.urteil === "BESTANDEN" && s.aktuell)
+    lage = `<span style="color:var(--gut)">bestanden</span>`;
+  else if (s.urteil === "BESTANDEN")
+    lage = `<span class="empf-warn">bestanden — alte Bewertung, Lauf wiederholen</span>`;
+  else if (s.urteil === "UNGUELTIG")
+    lage = `<span class="empf-warn">ungültig — ${s.umgebungsfehler} Umgebungsfehler</span>`;
+  else
+    lage = `<span class="fehler">durchgefallen</span>`;
+  return `<div class="zeile"
+      title="Lauf ${esc(s.ordner)} · Bewertung ${esc(s.bewertung)}">
+    <span>${esc(modell)}</span>
+    <span class="wert">${lage} · ${esc(s.teile)} · ${esc(s.datum)}</span></div>`;
+}
+
+/* Wer die Tür sehen darf, entscheidet der Server (shell_tuer in
+   m1_zentrale.py) - dort steht die Regel mit Selbsttest und
+   Mutations-Gegenprobe. Hier wird nur gezeichnet. */
+function abiturFreigabe(tuer, autonomie) {
   if ((autonomie.ERLAUBE_SHELL || "nein") === "ja")
     return `<div class="hinweis" style="margin-top:10px">Freigabe erteilt:
       <code>ERLAUBE_SHELL</code> steht auf <b>ja</b> (Karte Autonomie).</div>`;
-  const namen = gruen.map(([m]) => m).join(", ");
+  if (!tuer.offen) {
+    const wartet = (tuer.nur_abitur || []);
+    if (wartet.length)
+      return `<div class="hinweis" style="margin-top:10px">
+        ${esc(wartet.join(", "))}: Abitur bestanden, <b>Führerschein steht
+        aus</b> — die Freigabe bleibt so lange zu.</div>`;
+    return `<div class="hinweis" style="margin-top:10px">Kein Modell hat
+      beide Stufen bestanden — die Freigabe bleibt zu.</div>`;
+  }
+  const namen = (tuer.bereit || []).join(", ");
   return `<div style="margin-top:12px">
     <button class="knopf klein" onclick="shellFreigeben('${esc(namen)}')">
       🔓 Shell für Tim freigeben</button></div>`;
 }
 
 async function shellFreigeben(namen) {
-  if (!confirm(`Shell für Tim freigeben?\n\nGrundlage: aktuelles Abitur ` +
-      `bestanden von ${namen}.\nDer Schalter ERLAUBE_SHELL wird auf ja ` +
-      `gestellt und greift ab Modus assist/autonom.\nZurück geht ` +
-      `jederzeit: „Alles zurück auf sicher".`)) { zeichne(); return; }
+  if (!confirm(`Shell für Tim freigeben?\n\nGrundlage: Abitur UND ` +
+      `Terminal-Führerschein bestanden von ${namen}.\nDer Schalter ` +
+      `ERLAUBE_SHELL wird auf ja gestellt; wirksam wird er erst im Modus ` +
+      `autonom.\nZurück geht jederzeit: „Alles zurück auf sicher".`))
+    { zeichne(); return; }
   await autonomieAktion({aktion: "autonomie_setzen",
                          argument: "ERLAUBE_SHELL.ja"}, "Shell-Freigabe");
 }
@@ -535,7 +571,8 @@ async function autonomieSchalten(schalter, neu) {
   const anzeige = schalter.replace(/_/g, " ").toLowerCase();
   if (neu === "ja" && !confirm(`„${anzeige}“ auf JA stellen?\n\n` +
       "Der Harness darf diesen Bereich dann selbstständig bearbeiten, " +
-      "sobald der Modus assist oder autonom ist. Empfohlen ist: nein.")) {
+      "sobald der Modus autonom ist (assist fragt weiterhin nach). " +
+      "Empfohlen ist: nein.")) {
     zeichne(); return;
   }
   let d;
@@ -1251,8 +1288,10 @@ async function zeigeShell(ziel) {
       <div class="zeile"><span>Grund</span><span class="wert">${esc(d.grund)}</span></div>
       ${gesperrt ? `<p class="hinweis" style="margin:10px 0 0">
         Freischalten an der Tastatur — bewusst nicht von hier aus:<br>
-        <code>ERLAUBE_SHELL=ja</code> und <code>AUTONOMIE_MODUS=assist</code>
-        in <code>/opt/ki-server/config/autonomie.conf</code></p>` : ""}
+        <code>ERLAUBE_SHELL=ja</code> und <code>AUTONOMIE_MODUS=autonom</code>
+        in <code>/opt/ki-server/config/autonomie.conf</code><br>
+        (<code>assist</code> reicht NICHT — es fragt bei jedem Bereich nach,
+        am 28.08.2026 nachgemessen.)</p>` : ""}
     </div>
 
     <div class="karte" style="margin-bottom:14px">
