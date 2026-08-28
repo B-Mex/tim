@@ -422,7 +422,10 @@ AKTIONEN = {
     "werkstatt_befehle": (
         "Eine Befehlsfolge aus einer .json-Datei im Sandkasten fahren - "
         "eingesperrt, nur ls/cat/grep/head/tail/wc, nur Pfade im "
-        "Sandkasten (Argument: Dateiname, flach, z.B. folge.json)",
+        "Sandkasten, keine Pipes. Die Datei enthaelt eine Liste von "
+        "Befehlszeilen, jede selbst eine Liste, z.B. "
+        '[["wc", "-l", "datei.txt"], ["grep", "-c", "wort", "datei.txt"]] '
+        "(Argument: Dateiname, flach, z.B. folge.json)",
         lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "befehle",
                      str(arg or "")],
         True,
