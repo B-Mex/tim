@@ -21,8 +21,17 @@ except ImportError:
 # 42.6 Tok/s) schlaegt qwen3-coder (12/14) und qwen3-general (12/14) in
 # Qualitaet UND Tempo - zwei getrennte grosse Modelle wuerden sich nur
 # gegenseitig aus dem Speicher werfen.
-KLASSE_1 = "qwen3.6:35b-a3b"  # stark: Recherche, Implementierung, Controller
-KLASSE_2 = "qwen3.6:35b-a3b"  # mittel: komplexe Reviews, Planung
+# Stand 28.08.2026: qwen3.6:35b-a3b ist nach Mexlas Entscheidung
+# deinstalliert (fiel im Abitur am Kettentest, 2 von 5 Laeufen mit
+# erfundenem Schritt). laguna-xs-2.1 traegt seither ALLE drei Klassen.
+#
+# Das heisst: Die Leiter ist zurzeit flach - jeder Zweig in
+# get_model_for_job liefert dasselbe Modell. Sie bleibt trotzdem
+# stehen, weil sie die Stelle ist, an der ein kuenftiges grosses Modell
+# wieder eine eigene Klasse bekommt. nemotron-3.5-lightning ist mit
+# ~25 GB bewusst KEIN Klassenmodell (es passt neben nichts).
+KLASSE_1 = "laguna-xs-2.1"    # stark: Recherche, Implementierung, Controller
+KLASSE_2 = "laguna-xs-2.1"    # mittel: komplexe Reviews, Planung
 # ACHTUNG bei Klasse 3: Sie ist die SPEICHERSPARENDE Klasse, nicht die
 # schnelle. Der Kommentar hier behauptete bis zum 24.08.2026 "klein/
 # schnell" - gemessen ist das Gegenteil: qwen3.6:35b-a3b laeuft mit
@@ -121,18 +130,21 @@ def selbsttest() -> int:
             fehler.append(t)
 
     print("model_router Selbsttest:")
-    # Bestandsliste vom 27.08.2026 als Fixture - KEINE Live-Abfrage
-    bestand = ["qwen3.6:35b-a3b", "laguna-xs-2.1:latest",
-               "nemotron-3.5-lightning:latest", "muse-glimmer:latest"]
+    # Bestandsliste vom 28.08.2026 als Fixture - KEINE Live-Abfrage
+    bestand = ["laguna-xs-2.1:latest", "nemotron-3.5-lightning:latest",
+               "muse-glimmer:latest"]
     pruefe(modelle_pruefen(bestand) == [],
-           "alle Klassenmodelle stehen im Bestand vom 27.08.",
+           "alle Klassenmodelle stehen im Bestand vom 28.08.",
            str(modelle_pruefen(bestand)))
     pruefe(any("Klasse 3" in f for f in
-               modelle_pruefen(["qwen3.6:35b-a3b"])),
+               modelle_pruefen(["nemotron-3.5-lightning:latest"])),
            "ein fehlendes Klasse-3-Modell wird gemeldet")
     pruefe(modelle_pruefen([]) != [], "leerer Bestand meldet alle Klassen")
-    pruefe(KLASSE_3 != "qwen3.5:9b",
-           "Klasse 3 zeigt nicht mehr auf das geloeschte qwen3.5:9b")
+    # Gegenproben gegen die aussortierten Modelle: Keine Klasse darf je
+    # wieder auf ein deinstalliertes Modell zeigen.
+    for weg in ("qwen3.5:9b", "gpt-oss:20b", "qwen3.6:35b-a3b"):
+        pruefe(weg not in (KLASSE_1, KLASSE_2, KLASSE_3),
+               "keine Klasse zeigt auf das aussortierte %s" % weg)
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler
                     else "%d FEHLER." % len(fehler)))
     return 1 if fehler else 0

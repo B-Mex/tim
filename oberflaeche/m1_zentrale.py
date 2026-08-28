@@ -1428,14 +1428,23 @@ AUFGABEN = [
 # genug neben dem grossen Modell). nemotron bleibt installiert, ist aber
 # mit ~25 GB kein Nebenher-Modell.
 #
-# qwen3.6:35b-a3b behaelt Code und Denken OHNE Werkzeugketten: Es fiel
-# im Abitur am Kettentest (erfand in 2 von 5 Laeufen einen Schritt) -
-# fuer reine Denk-/Codearbeit traegt diese Schwaeche nicht, fuer
-# Werkzeugarbeit steht deshalb laguna in der Tabelle.
+# Stand 28.08.2026: qwen3.6:35b-a3b behielt zunaechst Code und Denken
+# (seine Abitur-Schwaeche war der Kettentest: 2 von 5 Laeufen mit
+# erfundenem Schritt). Nach Mexlas Entscheidung wird es deinstalliert -
+# laguna uebernimmt ALLE Rollen. Grund: Ein Modell, das im Handeln
+# erfindet, soll auch nicht denken oder Code schreiben; und laguna hat
+# am 28.08. das gehaertete Voll-Abitur bestanden (Vorpruefung 25/25 mit
+# echtem Funk, Finale 5/5 bei 91-97 %).
+#
+# Nebenwirkung, ehrlich benannt: Die Tabelle hat damit nur noch EINEN
+# Wert. Sie bleibt trotzdem stehen - sie ist die Stelle, an der ein
+# kuenftiges Modell wieder eine eigene Rolle bekommt, ohne dass jemand
+# den Orchestrator umbaut. nemotron-3.5-lightning bleibt installiert,
+# ist aber mit ~25 GB kein Alltagsmodell.
 AUFGABE_MODELL = {
-    "code": "qwen3.6:35b-a3b",
+    "code": "laguna-xs-2.1",
     "werkzeuge": "laguna-xs-2.1",
-    "denken": "qwen3.6:35b-a3b",
+    "denken": "laguna-xs-2.1",
     "kurz": "laguna-xs-2.1",
 }
 
@@ -1967,9 +1976,10 @@ CHAT_NUM_CTX = 65536
 # Deshalb: num_predict ausdruecklich setzen statt dem Ollama-Standard zu
 # vertrauen, und zwar grosszuegig genug fuer Denkweg UND Antwort.
 MODELL_GRENZEN = {
-    # gpt-oss:20b stand hier bis zum 27.08.2026 - im Abitur an der
-    # Injection durchgefallen und nach Mexlas Entscheidung deinstalliert.
-    "qwen3.6:35b-a3b": {"num_ctx": 65536, "num_predict": 8192},
+    # Hier standen bis zum 27./28.08.2026 zwei weitere Modelle:
+    # gpt-oss:20b (im Abitur an der Injection durchgefallen) und
+    # qwen3.6:35b-a3b (am Kettentest durchgefallen) - beide nach
+    # Mexlas Entscheidung deinstalliert.
     # Am 26.08.2026 nachgeladen. Beide koennen viel mehr Kontext
     # (nemotron 1048576, laguna 262144), aber der Speicher setzt die
     # Grenze, nicht das Modell: nemotron belegt allein schon 25 GB von
