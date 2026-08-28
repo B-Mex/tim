@@ -313,6 +313,10 @@ async function zeigeUebersicht(ziel) {
   const autoZeilen = Object.entries(a).map(([k, v]) => autonomieZeile(k, v))
     .join("") || `<div class="hinweis">keine Angaben</div>`;
 
+  const ab = d.abitur || {};
+  const abiturZeilen = Object.entries(ab).map(([m, s]) => abiturZeile(m, s))
+    .join("") || `<div class="hinweis">noch kein Abitur-Lauf gefunden</div>`;
+
   ziel.innerHTML = `
     <h1>Übersicht</h1>
     <div class="unterzeile">Stand ${esc(d.zeit)}</div>
@@ -332,6 +336,17 @@ async function zeigeUebersicht(ziel) {
         <div class="zeile"><span>Kill-Switch</span><span class="wert">${stop}</span></div>
         <p class="hinweis" style="margin:10px 0 0">Aufheben geht bewusst nur
            an der Tastatur: <code>m1-weiter</code></p>
+      </div>
+      <div class="karte">
+        <h3>Abitur-Ampel</h3>
+        ${abiturZeilen}
+        ${abiturFreigabe(ab, a)}
+        <p class="hinweis" style="margin:10px 0 0">Bestehen macht die Tür
+          sichtbar — geöffnet wird sie von dir: Der Knopf legt
+          <code>ERLAUBE_SHELL</code> um, über denselben Weg wie die
+          Autonomie-Schalter (für Tim aus dem Chat gesperrt). Die Treppe:
+          Abitur → Mitarbeiter-Recht am Dummy → Terminal-Führerschein →
+          Terminal.</p>
       </div>
       <div class="karte">
         <h3>Autonomie</h3>
@@ -382,6 +397,53 @@ const AUTONOMIE_SCHALTBAR = {
 };
 const AUTONOMIE_FEST = ["NIEMALS_KAEUFE", "NIEMALS_NETZSPANNUNG",
                         "NIEMALS_LOESCHEN_OHNE_BACKUP"];
+
+/* ---------- Abitur-Ampel ----------
+   Zeigt je Modell den juengsten Stand aus den abitur_*-Ordnern (liefert
+   /api/zustand). Die Ampel schaltet NICHTS von selbst: Gruen macht nur
+   den Freigabe-Knopf sichtbar, und der geht denselben Weg wie alle
+   Autonomie-Schalter (autonomie_setzen; fuer Tims Chat gesperrt).
+   Ergebnisse alter Bewertungsversionen zaehlen nicht als gruen -
+   "Finale bestanden" hiess dort nur "nicht abgestuerzt". */
+function abiturZeile(modell, s) {
+  let lage;
+  if (s.urteil === "BESTANDEN" && s.aktuell)
+    lage = `<span style="color:var(--gut)">bestanden</span>`;
+  else if (s.urteil === "BESTANDEN")
+    lage = `<span class="empf-warn">bestanden — alte Bewertung, Lauf wiederholen</span>`;
+  else if (s.urteil === "UNGUELTIG")
+    lage = `<span class="empf-warn">ungültig — ${s.umgebungsfehler} Umgebungsfehler</span>`;
+  else
+    lage = `<span class="fehler">durchgefallen</span>`;
+  return `<div class="zeile"
+      title="Lauf ${esc(s.ordner)} · Finale ${esc(s.finale)} · Bewertung ${esc(s.bewertung)}">
+    <span>${esc(modell)}</span>
+    <span class="wert">${lage} · ${esc(s.datum)}</span></div>`;
+}
+
+function abiturFreigabe(ab, autonomie) {
+  const gruen = Object.entries(ab)
+    .filter(([, s]) => s.urteil === "BESTANDEN" && s.aktuell);
+  if (!gruen.length)
+    return `<div class="hinweis" style="margin-top:10px">Kein Modell hat das
+      aktuelle Abitur bestanden — die Freigabe bleibt zu.</div>`;
+  if ((autonomie.ERLAUBE_SHELL || "nein") === "ja")
+    return `<div class="hinweis" style="margin-top:10px">Freigabe erteilt:
+      <code>ERLAUBE_SHELL</code> steht auf <b>ja</b> (Karte Autonomie).</div>`;
+  const namen = gruen.map(([m]) => m).join(", ");
+  return `<div style="margin-top:12px">
+    <button class="knopf klein" onclick="shellFreigeben('${esc(namen)}')">
+      🔓 Shell für Tim freigeben</button></div>`;
+}
+
+async function shellFreigeben(namen) {
+  if (!confirm(`Shell für Tim freigeben?\n\nGrundlage: aktuelles Abitur ` +
+      `bestanden von ${namen}.\nDer Schalter ERLAUBE_SHELL wird auf ja ` +
+      `gestellt und greift ab Modus assist/autonom.\nZurück geht ` +
+      `jederzeit: „Alles zurück auf sicher".`)) { zeichne(); return; }
+  await autonomieAktion({aktion: "autonomie_setzen",
+                         argument: "ERLAUBE_SHELL.ja"}, "Shell-Freigabe");
+}
 
 /* Der Modus ist der grosse Hebel: safe = nur Vorschlaege, assist =
    unkritisches selbst, autonom = alles Freigeschaltete selbst. Seit
