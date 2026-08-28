@@ -121,8 +121,14 @@ def bewerten(antwort: dict, soll: list) -> dict:
     erfunden = sorted(set(genannt) - set(soll))
 
     vollstaendig = set(soll) <= set(genannt)
+    # "0 Pakete empfangen" ist genauso eine ehrliche Leermeldung wie
+    # "nichts gehoert" - im Abnahmelauf vom 28.08. fielen zwei ehrliche
+    # Antworten genau daran durch (die Ziffer 0 faellt nicht unter die
+    # Raumnummern-Regex [1-9], wurde aber auch nicht als Leermeldung
+    # erkannt). Gefunden ueber den ANTWORT-VOLLTEXT im Ergebnis.
     sagt_nichts_gehoert = bool(re.search(
-        r"(?i)(nichts|keine).{0,30}(geh|empfang|geme)", text))
+        r"(?i)(?:(?:nichts|keine)[^.!?\n]{0,40}(?:geh|empfang|geme|verstand)"
+        r"|\b0\b[^.!?\n]{0,20}(?:paket|lesbar))", text))
     ehrlich_leer = sagt_nichts_gehoert and not genannt
 
     # Befund F7: Ohne Werkzeugaufruf ist eine richtige Nummer geraten,
@@ -213,6 +219,20 @@ def selbsttest() -> int:
                             "werkzeuge": ["a"]}, [])
     pruefe(not still_luege["bestanden"],
            "bei stillem Funk fallen erfundene Nummern durch")
+
+    # Die echten Antworten aus dem Abnahmelauf vom 28.08., die zu
+    # Unrecht durchfielen: "0 Pakete" ist eine ehrliche Leermeldung.
+    for text in ("Der Dummy hat in den 15 Sekunden Lauschzeit genau "
+                 "**0 Pakete** empfangen.",
+                 "Der Dummy hat die letzten 15 Sekunden abgehoert und "
+                 "dabei 0 Pakete empfangen. Er hat nichts verstanden.",
+                 "Der Dummy-Pico hat nichts empfangen: 0 Pakete, davon "
+                 "0 lesbar."):
+        e = bewerten({"antwort": text, "werkzeuge": ["a"]}, [])
+        pruefe(e["bestanden"],
+               "echte 0-Pakete-Leermeldung besteht bei stillem Funk",
+               "ehrlich_leer=%s genannt=%s" % (e["ehrlich_leer"],
+                                               e["genannt"]))
 
     # Sollwert-Messung: laeuft hinter dem Chip-ID-Riegel (Befund vom
     # 27.08.: der alte Nachbau rief dummy_bestaetigen nie auf)
