@@ -339,6 +339,147 @@ def testen(relpfad: str) -> dict:
             "exitcode": lauf.returncode, "ausgabe": ausgabe.strip()[:MAX_AUSGABE]}
 
 
+# ----------------------------------------------------------------------
+# Befehlsfolgen: der Uebungsraum fuer den Terminal-Fuehrerschein
+# ----------------------------------------------------------------------
+# Zwischen "nur Python-Dateien fahren" (testen) und "alles duerfen"
+# (die Shell der Zentrale, shell=True, kein Filter) klaffte eine Luecke.
+# Der Fuehrerschein braucht genau den Mittelweg: echte Kommandozeilen-
+# Arbeit, aber eingesperrt und ohne Werkzeuge, die etwas kaputt machen.
+#
+# Tim schreibt die Folge als JSON in den Sandkasten (eine Liste von
+# Argumentlisten) und laesst sie hier fahren. Vier Riegel:
+#   1. Positivliste der Programme - alles andere wird abgelehnt.
+#   2. Argumentpruefung - nur relative Pfade im Sandkasten. Ohne sie
+#      liesse sich unter (allow file-read*) jedes Geheimnis des Hauses
+#      auslesen (~/.m1_job_token, config/ha_token.secret) und die
+#      Ausgabe floesse in Chat und Protokoll zurueck.
+#   3. sandbox-exec - kein Netz, Schreiben nur im Sandkasten.
+#   4. Zeit- und Mengengrenze.
+#
+# NICHT in der Liste und warum: rm/mv/cp (loeschen und verschieben ist
+# Mexlas Sache), find (-delete loescht wirklich, -exec haengt beliebige
+# Programme an und haette die Positivliste ausgehebelt), curl/git
+# (Netz bzw. Zustandsaenderung), echo/sh (Umleitungen und Ketten).
+BEFEHLE_ERLAUBT = {
+    "ls": "/bin/ls",
+    "cat": "/bin/cat",
+    "grep": "/usr/bin/grep",
+    "head": "/usr/bin/head",
+    "tail": "/usr/bin/tail",
+    "wc": "/usr/bin/wc",
+}
+MAX_BEFEHLE = 20
+BEFEHL_ZEITGRENZE = 15
+
+
+def _argument_ok(arg: str) -> str:
+    """Leerer String = in Ordnung, sonst der Ablehnungsgrund.
+
+    Optionen (-l, --color) sind erlaubt; alles andere gilt als Pfad und
+    muss im Sandkasten liegen. Absolute Pfade, ~ und .. sind zu, damit
+    ein 'cat' nicht ausserhalb liest - die Sandbox erlaubt Lesen
+    ueberall, dieser Riegel ist der einzige, der das begrenzt.
+    """
+    if not isinstance(arg, str) or not arg:
+        return "leeres Argument"
+    if len(arg) > 200:
+        return "Argument zu lang"
+    if arg.startswith("-"):
+        return "" if all(z.isalnum() or z in "-_=." for z in arg) else \
+            "unzulaessige Option: %r" % arg
+    ziel, grund = pfad_erlaubt(arg)
+    return "" if ziel is not None else grund
+
+
+def befehl_pruefen(teile: list) -> tuple[list | None, str]:
+    """Eine einzelne Befehlszeile pruefen und in einen echten Aufruf
+    uebersetzen. Rueckgabe: (aufruf, "") oder (None, grund)."""
+    if not isinstance(teile, list) or not teile:
+        return None, "jede Zeile muss eine Liste sein: [\"ls\", \"-l\"]"
+    if not all(isinstance(t, str) for t in teile):
+        return None, "alle Teile muessen Text sein"
+    name = teile[0]
+    if name not in BEFEHLE_ERLAUBT:
+        return None, ("'%s' ist nicht erlaubt. Erlaubt sind nur: %s"
+                      % (name, ", ".join(sorted(BEFEHLE_ERLAUBT))))
+    for arg in teile[1:]:
+        grund = _argument_ok(arg)
+        if grund:
+            return None, "Argument %r abgelehnt: %s" % (arg, grund)
+    return [BEFEHLE_ERLAUBT[name]] + list(teile[1:]), ""
+
+
+def befehle_fahren(relpfad: str) -> dict:
+    """Eine Befehlsfolge aus einer JSON-Datei im Sandkasten fahren.
+
+    Anders als testen() wird hier NICHT ungeschuetzt weitergemacht, wenn
+    sandbox-exec fehlt: Das ist Pruef-Infrastruktur, und ein kranker
+    Pruefstand darf nichts messen, statt heimlich ohne Sperre zu fahren.
+    """
+    ziel, grund = pfad_erlaubt(relpfad)
+    if ziel is None:
+        return {"ok": False, "fehler": grund}
+    if not ziel.is_file():
+        return {"ok": False, "fehler": "keine Datei"}
+    if ziel.suffix != ".json":
+        return {"ok": False, "fehler": "die Befehlsfolge muss eine "
+                                       ".json-Datei sein"}
+    if not Path("/usr/bin/sandbox-exec").exists():
+        return {"ok": False, "fehler": "sandbox-exec fehlt - hier wird "
+                                       "nichts ungeschuetzt gefahren"}
+    try:
+        folge = json.loads(ziel.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as fehler:
+        return {"ok": False, "fehler": "JSON nicht lesbar: %s" % fehler}
+    if not isinstance(folge, list) or not folge:
+        return {"ok": False, "fehler": "erwartet wird eine Liste von "
+                                       "Befehlszeilen, z.B. [[\"ls\", \"-l\"]]"}
+    if len(folge) > MAX_BEFEHLE:
+        return {"ok": False, "fehler": "hoechstens %d Befehle" % MAX_BEFEHLE}
+
+    profil = SANDBOX_PROFIL % _basis()
+    fd, profildatei = tempfile.mkstemp(suffix=".sb")
+    os.write(fd, profil.encode("utf-8"))
+    os.close(fd)
+    schritte = []
+    try:
+        for nummer, teile in enumerate(folge, 1):
+            aufruf, grund = befehl_pruefen(teile)
+            if aufruf is None:
+                schritte.append({"nummer": nummer, "befehl": teile,
+                                 "abgelehnt": grund})
+                protokoll_schreiben({"tat": "befehle", "pfad": relpfad,
+                                     "nummer": nummer, "abgelehnt": grund})
+                continue
+            try:
+                lauf = subprocess.run(
+                    ["/usr/bin/sandbox-exec", "-f", profildatei] + aufruf,
+                    capture_output=True, text=True,
+                    timeout=BEFEHL_ZEITGRENZE, cwd=str(_basis()))
+                ausgabe = ((lauf.stdout or "")
+                           + (("\n" + lauf.stderr) if lauf.stderr else ""))
+                schritte.append({"nummer": nummer, "befehl": teile,
+                                 "code": lauf.returncode,
+                                 "ausgabe": ausgabe.strip()[:MAX_AUSGABE]})
+            except subprocess.TimeoutExpired:
+                schritte.append({"nummer": nummer, "befehl": teile,
+                                 "code": -1,
+                                 "ausgabe": "abgebrochen nach %d s"
+                                            % BEFEHL_ZEITGRENZE})
+            protokoll_schreiben({"tat": "befehle", "pfad": relpfad,
+                                 "nummer": nummer,
+                                 "befehl": " ".join(teile),
+                                 "code": schritte[-1].get("code")})
+    finally:
+        try:
+            os.unlink(profildatei)
+        except OSError:
+            pass
+    return {"ok": True, "schritte": schritte,
+            "abgelehnt": sum(1 for s in schritte if "abgelehnt" in s)}
+
+
 LERNPROTOKOLL = WERKSTATT / "gelernt" / "LERNPROTOKOLL.md"
 MAX_LERNNOTIZ = 4000
 
@@ -654,6 +795,70 @@ def _selbsttest() -> int:
                          "(nur macOS)")
         ziel_aussen.unlink(missing_ok=True)
 
+        # --- Befehlsfolgen: der Uebungsraum des Fuehrerscheins ---
+        # Erst die Pruefung als pure Funktion (beide Seiten), dann ein
+        # echter Lauf durch die Sandbox.
+        pruefe(befehl_pruefen(["ls", "-l"])[0] == ["/bin/ls", "-l"],
+               "ls -l wird zum echten Aufruf uebersetzt",
+               str(befehl_pruefen(["ls", "-l"])))
+        for boese, was in ((["rm", "-rf", "x"], "rm"),
+                           (["find", ".", "-delete"], "find"),
+                           (["curl", "beispiel.de"], "curl"),
+                           (["git", "push"], "git"),
+                           (["sh", "-c", "ls"], "sh")):
+            aufruf, grund = befehl_pruefen(boese)
+            pruefe(aufruf is None and "nicht erlaubt" in grund,
+                   "%s wird abgelehnt" % was, str(grund)[:60])
+        for arg, was in (("/etc/passwd", "absoluter Pfad"),
+                         ("~/.m1_job_token", "Heimverzeichnis"),
+                         ("../../.m1_job_token", "Ausbruch per ..")):
+            aufruf, grund = befehl_pruefen(["cat", arg])
+            pruefe(aufruf is None, "%s als Argument wird abgelehnt" % was,
+                   str(grund)[:60])
+        pruefe(befehl_pruefen(["ls", "unterordner"])[0] is not None,
+               "ein relativer Pfad im Sandkasten ist erlaubt")
+        pruefe(befehl_pruefen(["cat"])[0] == ["/bin/cat"],
+               "ein Befehl ohne Argumente geht auch")
+        pruefe(befehl_pruefen("ls -l")[0] is None,
+               "eine Zeichenkette statt einer Liste wird abgelehnt")
+
+        if Path("/usr/bin/sandbox-exec").exists():
+            schreiben("gruss.txt", "hallo tim\nzweite zeile\n")
+            schreiben("folge.json",
+                      '[["cat", "gruss.txt"], ["wc", "-l", "gruss.txt"],'
+                      ' ["rm", "gruss.txt"], ["cat", "/etc/passwd"]]')
+            r = befehle_fahren("folge.json")
+            pruefe(r["ok"] and len(r["schritte"]) == 4,
+                   "vier Zeilen ergeben vier Schritte", str(r)[:100])
+            pruefe("hallo tim" in r["schritte"][0]["ausgabe"],
+                   "cat liest die Datei im Sandkasten wirklich",
+                   str(r["schritte"][0])[:80])
+            pruefe(r["abgelehnt"] == 2
+                   and "abgelehnt" in r["schritte"][2]
+                   and "abgelehnt" in r["schritte"][3],
+                   "rm und der Fremdpfad werden abgelehnt, der Rest laeuft",
+                   str(r["abgelehnt"]))
+            # Der Riegel muss WIRKLICH halten, nicht nur im Kommentar
+            probe = Path.home() / ".werkstatt_befehlsprobe"
+            probe.write_text("geheim")
+            schreiben("lesen_aussen.json",
+                      '[["cat", "%s"]]' % str(probe))
+            r = befehle_fahren("lesen_aussen.json")
+            pruefe(r["abgelehnt"] == 1
+                   and not any("geheim" in str(s.get("ausgabe", ""))
+                               for s in r["schritte"]),
+                   "eine Datei ausserhalb wird nicht ausgelesen", str(r)[:100])
+            probe.unlink(missing_ok=True)
+            schreiben("keine_liste.json", '{"befehl": "ls"}')
+            pruefe(not befehle_fahren("keine_liste.json")["ok"],
+                   "kaputtes JSON-Format gibt eine klare Fehlermeldung")
+            pruefe(not befehle_fahren("gibtsnicht.json")["ok"],
+                   "fehlende Datei gibt eine klare Fehlermeldung")
+            pruefe(not befehle_fahren("brav.py")["ok"],
+                   "nur .json wird als Befehlsfolge angenommen")
+        else:
+            pruefe(True, "sandbox-exec fehlt - Befehlsfolgen uebersprungen")
+
         # --- Aufraeumen: verschieben, niemals loeschen ---
         global ALTABLAGE
         echte_ablage = ALTABLAGE
@@ -728,6 +933,8 @@ def main(argumente: list[str]) -> int:
         print(json.dumps(liste(rest[0] if rest else ""), ensure_ascii=False))
     elif befehl == "testen" and rest:
         print(json.dumps(testen(rest[0]), ensure_ascii=False, indent=2))
+    elif befehl == "befehle" and rest:
+        print(json.dumps(befehle_fahren(rest[0]), ensure_ascii=False, indent=2))
     elif befehl == "neu" and rest:
         print(json.dumps(neue_aufgabe(rest[0]), ensure_ascii=False, indent=2))
     elif befehl == "aufraeumen":
@@ -739,7 +946,8 @@ def main(argumente: list[str]) -> int:
                          ensure_ascii=False))
     else:
         print("Aufruf: neu <name> | schreiben <pfad> | lesen <pfad> | "
-              "liste [pfad] | testen <pfad> | --selbsttest")
+              "liste [pfad] | testen <pfad> | befehle <pfad.json> | "
+              "--selbsttest")
         return 1
     return 0
 

@@ -419,6 +419,14 @@ AKTIONEN = {
                      str(arg or "")],
         True,
     ),
+    "werkstatt_befehle": (
+        "Eine Befehlsfolge aus einer .json-Datei im Sandkasten fahren - "
+        "eingesperrt, nur ls/cat/grep/head/tail/wc, nur Pfade im "
+        "Sandkasten (Argument: Dateiname, flach, z.B. folge.json)",
+        lambda arg: [_py(), str(HARNESS_DIR / "werkstatt.py"), "befehle",
+                     str(arg or "")],
+        True,
+    ),
     # Schreiben laeuft NICHT ueber diese Liste: Der Inhalt einer Datei
     # passt weder durch den Argument-Riegel der Zentrale
     # ([A-Za-z0-9_.-]) noch waere er in einer Kommandozeile gut
@@ -859,7 +867,7 @@ def _selbsttest() -> int:
                          "datenschutz_pruefen",
                          "werkstatt_aufgabe", "werkstatt_liste",
                          "werkstatt_lesen", "werkstatt_testen",
-                         "werkstatt_gelernt",
+                         "werkstatt_gelernt", "werkstatt_befehle",
                          "dummy_stand", "dummy_lauschen",
                          "dummy_schluessel", "dummy_raum",
                          "dummy_ausrollen",
@@ -877,7 +885,7 @@ def _selbsttest() -> int:
         #    Sandkasten heraus kopieren oder ihn per SSH verlassen.
         for _name in ("werkstatt_aufgabe", "werkstatt_liste",
                       "werkstatt_lesen", "werkstatt_testen",
-                      "werkstatt_gelernt"):
+                      "werkstatt_gelernt", "werkstatt_befehle"):
             _befehl = [str(t) for t in AKTIONEN[_name][1]("probe")]
             pruefe(any(t.endswith("werkstatt.py") for t in _befehl),
                    f"'{_name}' laeuft ueber werkstatt.py", str(_befehl))
