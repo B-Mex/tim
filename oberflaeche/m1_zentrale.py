@@ -2100,21 +2100,34 @@ HANDBUCH_MAX_ZEICHEN = 6000
 
 # Stichwort -> Kapitelueberschrift (Teilstring genuegt). Steht hier und
 # nicht im Handbuch, damit die Zuordnung testbar bleibt.
+#
+# Die Woerter stammen aus dem, was in ECHTEN Fragen steht - nicht aus
+# meiner Kapitelsicht. Am 28.08. teuer gelernt: Die erste Liste kannte
+# "dienst" und "launchctl", die echte Diagnose-Frage sprach aber von
+# "Diagnose" und "com.ki-server.jobserver". Das Kapitel kam nie an, und
+# das Handbuch sah wie ein Fehlschlag aus, obwohl es nur nie
+# aufgeschlagen wurde.
 HANDBUCH_STICHWORTE = {
     "Kapitel 1": ("test", "selbsttest", "pruef", "luecke", "uebersprung",
-                  "grenzwert"),
-    "Kapitel 2": ("pfad", "sandkasten", "symlink", "riegel", "verzeichnis"),
+                  "übersprung", "grenzwert", "bestanden", "durchgefallen"),
+    "Kapitel 2": ("pfad", "sandkasten", "symlink", "riegel", "verzeichnis",
+                  "ordner", "schreibrecht"),
     "Kapitel 3": ("lampe", "licht", "shelly", "funk", "pico", "mesh",
-                  "impuls", "sequenz", "bruecke", "raum"),
-    "Kapitel 4": ("home assistant", "entitaet", "entität", "unavailable",
-                  "ha-", "smart home"),
-    "Kapitel 5": ("doppelablage", "dienst", "launchctl", "veraltet",
-                  "frische", "neustart", "kickstart", "ablage"),
+                  "impuls", "sequenz", "bruecke", "brücke", "raum",
+                  "kachel", "relais", "auto_off"),
+    "Kapitel 4": ("home assistant", "homeassistant", "entitaet", "entität",
+                  "unavailable", "ha-", "smart home", "dashboard"),
+    "Kapitel 5": ("doppelablage", "dienst", "launchctl", "launchagent",
+                  "veraltet", "frische", "neustart", "kickstart", "ablage",
+                  "diagnose", "jobserver", "job-server", "zentrale",
+                  "sprachassistent", "prozess", "pid ", "gestartet",
+                  "running", "spiegel", "mtime", "aenderungszeit"),
     "Kapitel 6": ("datenschutz", "geheim", "muster", "veroeffentlich",
-                  "privat", "token"),
+                  "veröffentlich", "privat", "token", "github"),
     "Kapitel 7": ("zeitgrenze", "warteschlange", "timeout", "geisterbefehl",
-                  "zeitlimit", "abgelaufen"),
-    "Kapitel 8": ("zeitplan", "regel", "wochentag", "uhrzeit", "faellig"),
+                  "zeitlimit", "abgelaufen", "wartezeit"),
+    "Kapitel 8": ("zeitplan", "regel", "wochentag", "uhrzeit", "faellig",
+                  "fällig", "montag", "dienstag", "mittwoch"),
 }
 
 
@@ -4007,6 +4020,14 @@ def _selbsttest() -> int:
                    "Handbuch: am Sprachweg nur der Kern (Zeit zaehlt)")
             pruefe(handbuch_kapitel_waehlen("launchctl kickstart") == ["Kapitel 5"],
                    "Handbuch: Dienst-Stichwort waehlt Kapitel 5")
+            # Die echte Diagnose-Ausgabe, an der die erste Wortliste
+            # vorbeigriff: Sie sagt "Diagnose" und "jobserver", nicht
+            # "Dienst". Eine Wortliste muss die Sprache der FRAGEN
+            # sprechen, nicht die der Kapitel.
+            pruefe("Kapitel 5" in handbuch_kapitel_waehlen(
+                "Hier ist die Ausgabe einer Diagnose: "
+                "com.ki-server.jobserver state = running pid = 4711"),
+                "Handbuch: echte Diagnose-Ausgabe findet Kapitel 5")
             pruefe(handbuch_kapitel_waehlen("") == [],
                    "Handbuch: leere Frage waehlt kein Kapitel")
             HANDBUCH = Path(_tmp_h) / "gibtsnicht.md"
