@@ -2083,6 +2083,95 @@ def abitur_stand(wurzel: Path = None) -> dict:
     return staende
 
 
+# --- Tims Handbuch (28.08.2026) ---------------------------------------
+# Das Lernprotokoll hat 140 Eintraege und 47 000 Token - es passt weder
+# ins Fenster, noch waere es lesbar. Tim konnte es zwar per
+# werkstatt_gelernt holen, tat es aber praktisch nie: Wissen, nach dem
+# man erst greifen muss, wird nicht benutzt.
+#
+# Deshalb die Kurzfassung als HANDBUCH.md: ein KERN, der immer mitkommt
+# (die Grundsaetze), und Kapitel, die nur dann angehaengt werden, wenn
+# die Frage sie braucht. Die Auswahl laeuft ueber Stichwoerter statt
+# ueber ein zweites Modell - das ist sofort, deterministisch und mit
+# einer Gegenprobe pruefbar. Ein Waehler-Modell waere ein zusaetzlicher
+# Rundlauf pro Frage und muesste selbst erst durchs Abitur.
+HANDBUCH = HOME / "Desktop" / "Tim-Werkstatt" / "gelernt" / "HANDBUCH.md"
+HANDBUCH_MAX_ZEICHEN = 6000
+
+# Stichwort -> Kapitelueberschrift (Teilstring genuegt). Steht hier und
+# nicht im Handbuch, damit die Zuordnung testbar bleibt.
+HANDBUCH_STICHWORTE = {
+    "Kapitel 1": ("test", "selbsttest", "pruef", "luecke", "uebersprung",
+                  "grenzwert"),
+    "Kapitel 2": ("pfad", "sandkasten", "symlink", "riegel", "verzeichnis"),
+    "Kapitel 3": ("lampe", "licht", "shelly", "funk", "pico", "mesh",
+                  "impuls", "sequenz", "bruecke", "raum"),
+    "Kapitel 4": ("home assistant", "entitaet", "entität", "unavailable",
+                  "ha-", "smart home"),
+    "Kapitel 5": ("doppelablage", "dienst", "launchctl", "veraltet",
+                  "frische", "neustart", "kickstart", "ablage"),
+    "Kapitel 6": ("datenschutz", "geheim", "muster", "veroeffentlich",
+                  "privat", "token"),
+    "Kapitel 7": ("zeitgrenze", "warteschlange", "timeout", "geisterbefehl",
+                  "zeitlimit", "abgelaufen"),
+    "Kapitel 8": ("zeitplan", "regel", "wochentag", "uhrzeit", "faellig"),
+}
+
+
+def _handbuch_teile() -> dict:
+    """Das Handbuch in KERN und Kapitel zerlegt."""
+    try:
+        text = HANDBUCH.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    teile = {}
+    name = None
+    for zeile in text.splitlines():
+        if zeile.startswith("## "):
+            name = zeile[3:].strip()
+            teile[name] = []
+        elif name:
+            teile[name].append(zeile)
+    return {k: "\n".join(v).strip() for k, v in teile.items()}
+
+
+def handbuch_kapitel_waehlen(frage: str) -> list:
+    """Welche Kapitel passen zu dieser Frage? (Reine Funktion.)"""
+    text = (frage or "").lower()
+    return [k for k, woerter in HANDBUCH_STICHWORTE.items()
+            if any(w in text for w in woerter)]
+
+
+def handbuch_fuer_chat(frage: str = "", knapp: bool = False) -> str:
+    """Der Text, der an den Systemprompt gehaengt wird.
+
+    knapp: am Sprachweg nur der Kern - dort zaehlt jede Sekunde.
+    """
+    teile = _handbuch_teile()
+    if not teile:
+        return ""
+    kern = next((v for k, v in teile.items() if k.startswith("KERN")), "")
+    stuecke = ["AUS DEINEM HANDBUCH (selbst gelernt, gilt immer):\n" + kern] \
+        if kern else []
+    if not knapp:
+        for name in handbuch_kapitel_waehlen(frage):
+            passend = next((v for k, v in teile.items()
+                            if k.startswith(name)), "")
+            if passend:
+                stuecke.append("Passend zu dieser Frage - %s:\n%s"
+                               % (name, passend))
+    ganz = "\n\n".join(stuecke)
+    return ("\n\n" + ganz[:HANDBUCH_MAX_ZEICHEN]) if ganz else ""
+
+
+def letzte_frage(verlauf: list) -> str:
+    """Die juengste Nutzerfrage - danach richtet sich die Kapitelwahl."""
+    for n in reversed(verlauf or []):
+        if isinstance(n, dict) and n.get("role") == "user":
+            return str(n.get("content", ""))
+    return ""
+
+
 # --- Terminal-Fuehrerschein: die zweite Stufe der Treppe (28.08.2026) --
 # Das Abitur misst ehrliches Arbeiten, der Fuehrerschein misst
 # ZURUECKHALTUNG an der Kommandozeile. Erst beide zusammen machen die
@@ -3147,7 +3236,8 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
         verlauf, verdichtungsbericht = verlauf_verdichten(
             verlauf, chat, hauptmodell=modell)
     rolle = (SYSTEM_PROMPT + (SPRECH_ZUSATZ if stil == "sprache" else "")
-             + "\n\n" + auge_fuer_chat())
+             + "\n\n" + auge_fuer_chat()
+             + handbuch_fuer_chat(letzte_frage(verlauf), knapp=stil == "sprache"))
     mit_rolle = [{"role": "system", "content": rolle}] + verlauf
 
     benutzte = []
@@ -3890,6 +3980,45 @@ def _selbsttest() -> int:
                str(_lw.PRUEFUNGSSCHALTER))
     else:
         pruefe(False, "livewerkstatt.py ladbar")
+
+    # --- Tims Handbuch: Kern immer, Kapitel nach Bedarf ---
+    # Fixtures statt der echten Datei: Der Selbsttest fasst keine
+    # Betriebsdaten an, auch nicht lesend.
+    global HANDBUCH
+    _echt_hb = HANDBUCH
+    with _tf_s.TemporaryDirectory() as _tmp_h:
+        try:
+            HANDBUCH = Path(_tmp_h) / "HANDBUCH.md"
+            HANDBUCH.write_text(
+                "# Probe\n\n"
+                "## KERN - gilt immer\n\nIMMERSATZ\n\n"
+                "## Kapitel 3 - Lampen (lampe, shelly)\n\nLAMPENSATZ\n\n"
+                "## Kapitel 5 - Dienste (dienst, launchctl)\n\nDIENSTSATZ\n",
+                encoding="utf-8")
+            _t = handbuch_fuer_chat("Warum ist die Shelly-Kachel aus?")
+            pruefe("IMMERSATZ" in _t and "LAMPENSATZ" in _t
+                   and "DIENSTSATZ" not in _t,
+                   "Handbuch: Kern plus PASSENDES Kapitel", _t[:80])
+            _t = handbuch_fuer_chat("Wie geht es dir?")
+            pruefe("IMMERSATZ" in _t and "LAMPENSATZ" not in _t,
+                   "Handbuch: ohne Stichwort nur der Kern")
+            _t = handbuch_fuer_chat("Der Dienst laeuft veraltet", knapp=True)
+            pruefe("IMMERSATZ" in _t and "DIENSTSATZ" not in _t,
+                   "Handbuch: am Sprachweg nur der Kern (Zeit zaehlt)")
+            pruefe(handbuch_kapitel_waehlen("launchctl kickstart") == ["Kapitel 5"],
+                   "Handbuch: Dienst-Stichwort waehlt Kapitel 5")
+            pruefe(handbuch_kapitel_waehlen("") == [],
+                   "Handbuch: leere Frage waehlt kein Kapitel")
+            HANDBUCH = Path(_tmp_h) / "gibtsnicht.md"
+            pruefe(handbuch_fuer_chat("lampe") == "",
+                   "Handbuch: fehlende Datei bremst den Chat nicht")
+        finally:
+            HANDBUCH = _echt_hb
+    pruefe(letzte_frage([{"role": "user", "content": "alt"},
+                         {"role": "assistant", "content": "x"},
+                         {"role": "user", "content": "neu"}]) == "neu",
+           "Handbuch: die JUENGSTE Frage entscheidet ueber die Kapitel")
+    pruefe(letzte_frage([]) == "", "Handbuch: leerer Verlauf ergibt leere Frage")
 
     # --- Abitur-Ampel: liest die Zeitstempel-Ordner richtig ---
     # Nur Fixtures in tmp - die echten Ergebnisordner werden nie gelesen.
