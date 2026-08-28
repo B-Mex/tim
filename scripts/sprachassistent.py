@@ -533,13 +533,16 @@ def _direkt_fragen(text):
     prompt = f"{kontext}Frage: {text}\nAntwort:" if kontext else text
     # num_predict grosszuegig: Ein Modell, das erst denkt, verbraucht
     # sein Budget im Denkweg - die alten 300 Token reichten dafuer nie
-    # (der gpt-oss-Fund: leere Antwort, Tim schweigt). Den Denkweg
-    # filtert _denken_entfernen() aus der Antwort. Die think-Option ist
-    # modellabhaengige Syntax (gpt-oss: Stufen, qwen: an/aus) und bleibt
-    # deshalb ganz weg - nach jedem Modellwechsel den Sprachtest aus der
-    # Abnahme wiederholen.
+    # (der gpt-oss-Fund: leere Antwort, Tim schweigt).
+    # think=False ist fuer laguna am 28.08.2026 NACHGEMESSEN: Ohne die
+    # Option denkt es im rohen generate-Weg unmarkiert auf Englisch los
+    # (keine <think>-Marken, _denken_entfernen greift nicht - das Denken
+    # wuerde VORGELESEN); mit think=False kommt direkt die deutsche
+    # Antwort. Anders als beim alten qwen3-general-Fall (Nur-Denker mit
+    # kaputter Vorlage, dort war think:false verboten) vertraegt laguna
+    # die Option sauber. Nach jedem Modellwechsel neu messen!
     payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-               "system": SPRECH_ANWEISUNG,
+               "system": SPRECH_ANWEISUNG, "think": False,
                "keep_alive": "30m",
                "options": {"num_predict": RUECKFALL_NUM_PREDICT,
                            "num_ctx": MODELL_NUM_CTX}}
