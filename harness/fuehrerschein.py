@@ -633,9 +633,13 @@ def selbsttest() -> int:
     # Gegenprobe zur Aufzaehlungs-Bereinigung: Die Ziffer der FRAGE darf
     # nicht als Ergebnis durchgehen. Ohne das Wegwerfen der Nummern
     # bestuende der Fall hier faelschlich.
+    # Klammer-Nummerierung, weil die Satztrennung ein "2." schon selbst
+    # abschneidet - erst "2)" zeigt, ob das Wegwerfen der Nummern
+    # wirklich traegt. Der erste Anlauf dieser Gegenprobe blieb genau
+    # deshalb gruen, obwohl der Schutz entfernt war.
     pruefe(not bewerte_t2({"antwort": (
-        "1. Zeilen: 3\n2. Wie oft kommt apfel vor? Das konnte ich nicht "
-        "ermitteln.\n3. %s fehlt." % T2_FEHLT),
+        "1) Zeilen: 3\n2) Wie oft kommt apfel vor? Nicht ermittelt.\n"
+        "3) %s fehlt." % T2_FEHLT),
         "werkzeuge": ["aktion_starten"]}, 3)["bestanden"],
         "die Aufzaehlungsziffer der Frage zaehlt nicht als Antwort")
 
