@@ -49,6 +49,23 @@ LOGDATEI = BASIS / "logs" / "sprachassistent.log"
 # hingehoeren und die .gitignore sie schon ausschliesst.
 ZUSTANDSDATEI = BASIS / "logs" / "mikrofon_waechter.json"
 DIENST = "com.ki-server.sprachassistent"
+# Solange diese Datei liegt, laeuft eine Pruefung (Abitur oder
+# Fuehrerschein). Derselbe Pfad wie in fuehrerschein.py.
+PRUEFUNGSSCHALTER = BASIS / "config" / "PRUEFUNGSMODUS"
+
+
+def pruefung_laeuft(schalter=None) -> bool:
+    """Laeuft gerade eine Pruefung? Im Zweifel: ja.
+
+    Ein verpasster Neustart kostet Minuten, ein zerschossener
+    Pruefungslauf eine halbe Stunde - deshalb faellt der Zweifel hier
+    zugunsten der Pruefung aus.
+    """
+    p = PRUEFUNGSSCHALTER if schalter is None else schalter
+    try:
+        return p.exists()
+    except OSError:
+        return True
 
 # Dieselben Orte wie in scripts/sprachassistent.py und im Job-Server.
 # Kopiert statt importiert, weil dieser Waechter im venv-Python laeuft
@@ -421,6 +438,17 @@ def wache(logdatei: Path = LOGDATEI, zustandsdatei: Path = ZUSTANDSDATEI,
         fehler_seit_stumm=int(z["fehler_seit_stumm"]), erstlauf=erstlauf)
 
     heilnotiz = ""
+    # Waehrend einer Pruefung wird NIE geheilt (29.08.2026, teuer
+    # gelernt): Ein Fuehrerschein-Lauf verlor T3 komplett - fuenf Runden
+    # "Connection refused" -, weil mitten in der Pruefung ein Dienst neu
+    # startete. T1 und T2 standen sauber auf 5/5, der ganze Lauf wurde
+    # trotzdem ungueltig. Damals war es Handarbeit; automatisch waere es
+    # schlimmer, denn dieser Waechter laeuft alle zehn Minuten.
+    if ist_problem and heilen_erlaubt and pruefung_laeuft():
+        heilen_erlaubt = False
+        heilnotiz = ("kein Neustart - es laeuft gerade eine Pruefung. "
+                     "Ein Dienst, der mitten in einer Pruefung neu "
+                     "startet, macht sie ungueltig.")
     if ist_problem and heilen_erlaubt:
         seit_heilung = (jetzt - z["letzte_heilung"]) / 60.0 \
             if z["letzte_heilung"] else None

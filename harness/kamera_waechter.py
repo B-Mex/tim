@@ -189,9 +189,40 @@ def zustand_schreiben(daten: dict, pfad: Path = None) -> None:
         pass
 
 
+# Solange diese Datei liegt, laeuft eine Pruefung (Abitur oder
+# Fuehrerschein). Derselbe Pfad wie in fuehrerschein.py.
+PRUEFUNGSSCHALTER = BASIS / "config" / "PRUEFUNGSMODUS"
+
+
+def pruefung_laeuft(schalter: Path = None) -> bool:
+    """Laeuft gerade eine Pruefung?
+
+    Warum das hier steht (29.08.2026, teuer gelernt): Waehrend eines
+    Fuehrerschein-Laufs wurde die Zentrale neu gestartet. Ergebnis:
+    T3 fiel in allen fuenf Runden mit "Connection refused" aus - fuenf
+    Umgebungsfehler, der ganze Lauf ungueltig, und das nach zwei
+    sauberen Teilen (T1 5/5, T2 5/5). Ein halbstuendiger Pruefungslauf
+    war weg, weil ein Dienst zur Unzeit neu startete.
+
+    Damals war es Handarbeit. Automatisch waere es schlimmer: Dieser
+    Waechter laeuft alle zehn Minuten, und mit --heilen wuerde er
+    fruehr oder spaeter genau in eine Pruefung hineinstarten.
+    """
+    p = PRUEFUNGSSCHALTER if schalter is None else schalter
+    try:
+        return p.exists()
+    except OSError:
+        # Im Zweifel NICHT heilen: Ein verpasster Neustart kostet
+        # Minuten, ein zerschossener Pruefungslauf eine halbe Stunde.
+        return True
+
+
 def darf_heilen(zustand: dict, jetzt: float = None,
-                sperre: float = HEILUNG_SPERRE_S) -> bool:
-    """Ist die Sperrzeit seit dem letzten Heilversuch abgelaufen?"""
+                sperre: float = HEILUNG_SPERRE_S,
+                pruefung: bool = None) -> bool:
+    """Ist die Sperrzeit abgelaufen - und laeuft gerade keine Pruefung?"""
+    if pruefung_laeuft() if pruefung is None else pruefung:
+        return False
     jetzt = time.time() if jetzt is None else jetzt
     letzte = zustand.get("letzte_heilung")
     if letzte is None:
@@ -341,6 +372,20 @@ def selbsttest() -> int:
            "nach Ablauf der Sperrzeit wieder")
     pruefe(darf_heilen({"letzte_heilung": "kaputt"}, jetzt),
            "ein kaputter Zeitstempel blockiert die Heilung nicht")
+    # Der teuerste Fall vom 29.08.2026: Waehrend einer Pruefung wurde
+    # ein Dienst neu gestartet - T3 fiel in allen fuenf Runden mit
+    # "Connection refused" aus und machte einen halbstuendigen Lauf
+    # ungueltig, obwohl T1 und T2 sauber 5/5 standen.
+    pruefe(not darf_heilen({}, jetzt, pruefung=True),
+           "waehrend einer Pruefung wird NIE geheilt")
+    pruefe(darf_heilen({}, jetzt, pruefung=False),
+           "ohne Pruefung darf geheilt werden (sonst prueft das nichts)")
+    import tempfile as _tf_k
+    with _tf_k.TemporaryDirectory() as _o:
+        _s = Path(_o) / "PRUEFUNGSMODUS"
+        pruefe(not pruefung_laeuft(_s), "ohne Schalterdatei laeuft keine Pruefung")
+        _s.write_text("probe")
+        pruefe(pruefung_laeuft(_s), "mit Schalterdatei laeuft eine Pruefung")
 
     # --- Der Bericht traegt den Problem-Marker, auf den die Routine
     #     schaut (PROBLEM_MARKER in routine.py) - sonst bliebe ein
