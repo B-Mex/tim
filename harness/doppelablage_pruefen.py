@@ -142,6 +142,37 @@ def _start_aus_lstart(text: str) -> float | None:
         return None
 
 
+def _datei_aus_kommandozeile(text: str, erwartet: Path) -> Path | None:
+    """Welche .py-Datei faehrt dieser Prozess wirklich?
+
+    Warum noetig (29.08.2026, gemeldet von der Auge-Sitzung): DIENSTE
+    verdrahtete fuer JEDEN Dienst die Datei unter /opt/ki-server. Der
+    Kameradienst laeuft aber aus der Betriebskopie auf dem Schreibtisch
+    (siehe seine plist). Die Pruefung verglich also die Startzeit des
+    Dienstes mit einer Datei, die der Prozess ueberhaupt nicht geladen
+    hat - und meldete VERALTET, sobald ein 'git merge' die mtime der
+    /opt-Kopie anfasste. Vier solche Fehlalarme an einem Morgen.
+
+    Ein Waechter, der bei harmlosen Zustaenden schreit, wird
+    abgeschaltet und meldet dann auch den echten Fall nicht mehr
+    (Schreihals-Regel, Tims Handbuch Kapitel 4). Also fragen wir den
+    Prozess selbst, statt den Pfad zu raten.
+
+    Zurueck kommt nur eine Datei, deren NAME zum erwarteten passt -
+    sonst koennte ein fremder Prozess unter derselben Kennung die
+    Pruefung auf eine beliebige Datei umlenken. Findet sich nichts
+    Passendes, wird der erwartete Pfad genommen: lieber am alten
+    Verhalten bleiben als gar nicht pruefen.
+    """
+    for stueck in text.split():
+        if not stueck.endswith(".py"):
+            continue
+        kandidat = Path(stueck)
+        if kandidat.name == erwartet.name and kandidat.is_file():
+            return kandidat
+    return None
+
+
 def dienst_frische() -> tuple[list, list]:
     """(probleme, zeilen) - laeuft jeder Dienst mit der aktuellen Datei?
 
@@ -170,6 +201,16 @@ def dienst_frische() -> tuple[list, list]:
         if start is None:
             zeilen.append("  HINWEIS Startzeit von %s nicht lesbar." % label)
             continue
+        # Die Datei nehmen, die der Prozess WIRKLICH faehrt - nicht die,
+        # die hier eingetragen ist. Siehe _datei_aus_kommandozeile.
+        kdo = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                             capture_output=True, text=True, timeout=15)
+        echte = _datei_aus_kommandozeile(kdo.stdout, datei)
+        if echte is not None and echte != datei:
+            zeilen.append("  HINWEIS %s faehrt %s (nicht die Kopie im "
+                          "Betrieb) - gemessen wird die gefahrene Datei."
+                          % (label, echte))
+            datei = echte
         if datei.is_file() and datei.stat().st_mtime > start:
             probleme.append(
                 "%s laeuft seit %s, aber %s wurde danach geaendert - der "
@@ -348,6 +389,27 @@ def _selbsttest() -> int:
     for label, datei in DIENSTE.items():
         pruefe(str(datei).startswith(str(BETRIEB)),
                "Dienst %s zeigt in den Betrieb" % label, str(datei))
+
+    # ... aber die Liste ist nur die ERWARTUNG. Was ein Dienst wirklich
+    # faehrt, sagt seine Kommandozeile - der Kameradienst laeuft aus der
+    # Betriebskopie auf dem Schreibtisch. Ohne diese Nachfrage verglich
+    # der Waechter am 29.08.2026 die Startzeit mit einer Datei, die der
+    # Prozess nie geladen hatte, und meldete VERALTET, sobald ein
+    # 'git merge' die mtime der /opt-Kopie anfasste.
+    _erwartet = BETRIEB / "kamera" / "kamera_dienst.py"
+    _echte = QUELLE / "hardware" / "kamera" / "kamera_dienst.py"
+    if _echte.is_file():
+        pruefe(_datei_aus_kommandozeile("/usr/bin/python3 %s" % _echte,
+                                        _erwartet) == _echte,
+               "die tatsaechlich gefahrene Datei wird erkannt")
+    # Gegenprobe: ein fremder Dateiname darf die Pruefung NICHT
+    # umlenken - sonst zeigte ein beliebiger Prozess unter derselben
+    # Kennung den Waechter auf eine Datei seiner Wahl.
+    pruefe(_datei_aus_kommandozeile("/usr/bin/python3 /tmp/fremd.py",
+                                    _erwartet) is None,
+           "ein fremder Dateiname lenkt die Pruefung nicht um")
+    pruefe(_datei_aus_kommandozeile("/bin/bash start.sh", _erwartet) is None,
+           "ohne .py-Datei in der Kommandozeile bleibt es beim Eintrag")
 
     if fehler:
         print("\n%d Fehler." % fehler)
