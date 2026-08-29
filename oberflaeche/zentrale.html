@@ -364,12 +364,24 @@ async function zeigeUebersicht(ziel) {
             title="Modus safe und alle erlaube-Schalter auf nein">
             ⟲ Alles zurück auf sicher</button>
         </div>
-        <p class="hinweis" style="margin:10px 0 0">Die erlaube-Schalter greifen
-          erst im Modus <code>autonom</code> — <code>assist</code> fragt bei
-          jedem Bereich nach und führt nichts selbst aus (am 28.08.2026
+        <p class="hinweis" style="margin:10px 0 0"><code>ERLAUBE_SHELL</code>
+          greift erst im Modus <code>autonom</code> — <code>assist</code> fragt
+          bei jedem Bereich nach und führt nichts selbst aus (am 28.08.2026
           nachgemessen; hier stand vorher fälschlich „assist oder autonom").
           Bei gesetztem Kill-Switch geht Hochstufen gar nicht. Zurück auf
           sicher geht immer.</p>
+        <p class="hinweis" style="margin:8px 0 0">Er schaltet <b>zwei</b>
+          Türen: deine Shell-Ansicht und — bei bestandener Treppe — Tims
+          Werkzeug <code>shell_befehl</code> im Chat. Wer die Prüfungen nicht
+          bestanden hat, bekommt es auch bei stehendem Schalter nicht
+          angeboten, und während einer Prüfung niemand.</p>
+        <p class="hinweis" style="margin:8px 0 0">Hier standen bis zum
+          29.08.2026 fünf weitere Schalter (Software, HA-Konfig, Treiber,
+          Reauth, Netzwerk). Sie sind <b>ausgebaut</b>, weil sie nichts
+          bewacht haben: Im ganzen Projekt fragt genau eine Stelle nach
+          ihnen, und die liefert ohnehin nur Text. Ein Riegel ohne Tür macht
+          die Anlage unehrlicher, nicht sicherer — alles, was sie
+          versprachen, läuft heute über die Shell.</p>
       </div>
       <div class="karte" style="grid-column:1/-1">
         <h3>Modelle (${MODELLE.length})</h3>
@@ -400,10 +412,17 @@ async function zeigeUebersicht(ziel) {
    ihr Schalter ist deshalb ehrlich gesperrt statt eine Attrappe.
    Geschaltet wird über den Job-Server (autonomie_setzen), der an
    autonomie.py weiterreicht — die Zentrale schreibt selbst nichts. */
+/* Seit 29.08.2026 nur noch EIN Schalter. Die anderen fünf
+   (SOFTWARE_INSTALL, HA_KONFIG, HARDWARE_TREIBER, REAUTH, NETZWERK)
+   bewachten nichts: pruefe_aktion() wird im ganzen Projekt an zwei
+   Stellen gefragt, und die zweite liefert ohnehin nur Text. Eine Karte
+   mit sechs Schaltern verspricht sechs Riegel — wer einen davon auf
+   „nein" stellt, glaubt etwas verhindert zu haben und fragt nicht
+   weiter. Ein Riegel ohne Tür macht die Anlage unehrlicher, nicht
+   sicherer. Kommt später ein echter HA-Konfig-Weg, kommt sein Riegel
+   MIT dem Weg zusammen. */
 const AUTONOMIE_SCHALTBAR = {
-  ERLAUBE_SHELL: "nein", ERLAUBE_SOFTWARE_INSTALL: "nein",
-  ERLAUBE_HA_KONFIG: "nein", ERLAUBE_HARDWARE_TREIBER: "nein",
-  ERLAUBE_REAUTH: "nein", ERLAUBE_NETZWERK: "nein",
+  ERLAUBE_SHELL: "nein",
 };
 const AUTONOMIE_FEST = ["NIEMALS_KAEUFE", "NIEMALS_NETZSPANNUNG",
                         "NIEMALS_LOESCHEN_OHNE_BACKUP"];

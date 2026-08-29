@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from canary_check import check_response, MAX_VERSUCHE
 from harness_telemetry import log_run
 from model_router import get_model_for_job
-from autonomie import killswitch_aktiv, pruefe_aktion
+from autonomie import killswitch_aktiv
 from job_schema import (pruefe_job, pruefe_bericht_pfad, MAX_JOB_DATEI_BYTES,
                         ERLAUBTE_WERKZEUGE)
 
@@ -583,20 +583,22 @@ def job_ausfuehren(name: str) -> bool:
 
     job = job_laden(name)
 
-    # Braucht dieser Job eine Freigabe (z.B. Software installieren)?
-    # Hinweis zur Einordnung: Die Agenten haben ohnehin nur zwei Werkzeuge
-    # (Websuche + Lesen freigegebener Dateien) - sie koennen nichts kaufen,
-    # installieren oder aendern. 'benoetigt_freigabe' sagt deshalb nur, in
-    # welchem Bereich das ERGEBNIS liegt, damit im Bericht klar steht, was
-    # du danach selbst entscheiden musst.
+    # In welchem Bereich liegt das ERGEBNIS? Die Agenten haben ohnehin
+    # nur zwei Werkzeuge (Websuche + Lesen freigegebener Dateien) - sie
+    # koennen nichts kaufen, installieren oder aendern. 'benoetigt_
+    # freigabe' sagt deshalb nur, was du danach selbst entscheiden musst.
+    #
+    # Bis zum 29.08.2026 wurde hier pruefe_aktion() gefragt und das
+    # Ergebnis in zwei verschiedene Saetze gegossen - beide liefen aber
+    # auf dasselbe hinaus, weil der Ablauf so oder so nur Text liefert.
+    # Genau das stand schon im Kommentar. Eine Abfrage, deren Ausgang
+    # nichts aendert, sieht wie ein Riegel aus und ist keiner; die
+    # dazugehoerigen Schalter sind deshalb aus BEREICH_SCHALTER
+    # ausgebaut worden. Geblieben ist der ehrliche Hinweis.
     for bereich in job.get("benoetigt_freigabe", []):
-        erlaubt, grund = pruefe_aktion(bereich)
-        if not erlaubt:
-            print(f"Hinweis: Ergebnisse im Bereich '{bereich}' sind NICHT freigegeben ({grund}).")
-            print(f"  -> Der Ablauf recherchiert und schlaegt vor. Umsetzen entscheidest du.")
-        else:
-            print(f"Hinweis: Bereich '{bereich}' ist freigegeben ({grund}) -")
-            print("  trotzdem fuehrt dieser Ablauf nichts aus, er liefert nur Text.")
+        print(f"Hinweis: Die Ergebnisse liegen im Bereich '{bereich}'. "
+              "Dieser Ablauf recherchiert und schlaegt vor -")
+        print("  ausgefuehrt wird nichts. Umsetzen entscheidest du.")
 
     print(f"\n=== Job: {job['name']} ===")
     print(job["beschreibung"])

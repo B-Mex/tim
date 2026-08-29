@@ -48,17 +48,40 @@ HARTE_GRENZEN = {
 }
 
 # Bereich -> Schalter in autonomie.conf
+#
+# Nur noch EIN Eintrag, seit dem 29.08.2026. Vorher standen hier sechs -
+# aber fuenf davon bewachten nichts: pruefe_aktion() wird im ganzen
+# Projekt an genau zwei Stellen aufgerufen (m1_zentrale.shell_erlaubt
+# und crew_generic.job_ausfuehren), und die zweite schreibt im eigenen
+# Code, dass der Ablauf ohnehin nur Text liefert und nichts ausfuehrt.
+# "software_install", "ha_konfig", "hardware_treiber", "reauth" und
+# "netzwerk" waren also Absichtserklaerungen, keine Riegel.
+#
+# Warum das schaedlich war und nicht bloss ueberfluessig: Eine
+# Oberflaeche, die sechs Schalter zeigt, verspricht sechs Riegel. Wer
+# "erlaube ha konfig" auf nein stellt, glaubt, damit etwas verhindert
+# zu haben - und stellt die Frage nicht mehr. Ein Riegel ohne Tuer
+# macht die Anlage unehrlicher, nicht sicherer.
+#
+# Alles, was die fuenf versprachen, laeuft heute ueber die Shell - und
+# fuer die gibt es ERLAUBE_SHELL. Kommt spaeter ein echter
+# HA-Konfig-Weg dazu, kommt sein Riegel MIT dem Weg zusammen, nicht auf
+# Vorrat.
 BEREICH_SCHALTER = {
-    # Freier Shell-Zugriff ueber die Oberflaeche. Bewusst ein eigener
-    # Bereich: er ist maechtiger als alle anderen zusammen, und wer ihn
-    # freischaltet, soll das ausdruecklich tun.
+    # Freier Shell-Zugriff - fuer Mexlas Shell-Ansicht und (seit dem
+    # 29.08.2026) fuer Tims Chat-Werkzeug shell_befehl. Maechtiger als
+    # alles andere zusammen, deshalb ein eigener, ausdruecklicher
+    # Schalter.
     "shell": "ERLAUBE_SHELL",
-    "software_install": "ERLAUBE_SOFTWARE_INSTALL",
-    "ha_konfig": "ERLAUBE_HA_KONFIG",
-    "hardware_treiber": "ERLAUBE_HARDWARE_TREIBER",
-    "reauth": "ERLAUBE_REAUTH",
-    "netzwerk": "ERLAUBE_NETZWERK",
 }
+
+# Schalter, die es frueher gab. Sie werden beim Zuruecksetzen auf den
+# Normalzustand weiterhin auf "nein" gestellt, damit eine alte conf
+# nicht mit stillen "ja"-Zeilen liegen bleibt - aber sie schalten
+# nichts mehr frei, weil kein Bereich mehr auf sie zeigt.
+ABGESCHAFFTE_SCHALTER = ("ERLAUBE_SOFTWARE_INSTALL", "ERLAUBE_HA_KONFIG",
+                         "ERLAUBE_HARDWARE_TREIBER", "ERLAUBE_REAUTH",
+                         "ERLAUBE_NETZWERK")
 
 # Schalter, die ueber Tim umgelegt werden duerfen (Job-Server-Aktion
 # "autonomie_setzen"). Bewusst NICHT dabei: die NIEMALS_*-Grenzen, die im
@@ -78,7 +101,9 @@ MODUS_STUFE = {"safe": 0, "assist": 1, "autonom": 2}
 # Der Normalzustand, auf den der Knopf "alles zurueck auf sicher" stellt:
 # genau der Auslieferungszustand dieser Anlage.
 NORMALZUSTAND = {"AUTONOMIE_MODUS": "safe",
-                 **{s: "nein" for s in SETZBARE_SCHALTER}}
+                 **{s: "nein" for s in SETZBARE_SCHALTER},
+                 # Die abgeschafften auch - siehe ABGESCHAFFTE_SCHALTER.
+                 **{s: "nein" for s in ABGESCHAFFTE_SCHALTER}}
 
 
 def modus_pruefen(modus: str) -> str:
@@ -444,15 +469,61 @@ if __name__ == "__main__":
 
     print(status_text())
     print()
-    # Selbsttest 1: im Auslieferungszustand (safe, alles nein) muss ALLES blockiert sein.
+    # Selbsttest 1: im Auslieferungszustand (safe, alles nein) muss ALLES
+    # blockiert sein.
+    #
+    # Gegen eine FIXTURE, nicht gegen die laufende conf - das war bis zum
+    # 29.08.2026 anders und ein echter Fehler: Sobald Mexla den Modus
+    # legitim auf "autonom" stellte (was er am 29.08. tat), meldete der
+    # Test FEHLER fuer jeden freigeschalteten Bereich. Nichts war kaputt,
+    # der Test mass nur den Betriebszustand statt der Logik. Der
+    # woechentliche Selbsttestlauf montags um 04:00 haette das ab da
+    # jede Woche als Fehler gemeldet - und ein Fehler, der immer kommt,
+    # wird ueberlesen.
+    #
+    # Es ist ausserdem die Hausregel, an der sich hier alles ausrichtet:
+    # Selbsttests fassen keine Betriebsdaten an, auch nicht lesend.
     fehler = 0
-    for bereich in list(BEREICH_SCHALTER) + list(HARTE_GRENZEN):
-        erlaubt, _ = pruefe_aktion(bereich)
-        if erlaubt:
-            print(f"FEHLER: '{bereich}' waere erlaubt, obwohl Auslieferungszustand safe sein sollte!")
+    import tempfile as _tf1
+    _probe1 = Path(_tf1.gettempdir()) / "m1_autonomie_auslieferung.conf"
+    _probe1.write_text(
+        "AUTONOMIE_MODUS=safe\n"
+        + "".join("%s=nein\n" % s for s in SETZBARE_SCHALTER)
+        + "".join("%s=ja\n" % s for s in HARTE_GRENZEN.values()),
+        encoding="utf-8")
+    _echt1 = list(CONF_KANDIDATEN)
+    CONF_KANDIDATEN[:] = [_probe1]
+    try:
+        for bereich in list(BEREICH_SCHALTER) + list(HARTE_GRENZEN):
+            erlaubt, _ = pruefe_aktion(bereich)
+            if erlaubt:
+                print(f"FEHLER: '{bereich}' waere im Auslieferungszustand "
+                      "erlaubt!")
+                fehler += 1
+        # Gegenprobe, damit der Test nicht aus dem falschen Grund
+        # besteht: Mit freigeschaltetem Schalter MUSS 'shell' durchgehen.
+        # Ohne diese Haelfte bestuende der Test auch dann, wenn
+        # pruefe_aktion() grundsaetzlich False lieferte.
+        _probe1.write_text("AUTONOMIE_MODUS=autonom\nERLAUBE_SHELL=ja\n"
+                           + "".join("%s=ja\n" % s
+                                     for s in HARTE_GRENZEN.values()),
+                           encoding="utf-8")
+        if not pruefe_aktion("shell")[0]:
+            print("FEHLER: 'shell' bleibt blockiert, obwohl autonom + "
+                  "ERLAUBE_SHELL=ja - dann prueft der Test nichts!")
             fehler += 1
+        # Und die harten Grenzen bleiben auch dann zu.
+        for bereich in HARTE_GRENZEN:
+            if pruefe_aktion(bereich)[0]:
+                print(f"FEHLER: harte Grenze '{bereich}' im Modus autonom "
+                      "offen!")
+                fehler += 1
+    finally:
+        CONF_KANDIDATEN[:] = _echt1
+        _probe1.unlink(missing_ok=True)
     if fehler == 0:
-        print("Selbsttest OK: im Auslieferungszustand ist jede autonome Aktion blockiert.")
+        print("Selbsttest OK: Auslieferungszustand blockiert alles, "
+              "Freischaltung wirkt, harte Grenzen bleiben zu.")
 
     # Selbsttest 2: fehlende/unlesbare Config faellt auf den sichersten Fall zurueck.
     echte_kandidaten = list(CONF_KANDIDATEN)
