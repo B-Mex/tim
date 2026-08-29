@@ -5,18 +5,29 @@
       "name": "diagnose_morgen",
       "beschreibung": "Taegliche Pruefrunde 07:30 - die Diagnose-Trias, alle nur lesend",
       "schritte": [
-        {"aktion": "ha_diagnose"},
-        {"aktion": "doppelablage_pruefen"},
-        {"aktion": "datenschutz_pruefen"}
+        {
+          "aktion": "ha_diagnose"
+        },
+        {
+          "aktion": "doppelablage_pruefen"
+        },
+        {
+          "aktion": "datenschutz_pruefen"
+        }
       ],
       "einordnen": true,
       "melden": "leise+laut"
     },
     {
-      "name": "mikrofon_wache",
-      "beschreibung": "Alle 10 Minuten - hoert der Sprachassistent wirklich, oder lebt er nur? Ohne Einordnung: Bei diesem Takt waere ein Modellaufruf je Lauf teuer und laut. Leise wenn gruen, Meldung aufs Handy nur bei Taubheit. Taktzeile: */10 * * * * /opt/ki-server/venv/bin/python /opt/ki-server/harness/routine.py mikrofon_wache >> /opt/ki-server/logs/routine.log 2>&1 # m1-routine",
+      "name": "sinneswache",
+      "beschreibung": "Alle 10 Minuten - hoeren und sehen die Sinne wirklich, oder leben sie nur? Beide Dienste teilen sich dieselbe Webcam und dieselbe Krankheit: Der Prozess laeuft, meldet keinen Fehler und arbeitet trotzdem nicht (Sprachassistent 26.-29.08.2026, Auge am 29.08. nach dem Umstecken). Ohne Einordnung: Bei diesem Takt waere ein Modellaufruf je Lauf teuer und laut. Leise wenn gruen, Meldung aufs Handy nur bei Problem. Taktzeile: */10 * * * * /opt/ki-server/venv/bin/python /opt/ki-server/harness/routine.py sinneswache >> /opt/ki-server/logs/routine.log 2>&1 # m1-routine",
       "schritte": [
-        {"aktion": "mikrofon_waechter"}
+        {
+          "aktion": "mikrofon_waechter"
+        },
+        {
+          "aktion": "kamera_waechter"
+        }
       ],
       "einordnen": false,
       "melden": "leise+laut"
@@ -25,7 +36,10 @@
       "name": "selbsttest_woche",
       "beschreibung": "Montags 06:45 - liest den Bericht des 04:00-Selbsttestlaufs und ordnet ein",
       "schritte": [
-        {"aktion": "bericht_lesen", "argument": "selbsttests.md"}
+        {
+          "aktion": "bericht_lesen",
+          "argument": "selbsttests.md"
+        }
       ],
       "einordnen": true,
       "melden": "leise+laut"
@@ -34,7 +48,9 @@
       "name": "handbuch_pflege",
       "beschreibung": "Sonntags 10:00 - was aus dem Lernprotokoll ins Handbuch gehoerte. Nur ein VORSCHLAG in berichte/handbuch_vorschlag.md; HANDBUCH.md bleibt unangetastet, eintragen tut es Mexla.",
       "schritte": [
-        {"aktion": "handbuch_vorschlag"}
+        {
+          "aktion": "handbuch_vorschlag"
+        }
       ],
       "einordnen": true,
       "melden": "leise+laut"
@@ -43,8 +59,12 @@
       "name": "sicherung_check",
       "beschreibung": "Sonntags 18:00 - bereit zum Sichern? Datenschutz + git-Stand. Der Push bleibt bei Mexla.",
       "schritte": [
-        {"aktion": "datenschutz_pruefen"},
-        {"eingebaut": "git_stand"}
+        {
+          "aktion": "datenschutz_pruefen"
+        },
+        {
+          "eingebaut": "git_stand"
+        }
       ],
       "einordnen": true,
       "melden": "leise+laut"

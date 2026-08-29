@@ -409,6 +409,17 @@ AKTIONEN = {
         lambda arg: [_py(), str(HARNESS_DIR / "mikrofon_waechter.py")],
         False,
     ),
+    # Fuenfter Blick, 29.08.2026: dieselbe Frage fuers Auge - und
+    # derselbe Nachmittag. Mexla steckte die Webcam kurz ab; der Dienst
+    # lief weiter, meldete KEINEN Fehler, und das Bild fror ein
+    # (bildalter_s wuchs von 43 auf 61 s und weiter). Auch hier NUR
+    # LESEND: Der Schalter --heilen steht mit Absicht nicht hier.
+    "kamera_waechter": (
+        "Sieht Tims Auge wirklich? Alter des letzten Bildes pruefen "
+        "(nur lesend)",
+        lambda arg: [_py(), str(HARNESS_DIR / "kamera_waechter.py")],
+        False,
+    ),
     # Tims Werkstatt (24.08.2026) - der einzige Weg, auf dem Tim
     # SCHREIBEN darf. Die Grenze steckt nicht in dieser Liste, sondern
     # in werkstatt.py selbst (pfad_erlaubt): geschrieben wird nur
@@ -896,7 +907,7 @@ def _selbsttest() -> int:
                          "modell_abitur_neue", "pruefung_vorschlagen",
                          "ha_diagnose", "doppelablage_pruefen",
                          "datenschutz_pruefen", "handbuch_vorschlag",
-                         "mikrofon_waechter",
+                         "mikrofon_waechter", "kamera_waechter",
                          "werkstatt_aufgabe", "werkstatt_liste",
                          "werkstatt_lesen", "werkstatt_testen",
                          "werkstatt_gelernt", "werkstatt_befehle",
@@ -1159,7 +1170,7 @@ def _selbsttest() -> int:
         # auftauchen.
         for _name in ("ha_diagnose", "doppelablage_pruefen",
                       "datenschutz_pruefen", "handbuch_vorschlag",
-                      "mikrofon_waechter"):
+                      "mikrofon_waechter", "kamera_waechter"):
             _befehl = [str(t) for t in AKTIONEN[_name][1](None)]
             pruefe(_befehl[-1].endswith(_name + ".py") and len(_befehl) == 2,
                    f"'{_name}' ruft genau das eigene Pruefskript",
