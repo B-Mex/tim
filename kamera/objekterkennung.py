@@ -123,6 +123,36 @@ DEUTSCH = {
 _modell = None
 _modell_fehler = ""
 _modell_name = ""
+_geraet = ""
+
+
+def geraet_waehlen(mps_da=None):
+    """Wo gerechnet wird: Apple-GPU wenn vorhanden, sonst CPU.
+
+    Ultralytics nimmt von sich aus nie die Apple-GPU - ohne
+    ausdrueckliches device= landet jeder Blick auf der CPU. Am
+    27.08.2026 an zwei echten Szenen aus dem Buero nachgemessen:
+    CPU 0.196 s je Blick, MPS 0.038 s - die Funde sind bis auf die
+    dritte Nachkommastelle identisch. Darum wird die GPU angefordert,
+    sobald torch sie kennt. torch wird erst hier importiert, damit
+    der Import dieser Datei leicht bleibt (siehe modell_laden).
+    """
+    if mps_da is None:
+        import torch
+        mps_da = torch.backends.mps.is_available()
+    return "mps" if mps_da else "cpu"
+
+
+def geraet():
+    """Die einmal getroffene Geraetewahl merken.
+
+    torch wird nur beim allerersten Blick gefragt; danach steht die
+    Antwort fest, denn die GPU kommt zur Laufzeit weder dazu noch weg.
+    """
+    global _geraet
+    if not _geraet:
+        _geraet = geraet_waehlen()
+    return _geraet
 
 
 def begriffe_lesen():
@@ -177,6 +207,7 @@ def modell_auskunft():
     modell_laden()
     return {
         "modell": _modell_name or "-",
+        "geraet": _geraet or "-",
         "fehler": _modell_fehler,
         "begriffe": len(begriffe_lesen()),
         "schwelle_melden": SCHWELLE_MELDEN,
@@ -198,7 +229,8 @@ def erkenne(bild, mindestens=SCHWELLE_AUSBLENDEN, genau=False):
     hoehe, breite = bild.shape[:2]
     funde = []
     for ergebnis in modell.predict(bild, verbose=False, conf=mindestens,
-                                   imgsz=BILDGROESSE * (2 if genau else 1)):
+                                   imgsz=BILDGROESSE * (2 if genau else 1),
+                                   device=geraet()):
         for kasten in ergebnis.boxes:
             name = ergebnis.names[int(kasten.cls[0])]
             x1, y1, x2, y2 = (float(v) for v in kasten.xyxy[0])
@@ -532,6 +564,18 @@ def selbsttest():
     pruefe(deutsch("person") == "Mensch", "Namen werden uebersetzt")
     pruefe(deutsch("hutzelkram") == "hutzelkram",
            "Unbekanntes wird unveraendert durchgereicht")
+
+    # Die Geraetewahl: Ohne ausdrueckliches device= rechnet Ultralytics
+    # immer auf der CPU - am 27.08.2026 nachgemessen war die Apple-GPU
+    # fuenfmal schneller bei identischen Funden. Diese Wahl darf also
+    # nie stillschweigend zurueck auf die CPU fallen.
+    pruefe(geraet_waehlen(mps_da=True) == "mps",
+           "mit Apple-GPU wird auf der GPU gerechnet")
+    pruefe(geraet_waehlen(mps_da=False) == "cpu",
+           "ohne Apple-GPU bleibt es bei der CPU")
+    pruefe(geraet() in ("mps", "cpu"),
+           "die echte Wahl auf diesem Rechner ist eine von beiden",
+           str(geraet()))
 
     # Das Modell selbst wird hier nicht geprueft - ohne es muss die Logik
     # trotzdem laufen, und erkenne() darf nicht stuerzen.

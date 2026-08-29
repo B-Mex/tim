@@ -65,8 +65,9 @@ MESSFELD_DATEI = Path(__file__).resolve().parent / "messfeld.json"
 # Bilder (siehe objekterkennung.Gedaechtnis), und dafuer muss jemand
 # regelmaessig hinschauen.
 #
-# Dauerhaft rechnen will man aber nicht: Jeder Blick kostet rund eine
-# Fuenftelsekunde Rechenzeit. Deshalb ist das Auge ein Schalter. Ist es
+# Dauerhaft rechnen will man aber nicht: Jeder Blick kostet Rechenzeit,
+# seit der GPU-Umstellung am 27.08.2026 rund 0.04 s (davor auf der CPU
+# rund eine Fuenftelsekunde). Deshalb ist das Auge ein Schalter. Ist es
 # aus, laeuft nur die Kamera weiter (fuers Livebild und die Farbmessung),
 # und es wird kein einziges Bild durch das Modell geschickt.
 # ----------------------------------------------------------------------
