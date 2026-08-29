@@ -1209,6 +1209,30 @@ async function zeigeChat(ziel) {
   zeichneVerlauf();
 }
 
+/* Die Ankerphrasen-Zeile — drei Zustände, nicht zwei.
+   Gemessen am 29.08.2026 über 291 gespeicherte Antworten: Nach einem
+   Werkzeugeinsatz fehlt „Mexla," in 14,0 % der Fälle (31 von 222), ohne
+   Werkzeug nur in 1,4 % (1 von 69). Das Modell SETZT nach einer
+   Werkzeugrunde den Text fort, statt neu anzufangen — daher fing die
+   Antwort, die Mexla stutzig machte, mit „Ich kann ALSO keine …" an.
+   Das ist kein Drift und kein kaputtes Modelfile.
+   Die alte Zeile behauptete trotzdem genau das, bei jedem siebten
+   Werkzeugeinsatz. Ein Prüfer, der bei harmlosen Zuständen Alarm
+   schlägt, wird abgeschaltet und meldet dann auch den echten Fall nicht
+   mehr — Tims eigene Schreihals-Regel, Handbuch Kapitel 4. */
+function ankerZeile(n, anker) {
+  if (anker)
+    return `<div class="canary gut">Ankerphrase vorhanden</div>`;
+  const nachWerkzeug = Array.isArray(n.werkzeuge) && n.werkzeuge.length > 0;
+  if (nachWerkzeug)
+    return `<div class="canary">Ankerphrase fehlt — normal nach
+      Werkzeugeinsatz (${n.werkzeuge.map(esc).join(", ")}): Tim setzt den
+      Text fort, statt neu anzufangen. Kein Drift.</div>`;
+  return `<div class="canary weg">Ankerphrase &bdquo;Mexla,&ldquo; fehlt
+    — ohne Werkzeugeinsatz ungewöhnlich. Modell driftet oder Modelfile
+    stimmt nicht.</div>`;
+}
+
 function zeichneVerlauf() {
   const v = document.getElementById("verlauf");
   if (!v) return;
@@ -1229,10 +1253,7 @@ function zeichneVerlauf() {
         style="max-width:100%;border-radius:8px;margin-top:8px;display:block">
         <div class="hinweis">Aufnahme von ${zeit || "unbekannt"}</div>` : ""}
       ${stempel}
-      <div class="canary ${anker ? "gut" : "weg"}">${anker
-        ? "Ankerphrase vorhanden"
-        : "Ankerphrase &bdquo;Mexla,&ldquo; fehlt \u2014 Modell driftet oder Modelfile stimmt nicht"
-      }</div></div>`;
+      ${ankerZeile(n, anker)}</div>`;
   }).join("") || `<div class="hinweis">Noch keine Nachrichten.</div>`;
   v.scrollTop = v.scrollHeight;
 }

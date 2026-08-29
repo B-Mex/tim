@@ -4233,6 +4233,59 @@ def _selbsttest() -> int:
         pruefe(_aus is not None and "clearInterval" in _aus.group(1),
                "der Bildtakt beendet sich selbst, wenn das Auge aus ist")
 
+        # Die Ankerphrasen-Zeile WIRKLICH ausfuehren, nicht nur nach
+        # Stichworten durchsuchen. Sie ist eine reine Funktion, also
+        # laesst sie sich mit einer esc-Attrappe einzeln fahren - und
+        # nur so faellt auf, wenn die drei Faelle vertauscht sind.
+        #
+        # Der Anlass (29.08.2026): Die alte Zeile behauptete bei JEDER
+        # fehlenden Ankerphrase "Modell driftet oder Modelfile stimmt
+        # nicht". Gemessen ueber 291 Antworten fehlt sie nach einem
+        # Werkzeugeinsatz aber in 14,0 % der Faelle voellig normal
+        # (ohne Werkzeug: 1,4 %) - das Modell setzt den Text fort,
+        # statt neu anzufangen. Ein Alarm, der bei jedem siebten
+        # Werkzeugeinsatz kommt, wird ueberlesen.
+        _anker_js = _re.search(r"function ankerZeile\(n, anker\)\s*\{",
+                               _ohne_komm)
+        if _anker_js:
+            _rumpf_anker = _js_rumpf(_ohne_komm, "function ankerZeile(n, anker)")
+            # _js_rumpf liefert den Rumpf MIT der oeffnenden Klammer
+            # (rest[:ende] schneidet erst vor der schliessenden ab).
+            # Wer hier noch ein Paar drumsetzt, baut eine unbalancierte
+            # Funktion - der Probelauf meldete dann "Unexpected end of
+            # script" und sah aus wie ein Fehler im geprueften Code.
+            _probe = (
+                "function esc(s){return String(s)}\n"
+                "function ankerZeile(n, anker)" + (_rumpf_anker or "{") + "}\n"
+                "var a = ankerZeile({content:'Mexla, ja'}, true);\n"
+                "var b = ankerZeile({werkzeuge:['ablaeufe_zeigen']}, false);\n"
+                "var c = ankerZeile({}, false);\n"
+                "JSON.stringify([a.indexOf('vorhanden')>=0,\n"
+                "  b.indexOf('Werkzeugeinsatz')>=0 && b.indexOf('driftet')<0,\n"
+                "  c.indexOf('driftet')>=0])")
+            with _tf.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write(_probe)
+                _pdatei = f.name
+            try:
+                _lauf = _sp.run(
+                    ["osascript", "-l", "JavaScript", "-e",
+                     'function run(argv){var f=$.NSString.'
+                     'stringWithContentsOfFileEncodingError($(argv[0]),4,null);'
+                     'try{return String(eval(f.js))}'
+                     'catch(e){return "FEHLER: "+e.message}}', _pdatei],
+                    capture_output=True, text=True, timeout=30)
+                _erg = (_lauf.stdout or "").strip()
+                pruefe(_erg == "[true,true,true]",
+                       "die Ankerphrasen-Zeile trennt alle drei Faelle "
+                       "(vorhanden / fehlt nach Werkzeug / fehlt ohne)",
+                       _erg or (_lauf.stderr or "").strip())
+            except FileNotFoundError:
+                print("  (uebersprungen: osascript fehlt)")
+            finally:
+                Path(_pdatei).unlink(missing_ok=True)
+        else:
+            pruefe(False, "ankerZeile() gibt es in der Oberflaeche")
+
     # --- Unterhaltungen: Kennungen, Ablage, Bildnamen ---
     import tempfile as _tf
     global CHATS_DIR, CHATBILDER_DIR
