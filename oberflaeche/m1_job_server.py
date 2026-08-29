@@ -381,6 +381,19 @@ AKTIONEN = {
         lambda arg: [_py(), str(HARNESS_DIR / "datenschutz_pruefen.py")],
         False,
     ),
+    # Vierter Blick, dazugekommen am 29.08.2026: Die drei oben fragen
+    # "antwortet er?" - dieser fragt "tut er noch, wofuer er da ist?".
+    # Anlass war der Sprachassistent, der lief und trotzdem nichts
+    # hoerte (10801 PortAudio-Stoerungen im Protokoll). Auch dieser ist
+    # NUR LESEND: Der Waechter kann per --heilen einen Neustart
+    # versuchen, aber dieser Schalter steht mit Absicht NICHT in der
+    # Positivliste - was neu startet, soll nicht per Knopf gehen.
+    "mikrofon_waechter": (
+        "Hoert der Sprachassistent wirklich? Stille und Stoerungen des "
+        "Aufnahmestroms zaehlen (nur lesend)",
+        lambda arg: [_py(), str(HARNESS_DIR / "mikrofon_waechter.py")],
+        False,
+    ),
     # Tims Werkstatt (24.08.2026) - der einzige Weg, auf dem Tim
     # SCHREIBEN darf. Die Grenze steckt nicht in dieser Liste, sondern
     # in werkstatt.py selbst (pfad_erlaubt): geschrieben wird nur
@@ -867,7 +880,7 @@ def _selbsttest() -> int:
                          "benchmark_faelle_uebernehmen", "modell_abitur",
                          "modell_abitur_neue", "pruefung_vorschlagen",
                          "ha_diagnose", "doppelablage_pruefen",
-                         "datenschutz_pruefen",
+                         "datenschutz_pruefen", "mikrofon_waechter",
                          "werkstatt_aufgabe", "werkstatt_liste",
                          "werkstatt_lesen", "werkstatt_testen",
                          "werkstatt_gelernt", "werkstatt_befehle",
@@ -1116,13 +1129,17 @@ def _selbsttest() -> int:
             pruefe(False, "werkstatt.py ladbar")
 
         # --- Die Diagnose-Trias (24.08.2026): nur lesend, nur sie selbst ---
-        # Die drei Aktionen versprechen in ihrer Beschreibung "nur
-        # lesend". Das Versprechen wohnt in den Skripten (deren
-        # Selbsttests belegen es: Baum-Stand vorher/nachher, git status,
+        # Die Aktionen versprechen in ihrer Beschreibung "nur lesend".
+        # Das Versprechen wohnt in den Skripten (deren Selbsttests
+        # belegen es: Baum-Stand vorher/nachher, git status,
         # GET-Zaehler) - hier wird festgehalten, dass wirklich NUR diese
         # Skripte laufen, ohne Zusatzargumente und ohne Shell.
+        # Seit 29.08.2026 ist mikrofon_waechter der vierte im Bunde. Bei
+        # ihm traegt die Laenge-2-Pruefung zusaetzliches Gewicht: Sein
+        # Schalter --heilen startet einen Dienst neu, und genau dieses
+        # eine Argument darf hier nicht auftauchen.
         for _name in ("ha_diagnose", "doppelablage_pruefen",
-                      "datenschutz_pruefen"):
+                      "datenschutz_pruefen", "mikrofon_waechter"):
             _befehl = [str(t) for t in AKTIONEN[_name][1](None)]
             pruefe(_befehl[-1].endswith(_name + ".py") and len(_befehl) == 2,
                    f"'{_name}' ruft genau das eigene Pruefskript",
@@ -1130,6 +1147,27 @@ def _selbsttest() -> int:
             pruefe(not any(";" in t or "&&" in t or "|" in t
                            for t in _befehl),
                    f"'{_name}' enthaelt keine Shell-Verkettung")
+
+        # Und die Gegenprobe zum Heilschalter (29.08.2026): KEINE Aktion
+        # der Positivliste darf --heilen tragen. Der Waechter darf per
+        # Hand oder per Zeitplan einen Dienst neu anstossen; ueber die
+        # Oberflaeche bleibt er ein reines Messgeraet. Stuende der
+        # Schalter irgendwo in der Liste, koennte ein Knopfdruck einen
+        # laufenden Dienst abschiessen - und niemand saehe es der
+        # Beschreibung "nur lesend" an.
+        _heilende = []
+        for _name, (_besch, _bauen, _arg) in AKTIONEN.items():
+            if _bauen is None:
+                continue
+            try:
+                _befehl = [str(t) for t in _bauen("PRUEFWERT")]
+            except Exception:
+                continue
+            if any("--heilen" in t for t in _befehl):
+                _heilende.append(_name)
+        pruefe(not _heilende,
+               "keine Aktion traegt den Heilschalter --heilen",
+               ", ".join(_heilende))
 
         # --- Benchmark-Aktionen: nur ueber den Starter, nie direkt ---
         # Der Starter haelt das Lock (kein Doppellauf) und den Kill-Switch-
