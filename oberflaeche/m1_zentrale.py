@@ -4186,6 +4186,44 @@ def _selbsttest() -> int:
             finally:
                 Path(js_datei).unlink(missing_ok=True)
 
+        # Das Auge darf beim Ausschalten nicht flackern (gemeldet von
+        # Mexla am 29.08.2026). Die Ursache war ein Intervall, das den
+        # Aufruf ueberlebte: zeigeAuge zeichnete neu, der ALTE Takt lief
+        # weiter, sah "Auge aus" und rief zeigeAuge - alle 1,8 s, endlos.
+        #
+        # Geprueft wird der RUMPF, nicht die Datei: Stuende clearInterval
+        # nur in einem Kommentar oder irgendwo sonst im Skript, bestuende
+        # der Test aus dem falschen Grund - dieselbe Lehre wie beim
+        # Kill-Switch-Gleichlauf in autonomie.py.
+        _html = OBERFLAECHE.read_text(encoding="utf-8")
+        _ohne_komm = _re.sub(r"/\*.*?\*/", "", _html, flags=_re.S)
+
+        def _js_rumpf(text, marke):
+            """Der Rumpf einer JS-Funktion ab 'marke', ueber Klammertiefe."""
+            if marke not in text:
+                return None
+            rest = text[text.index(marke) + len(marke):]
+            tiefe, ende = 0, 0
+            for pos, z in enumerate(rest):
+                if z == "{":
+                    tiefe += 1
+                elif z == "}":
+                    tiefe -= 1
+                    if tiefe == 0:
+                        ende = pos
+                        break
+            return rest[:ende] if ende else None
+
+        _zeige = _js_rumpf(_ohne_komm, "async function zeigeAuge(ziel)")
+        pruefe(_zeige is not None and "clearInterval" in _zeige,
+               "zeigeAuge raeumt den alten Bildtakt ab (sonst flackert es)")
+        # Und die zweite Haelfte: der Takt selbst muss sich beenden,
+        # wenn das Auge aus ist - statt sich nur neu zu zeichnen.
+        _aus = _re.search(r"if \(!n\.da \|\| !n\.an\)\s*\{(.{0,240}?)\}",
+                          _ohne_komm, _re.S)
+        pruefe(_aus is not None and "clearInterval" in _aus.group(1),
+               "der Bildtakt beendet sich selbst, wenn das Auge aus ist")
+
     # --- Unterhaltungen: Kennungen, Ablage, Bildnamen ---
     import tempfile as _tf
     global CHATS_DIR, CHATBILDER_DIR

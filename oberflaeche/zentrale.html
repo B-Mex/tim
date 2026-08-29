@@ -813,6 +813,16 @@ async function augeSchalten(an) {
 }
 
 async function zeigeAuge(ziel) {
+  /* Erst den alten Takt abräumen, dann neu zeichnen. Ohne diese Zeile
+     überlebte das Intervall aus dem vorigen Aufruf: Nach dem Ausschalten
+     lief es weiter, sah !n.an und rief zeigeAuge auf — das setzte
+     innerHTML auf "lädt …" und baute die Ansicht neu, alle 1,8 s,
+     endlos. Genau das Flackern, das Mexla am 29.08.2026 gemeldet hat.
+     Zweiter Effekt derselben Lücke: Jeder Klick auf "Nochmal nachsehen"
+     hinterließ ein Zombie-Intervall, das Flackern wurde mit der Zeit
+     schlimmer. Aufräumen gehört an den ANFANG - der Ansichtswechsel
+     (Zeile 279) macht es genauso. */
+  if (TAKT) { clearInterval(TAKT); TAKT = null; }
   ziel.innerHTML = `<h1>Tims Auge</h1>
     <div class="unterzeile">lädt …</div>`;
   let d;
@@ -972,7 +982,17 @@ async function zeigeAuge(ziel) {
       if (runde++ % 2) return;          /* Fundliste nur jede 2. Runde */
       let n;
       try { n = await hole("/api/auge"); } catch (e) { return; }
-      if (!n.da || !n.an) { zeigeAuge(document.getElementById("haupt")); return; }
+      /* Auge aus oder Dienst weg: EINMAL neu zeichnen und den Takt
+         beenden. Vorher zeichnete der Takt nur neu und lief weiter -
+         ein Takt, der sich selbst neu zeichnet, ist die Schleife.
+         Reihenfolge zählt: erst das Intervall stoppen, dann zeichnen.
+         Andersherum setzt zeigeAuge TAKT auf null und wir löschen
+         gleich darauf ein Intervall, das gar nicht mehr gemeint ist. */
+      if (!n.da || !n.an) {
+        clearInterval(TAKT); TAKT = null;
+        zeigeAuge(document.getElementById("haupt"));
+        return;
+      }
       const kasten = document.querySelector(".karte h3")?.parentElement;
       const neu = (n.gesehen || []);
       const inhalt = neu.length
