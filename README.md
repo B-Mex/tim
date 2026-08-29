@@ -4,6 +4,66 @@ Tim ist ein komplett lokaler KI-Assistent für den Mac (Apple Silicon). Keine Cl
 keine API-Schlüssel, keine Abogebühren: Alle Modelle laufen über [Ollama](https://ollama.com)
 auf dem eigenen Rechner, alle Daten bleiben im Haus.
 
+---
+
+## Die Treppe: Rechte muss Tim sich verdienen
+
+**Das ist der Kern dieses Projekts.** Ein lokales Modell bekommt hier keine
+Berechtigungen, weil jemand einen Haken setzt — es muss sie sich in Prüfungen
+verdienen, und jede bestandene Stufe schaltet genau ein Recht frei.
+
+| Stufe | Prüfung | Was sie freischaltet |
+|---|---|---|
+| **1. Abitur** | Benchmark + fünf Vorprüfungen + Finale, alle über echte Hardware | Das Modell darf überhaupt in den Betrieb |
+| **2. Terminal-Führerschein** | T1 Deutung · T2 Handwerk · T3 Gefahr, je 5 Runden | Shell-Zugriff im Chat — echte Befehle auf dem Rechner |
+| **3. Terminal** | — | Wirkt erst, wenn der Besitzer zusätzlich freischaltet |
+
+Die Ampel in der Oberfläche zeigt beide Stufen. **Bestehen macht die Tür nur
+sichtbar — geöffnet wird sie vom Menschen.** Ein Modell, das die Treppe nicht
+gegangen ist, bekommt das Shell-Werkzeug gar nicht erst angeboten; während einer
+laufenden Prüfung bleibt es für alle zu, damit niemand seine eigene Bewertung
+anfassen kann.
+
+### Vier Regeln, die den Unterschied machen
+
+**Zwei-Seiten-Beweis.** Ein Testfall zählt nur, wenn er bei *entfernter* Regel
+anders ausgeht. Sonst prüft er bloß, dass nichts abstürzt. Jeder Fix in diesem
+Repo wird mit einer Mutation gegengeprobt: Regel kaputtmachen, Test muss rot
+werden, Regel zurück.
+
+**Umgebungsfehler sind kein Modellversagen.** Exit 0 = bestanden, 1 =
+durchgefallen, **2 = der Prüfstand war krank**. Ein Lauf, bei dem die Fixture
+nicht schreibbar war, wird ungültig — nicht negativ. Das klingt nach einer
+Kleinigkeit und ist der Unterschied zwischen Messen und Würfeln.
+
+**Wenn alle durchfallen, prüfe zuerst die Prüfung.** In den ersten fünf
+Führerschein-Läufen maßen drei nachweislich Fehler im *Prüfstand*, nicht im
+Modell: „Job-Server" mit Bindestrich galt als „Dienst nicht benannt", „**2-mal**"
+mit Bindestrich fiel durch, Frage und Antwort standen in getrennten Zeilen. Nach
+dem letzten dieser Fixes sprang ein Teil von 2/5 auf 5/5 — dieselbe Aufgabe,
+dasselbe Modell, nur ein Prüfer, der lesen kann.
+
+**Die Latte ist eine Sicherung, keine Verhinderung.** Hängt sie so hoch, dass
+kein lokal laufbares Modell sie je besteht, sichert sie nichts mehr — sie
+verhindert strukturell, dass die Anlage erwachsen wird. Deshalb steht im Plan ein
+Datum: Ist bis dahin keine weitere Stufe bestanden, wird **die Latte** geprüft
+und kalibriert, nicht das Modell härter geprüft.
+
+### Was das praktisch bringt
+
+Am 28.08.2026 bestand `laguna-xs-2.1` als erstes Modell beide Stufen —
+Vorprüfung 25/25, Finale 5/5, Führerschein 5/5/5. In 40 Prüfungsrunden davor gab
+es **keinen einzigen eigenmächtigen Eingriff** und 20/20 bei vorgelegten
+gefährlichen Befehlen (`rm -rf`, force-push, Skript aus dem Netz in die Shell,
+sudo-Löschung, Dienst abschießen): jedes Mal begründet abgelehnt statt ausgeführt.
+
+Den Ausschlag gab am Ende kein größeres Modell, sondern **Kontext**: Aus 140
+eigenen Lernnotizen wurde ein Handbuch mit Kernregeln und Fachkapiteln, das
+automatisch mitgegeben wird — Kern immer, passende Kapitel nach Stichwort. Der
+Sprung kam ohne ein einziges neu trainiertes Gewicht.
+
+---
+
 **Was Tim kann:**
 
 - **Zentrale** (`oberflaeche/`) — Browser-Oberfläche auf Port 8770: Chat mit lokalen
@@ -20,17 +80,24 @@ auf dem eigenen Rechner, alle Daten bleiben im Haus.
   (gute Antwort besteht, schlechte fällt durch).
 - **Gedächtnis** (`memory/`, wird lokal angelegt) — Chatablage als JSONL plus
   ChromaDB für semantische Suche.
-- **Werkzeuge im Chat** (14 Stück) — Tim sucht im Netz, liest Seiten, prüft den
-  Systemzustand, liest Berichte und Projektdateien, durchsucht sein Gedächtnis,
+- **Werkzeuge im Chat** (16, nachgezählt) — Tim sucht im Netz, liest Seiten, prüft
+  den Systemzustand, liest Berichte und Projektdateien, durchsucht sein Gedächtnis,
   reicht Teilaufgaben an einen Zuarbeiter weiter und startet vorgegebene Aktionen.
-  Genau **ein** Werkzeug schreibt — und nur in den Sandkasten.
+  **13 davon sind rein lesend.** Zwei schreiben, und zwar ausschließlich in die
+  beiden Sandkästen (Werkstatt und Prüfungs-Werkstatt). Das sechzehnte ist die
+  Shell: Sie steht nur im Angebot, wenn das antwortende Modell die Treppe
+  bestanden hat, der Besitzer freigeschaltet hat und gerade keine Prüfung läuft.
 - **Werkstatt** (`harness/werkstatt.py`) — ein Sandkasten, in dem Tim selbst Code
   baut und testet. Zwei Sperren: ein Pfadriegel im Werkzeug **und** `sandbox-exec`
   beim Ausführen. Die Pfadprüfung allein war nachweislich eine Attrappe —
   ausgeführter Code kam ungehindert nach draußen. (41 Selbsttests)
-- **Modell-Abitur** (`harness/abitur.py`) — jedes neue Modell muss durch Benchmark
-  und Werkstatt, bevor es in den Betrieb darf. Prüfungen entstehen aus bestandener
-  Arbeit; Grundlagen werden nie aussortiert. (59 Selbsttests)
+- **Modell-Abitur** (`harness/abitur.py`) — siehe [Die Treppe](#die-treppe-rechte-muss-tim-sich-verdienen)
+  oben. Prüfungen entstehen aus bestandener Arbeit; Grundlagen werden nie
+  aussortiert. (59 Selbsttests)
+- **Terminal-Führerschein** (`harness/fuehrerschein.py`) — die zweite Stufe:
+  Deutung, Handwerk und Gefahr, je fünf Runden über die echte Zentrale.
+  Bestehen schaltet das Shell-Werkzeug im Chat frei — aber nur zusammen mit
+  der ausdrücklichen Freigabe des Besitzers.
 - **Selbstdiagnose** (`harness/ha_diagnose.py`, `doppelablage_pruefen.py`,
   `datenschutz_pruefen.py`) — prüft Home Assistant, den Abgleich zwischen Quelle
   und Betrieb sowie das Repo auf private Daten. Alle drei **nur lesend**:
@@ -52,7 +119,7 @@ läuft Tim auch auf 16 GB — die großen Modelle unten brauchen die vollen 32 G
 | `oberflaeche/` | Zentrale (Port 8770) und Job-Server (Port 8765) |
 | `scripts/` | Sprachassistent „Hey Tim“ |
 | `kamera/` | Kamera-Dienst „Tims Auge“ (Port 8781) + Objekterkennung |
-| `harness/` | Agenten-Abläufe, Job-Schema, Autonomie, Benchmark, Model-Router, Werkstatt, Abitur, Diagnose-Werkzeuge |
+| `harness/` | Agenten-Abläufe, Job-Schema, Autonomie, Benchmark, Model-Router, Werkstatt, **Abitur und Führerschein**, Diagnose- und Wächter-Werkzeuge |
 | `harness/jobs/` | Beispiel-Jobs (Recherche, Projekt-Review, Modell-Scan) |
 | `modelfiles/` | Ollama-Modelfiles zum Nachbauen aller Modelle |
 | `config/` | Konfiguration; `*.example` kopieren und anpassen |
