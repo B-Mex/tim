@@ -1329,10 +1329,21 @@ def shell_protokoll_schreiben(eintrag: dict) -> None:
         pass
 
 
-def shell_ausfuehren(befehl: str, ordner: str = "") -> dict:
+def shell_ausfuehren(befehl: str, ordner: str = "", quelle: str = "reiter",
+                     modell: str = "") -> dict:
+    """Fuehrt einen Befehl aus - fuer Mexlas Reiter UND fuer Tim.
+
+    quelle/modell stehen im Protokoll, damit spaeter nachlesbar ist,
+    WER einen Befehl abgesetzt hat. Ohne diese Spalte saehen Mexlas
+    eigene Befehle und die von Tim gleich aus - und genau das will man
+    beim Nachsehen wissen. Voreinstellung "reiter", damit die
+    vorhandenen Aufrufe unveraendert weiterlaufen.
+    """
     erlaubt, grund = shell_erlaubt()
     eintrag = {"ts": datetime.now().isoformat(timespec="seconds"),
-               "befehl": befehl, "ordner": ordner}
+               "befehl": befehl, "ordner": ordner, "quelle": quelle}
+    if modell:
+        eintrag["modell"] = modell
     if not erlaubt:
         eintrag.update({"abgelehnt": grund})
         shell_protokoll_schreiben(eintrag)
@@ -1930,11 +1941,17 @@ HARTE REGELN:
 
 WER SONST NOCH ETWAS AUSFUEHRT:
 Fuer alles jenseits der Positivliste gibt es die Ablaeufe
-(harness/jobs/*.json) und - wenn Mexla sie freischaltet - die
-Shell-Ansicht. Beides bedient Mexla selbst in der Oberflaeche.
-Die Ablaeufe sind Recherche- und Review-Auftraege an Modelle -
-KEIN Transportweg fuer Hardware. Wie ein Befehl physisch zur
-Lampe kommt, steht oben und in den Unterlagen, nicht dort."""
+(harness/jobs/*.json) - Recherche- und Review-Auftraege an Modelle,
+KEIN Transportweg fuer Hardware. Wie ein Befehl physisch zur Lampe
+kommt, steht oben und in den Unterlagen, nicht dort. Die Ablaeufe
+startet Mexla in der Oberflaeche.
+
+Die Shell steht dir selbst offen, sobald sie in deinen Werkzeugen
+auftaucht (shell_befehl) - dann hast du die Treppe bestanden und
+Mexla hat freigeschaltet. Taucht sie NICHT auf, hast du sie gerade
+nicht: dann nennst du Mexla den Befehl, statt zu behaupten, du
+haettest ihn ausgefuehrt. Rate nie, ob du sie hast - sieh in deinen
+Werkzeugen nach."""
 
 
 # Ollama laedt Modelle ohne Angabe standardmaessig mit nur 4096 Token
@@ -2458,6 +2475,49 @@ CHAT_WERKZEUGE = [
                                        "verstaendliche Auftrag"}},
             "required": ["auftrag"]}}},
 ]
+
+# ----------------------------------------------------------------------
+# Das einzige Werkzeug, das wirklich etwas auf dem Mac ausfuehrt
+# ----------------------------------------------------------------------
+# Es steht mit Absicht NICHT in CHAT_WERKZEUGE: Wer die Liste oben
+# liest, soll sehen, dass der Grundbestand lesend ist. Angehaengt wird
+# es nur von _chat_werkzeuge(), und nur wenn shell_werkzeug_frei() es
+# sagt - also bei bestandener Treppe, freigeschaltetem Schalter und
+# ausserhalb jeder Pruefung.
+#
+# Freigegeben von Mexla am 29.08.2026, nachdem laguna-xs-2.1 Abitur und
+# Terminal-Fuehrerschein bestanden hatte. Der Anlass, woertlich: Tim
+# antwortete auf "hast du jetzt Shell-Zugriff?" wahrheitsgemaess mit
+# nein - ERLAUBE_SHELL oeffnete bis dahin nur den Shell-REITER, den
+# Mexla selbst bedient. Eine Pruefung, an der kein Recht haengt, ist
+# keine Pruefung.
+#
+# Die Beschreibung ist kein Beiwerk: Sie ist das Einzige, was das
+# Modell ueber die Grenzen dieses Werkzeugs weiss. Sie sagt deshalb
+# ausdruecklich, dass hier ECHT ausgefuehrt wird, verweist auf die
+# bestandene Pruefung und erinnert an deren Kern - im Zweifel nachsehen
+# statt aendern.
+SHELL_WERKZEUG = {"type": "function", "function": {
+    "name": "shell_befehl",
+    "description": (
+        "Fuehrt einen Befehl auf dem Mac AUS - wirklich, nicht als "
+        "Vorschlag. Du hast dieses Werkzeug, weil du den Terminal-"
+        "Fuehrerschein bestanden hast; es gilt weiter, was du dort "
+        "gezeigt hast. Lesende Befehle sind fast immer der richtige "
+        "erste Schritt: erst nachsehen, dann urteilen. Was gefaehrlich "
+        "ist oder Unumkehrbares tut, fuehrst du NICHT aus - du nennst "
+        "es Mexla samt Begruendung und ueberlaesst ihm die Entscheidung "
+        "(genau die Zurueckhaltung, fuer die du 5 von 5 bekommen hast). "
+        "Jeder Aufruf steht danach im Protokoll, auch der abgelehnte. "
+        "Zeitgrenze 120 Sekunden."),
+    "parameters": {"type": "object", "properties": {
+        "befehl": {"type": "string",
+                   "description": "Der Befehl, z.B. 'ls -la ~/Desktop'"},
+        "ordner": {"type": "string",
+                   "description": "Arbeitsordner (optional, sonst der "
+                                  "Standardordner)"}},
+        "required": ["befehl"]}}}
+
 # So oft darf das Modell nacheinander nachsehen, bevor die
 # Abschlussantwort erzwungen wird. Am 24.08.2026 auf 8 erhoeht, weil
 # die Werkstattarbeit gemessen mehr Schritte braucht als das blosse
@@ -2835,7 +2895,62 @@ def _werkzeuge_anbieten(erlaubt: set) -> list:
             if w["function"]["name"] in erlaubt]
 
 
-def _chat_werkzeuge() -> list:
+def shell_werkzeug_frei(modell: str, tuer: dict = None,
+                        erlaubnis: tuple = None,
+                        pruefung_laeuft: bool = None) -> tuple:
+    """Darf DIESES Modell die Shell im Chat benutzen? (erlaubt, grund)
+
+    Die drei Quellen sind einspeisbar (None = echte Quelle fragen),
+    damit der Selbsttest jede Kombination durchspielen kann, ohne die
+    laufende autonomie.conf oder die echten Pruefungsordner
+    anzufassen. Am 23.08.2026 hat ein Selbsttest, der echte Datenpfade
+    benutzte, den Chatverlauf verschoben - seitdem gilt hier: Tests
+    fassen keine Betriebsdaten an, auch nicht lesend.
+
+    Drei Bedingungen, alle noetig - in dieser Reihenfolge, damit der
+    Grund die wahre Ursache nennt und nicht die erstbeste:
+
+    1. Keine Pruefung laeuft. Ein Modell, das im Fuehrerschein-Lauf
+       eine Shell haette, koennte seine eigene Bewertung anfassen - die
+       Ergebnisordner liegen im Dateisystem, nicht in einem Tresor.
+       Eine Pruefung, deren Ergebnis der Prueflinge aendern kann, misst
+       nichts. Der Riegel steht HIER und nicht nur im Angebot, damit
+       auch ein direkter Aufruf ins Leere laeuft.
+    2. Mexlas Schalter (shell_erlaubt: Kill-Switch aus, Modus autonom,
+       ERLAUBE_SHELL=ja) - genau derselbe Aufruf, den auch der
+       Shell-Reiter macht. Eine Quelle, keine zweite Meinung.
+    3. Das antwortende Modell hat BEIDE Stufen der Treppe bestanden
+       (shell_tuer -> "bereit"), also Abitur UND Terminal-Fuehrerschein.
+
+    Warum am MODELL und nicht global: Ein neues Modell erbt Tims
+    Handbuch - das haengt an der Zentrale -, aber nicht seine
+    Zeugnisse. Wer die Treppe nicht gegangen ist, bekommt das Werkzeug
+    gar nicht erst angeboten.
+    """
+    if PRUEFUNGSSCHALTER.exists() if pruefung_laeuft is None \
+            else pruefung_laeuft:
+        return False, ("Pruefungsmodus laeuft - die Shell bleibt zu, "
+                       "damit niemand seine eigene Bewertung anfasst")
+    erlaubt, grund = shell_erlaubt() if erlaubnis is None else erlaubnis
+    if not erlaubt:
+        return False, grund
+    name = (modell or "").strip()
+    if not name:
+        return False, "kein Modell angegeben"
+    # Die Zeugnisse stehen ohne ":latest" - dieselbe Bereinigung wie in
+    # modell_grenzen(), sonst findet kein einziger Vergleich sein Ziel.
+    name = name.removesuffix(":latest")
+    if tuer is None:
+        tuer = shell_tuer(abitur_stand(), fuehrerschein_stand())
+    if name in tuer["bereit"]:
+        return True, "Abitur und Terminal-Fuehrerschein bestanden"
+    if name in tuer["nur_abitur"]:
+        return False, ("%s hat das Abitur, aber den Terminal-"
+                       "Fuehrerschein noch nicht bestanden" % name)
+    return False, "%s hat die Treppe nicht bestanden" % name
+
+
+def _chat_werkzeuge(modell: str = "") -> list:
     """Das Werkzeugangebot des Haupt-Chats - jetzt gerade.
 
     Im Pruefungsmodus ohne werkstatt_schreiben: Die Kisten-Verwechslung
@@ -2846,11 +2961,19 @@ def _chat_werkzeuge() -> list:
     Pruefungs-Kiste selbst), werkstatt_lernnotiz bleibt (Lernnotizen
     werden auch in der Pruefung verlangt). Wie projektordner() bei jedem
     Aufruf gefragt, damit der Schalter ohne Neustart wirkt.
+
+    shell_befehl kommt nur DAZU, wenn shell_werkzeug_frei() es sagt -
+    ohne Modellnamen also nie. Das ist die Vorsichtsrichtung: Wer
+    vergisst, das Modell durchzureichen, bekommt kein Werkzeug, statt
+    eines zu bekommen, das ihm nicht zusteht.
     """
-    if not PRUEFUNGSSCHALTER.exists():
-        return CHAT_WERKZEUGE
-    return [w for w in CHAT_WERKZEUGE
-            if w["function"]["name"] != "werkstatt_schreiben"]
+    angebot = list(CHAT_WERKZEUGE)
+    if shell_werkzeug_frei(modell)[0]:
+        angebot.append(SHELL_WERKZEUG)
+    if PRUEFUNGSSCHALTER.exists():
+        angebot = [w for w in angebot
+                   if w["function"]["name"] != "werkstatt_schreiben"]
+    return angebot
 
 
 # Was ein Zuarbeiter zurueckmeldet, muss BELEGT sein, nicht behauptet.
@@ -3132,6 +3255,40 @@ def werkzeug_ausfuehren(name: str, argumente: dict,
                     % (aktion, daten.get("exitcode", "?"),
                        ausgabe[:4000] or "(keine)"))
 
+        if name == "shell_befehl":
+            # Zweite Pruefung, obwohl das Werkzeug ohne Freigabe gar
+            # nicht angeboten wird: Das Angebot wird EINMAL je Anfrage
+            # zusammengestellt, ausgefuehrt wird spaeter. Dazwischen
+            # kann Mexla den Schalter umlegen oder den Kill-Switch
+            # setzen - dann muss der Aufruf ins Leere laufen, nicht
+            # noch durchrutschen. Derselbe Gedanke wie beim Kill-Switch
+            # in crew_generic: bei JEDEM Versuch neu fragen, nicht
+            # einmal am Anfang.
+            frei, warum = shell_werkzeug_frei(modell)
+            if not frei:
+                shell_protokoll_schreiben({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "befehl": str(argumente.get("befehl", ""))[:500],
+                    "ordner": "", "quelle": "chat", "modell": modell,
+                    "abgelehnt": warum})
+                return "Abgelehnt: %s" % warum
+            befehl = str(argumente.get("befehl", "")).strip()
+            if not befehl:
+                return "Fehler: kein Befehl angegeben."
+            ergebnis = shell_ausfuehren(
+                befehl, str(argumente.get("ordner", "") or ""),
+                quelle="chat", modell=modell)
+            if ergebnis.get("fehler"):
+                return "Abgelehnt oder fehlgeschlagen: %s" % ergebnis["fehler"]
+            ausgabe = str(ergebnis.get("ausgabe", "")).strip()
+            # Der Rueckgabewert gehoert dazu: Ohne ihn haelt das Modell
+            # eine leere Ausgabe leicht fuer Erfolg - das war am
+            # 24.08.2026 die Wurzel der erfundenen Vollzugsmeldungen.
+            return ("Befehl gelaufen (Rueckgabewert %s, %s s, Ordner %s):\n%s"
+                    % (ergebnis.get("code", "?"), ergebnis.get("dauer_sek", "?"),
+                       ergebnis.get("ordner", "?"),
+                       ausgabe[:4000] or "(keine Ausgabe)"))
+
         if name == "systemzustand":
             stop = killswitch_aktiv()
             sp = speicher_lage()
@@ -3290,7 +3447,11 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 "options": dict(modell_grenzen(modell), temperature=0.3),
             }
             if not letzte:
-                koerper["tools"] = _chat_werkzeuge()
+                # Das Modell mitgeben: Die Shell haengt an SEINEN
+                # Zeugnissen, nicht an denen der Anlage. Wer den Namen
+                # hier vergisst, bekommt kein Werkzeug angeboten - die
+                # Vorsichtsrichtung stimmt also auch bei einem Fehler.
+                koerper["tools"] = _chat_werkzeuge(modell)
             anfrage = urllib.request.Request(
                 OLLAMA + "/api/chat",
                 data=json.dumps(koerper).encode("utf-8"), method="POST")
@@ -3977,6 +4138,16 @@ def _selbsttest() -> int:
                    and "werkstatt_lernnotiz" in _namen,
                    "im Pruefungsmodus fehlt genau werkstatt_schreiben",
                    str(sorted(_namen)))
+            # Und die Shell bleibt in der Pruefung IMMER zu - auch bei
+            # bestandener Treppe und freigeschaltetem Schalter. Sonst
+            # koennte ein Modell im Fuehrerschein-Lauf seine eigene
+            # Bewertung anfassen; die Ergebnisordner liegen offen im
+            # Dateisystem.
+            pruefe("shell_befehl" not in _namen,
+                   "im Pruefungsmodus wird die Shell NIE angeboten")
+            pruefe(shell_werkzeug_frei("laguna-xs-2.1")[0] is False,
+                   "und auch ein direkter Aufruf laeuft in der Pruefung "
+                   "ins Leere")
         finally:
             PRUEFUNGSSCHALTER = _echt_schalter
 
@@ -4143,6 +4314,46 @@ def _selbsttest() -> int:
         _alt = {"laguna-xs-2.1": dict(_fs["laguna-xs-2.1"], aktuell=False)}
         pruefe(not shell_tuer(_st, _alt)["offen"],
                "ein Fuehrerschein alter Bewertung oeffnet nichts")
+
+        # --- Und daraus das RECHT: bekommt das Modell die Shell? ---
+        # Bis zum 29.08.2026 oeffnete die bestandene Treppe gar nichts:
+        # ERLAUBE_SHELL schaltete nur den Shell-REITER frei, den Mexla
+        # selbst bedient. Tim antwortete auf "hast du jetzt
+        # Shell-Zugriff?" wahrheitsgemaess mit nein. Diese Pruefungen
+        # halten fest, dass beide Haelften noetig sind - und dass keine
+        # allein genuegt.
+        _frei = (True, "frei")
+        _zu = (False, "ERLAUBE_SHELL=nein - Bereich nicht freigeschaltet")
+        _t = shell_tuer(_st, _fs)
+
+        pruefe(shell_werkzeug_frei("laguna-xs-2.1", _t, _frei, False)[0],
+               "Treppe bestanden + Schalter frei = Tim bekommt die Shell")
+        pruefe(shell_werkzeug_frei("laguna-xs-2.1:latest", _t, _frei,
+                                   False)[0],
+               "der :latest-Anhang steht dem Recht nicht im Weg")
+        # Jede der drei Bedingungen einzeln weggenommen - jede muss
+        # allein schon zumachen.
+        pruefe(not shell_werkzeug_frei("laguna-xs-2.1", _t, _zu, False)[0],
+               "ohne Mexlas Schalter keine Shell, egal welche Zeugnisse")
+        pruefe(not shell_werkzeug_frei("laguna-xs-2.1", _t, _frei, True)[0],
+               "in der Pruefung keine Shell, egal welche Zeugnisse")
+        pruefe(not shell_werkzeug_frei("nemotron-3.5-lightning", _t, _frei,
+                                       False)[0],
+               "ein durchgefallenes Modell bekommt sie nicht")
+        _nur_abi = shell_werkzeug_frei("laguna-xs-2.1",
+                                       shell_tuer(_st, {}), _frei, False)
+        pruefe(not _nur_abi[0] and "Fuehrerschein" in _nur_abi[1],
+               "nur Abitur reicht nicht - und der Grund sagt, warum",
+               _nur_abi[1])
+        pruefe(not shell_werkzeug_frei("", _t, _frei, False)[0],
+               "ohne Modellnamen keine Shell (Vorsichtsrichtung)")
+        pruefe(not shell_werkzeug_frei("voellig-unbekannt", _t, _frei,
+                                       False)[0],
+               "ein unbekanntes Modell bekommt sie auch nicht")
+        # Und das Angebot selbst: ohne Modellname taucht sie nie auf.
+        pruefe("shell_befehl" not in {w["function"]["name"]
+                                      for w in _chat_werkzeuge()},
+               "ohne Modellnamen bietet der Chat die Shell nicht an")
 
     # --- Die Oberflaeche selbst: ist ihr JavaScript ueberhaupt heil? ---
     # Am 23.08.2026 hat ein beim Bearbeiten zerrissener Blockkommentar

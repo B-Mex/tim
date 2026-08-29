@@ -381,6 +381,21 @@ AKTIONEN = {
         lambda arg: [_py(), str(HARNESS_DIR / "datenschutz_pruefen.py")],
         False,
     ),
+    # Handbuch-Pflege (29.08.2026) - der Schritt Tagebuch -> Handbuch,
+    # den bisher Claude von Hand gemacht hat. Auch diese Aktion ist NUR
+    # LESEND, und zwar in einem schaerferen Sinn als die Trias: Sie
+    # liest Tims Handbuch und sein Lernprotokoll und legt einen
+    # VORSCHLAG in berichte/ ab. HANDBUCH.md selbst wird nicht
+    # angefasst - ein Handbuch, das sich selbst fortschreiben darf,
+    # verliert genau das, wofuer es da ist. Den Beweis fuehrt nicht
+    # dieser Kommentar, sondern der Schreib-Waechter im Selbsttest von
+    # handbuch_vorschlag.py und die SHA256-Gegenprobe zur Laufzeit.
+    "handbuch_vorschlag": (
+        "Vorschlagen, was aus Tims Lernprotokoll ins Handbuch gehoerte "
+        "(nur lesend - das Handbuch selbst wird nicht geaendert)",
+        lambda arg: [_py(), str(HARNESS_DIR / "handbuch_vorschlag.py")],
+        False,
+    ),
     # Tims Werkstatt (24.08.2026) - der einzige Weg, auf dem Tim
     # SCHREIBEN darf. Die Grenze steckt nicht in dieser Liste, sondern
     # in werkstatt.py selbst (pfad_erlaubt): geschrieben wird nur
@@ -867,7 +882,7 @@ def _selbsttest() -> int:
                          "benchmark_faelle_uebernehmen", "modell_abitur",
                          "modell_abitur_neue", "pruefung_vorschlagen",
                          "ha_diagnose", "doppelablage_pruefen",
-                         "datenschutz_pruefen",
+                         "datenschutz_pruefen", "handbuch_vorschlag",
                          "werkstatt_aufgabe", "werkstatt_liste",
                          "werkstatt_lesen", "werkstatt_testen",
                          "werkstatt_gelernt", "werkstatt_befehle",
