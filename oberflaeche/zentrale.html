@@ -1313,6 +1313,15 @@ async function sende() {
   VERLAUF.push({role: "assistant", bildName: d.bild || null,
                 ts: d.ts || new Date().toISOString(),
                 gedanken: d.gedanken || null,
+                /* Die benutzten Werkzeuge gehören MIT ins Verlaufsobjekt.
+                   Ohne sie hielt ankerZeile() jede frische Antwort für
+                   eine ohne Werkzeugeinsatz und warnte "Modell driftet"
+                   — ausgerechnet unter einer Antwort, die sichtbar
+                   "_(shell_befehl)_" trug (Mexla, 29.08.2026). Nach dem
+                   Neuladen war die Warnung weg, weil der Verlauf dann
+                   vom Server kommt und das Feld dort steht: ein Fehler,
+                   der sich beim Nachsehen selbst versteckt. */
+                werkzeuge: d.werkzeuge || [],
                 content: (d.antwort ? d.antwort + hinweis
                                     : "Fehler: " + (d.fehler || "?"))});
   zeichneVerlauf();

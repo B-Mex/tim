@@ -3464,6 +3464,33 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
             if _gedacht:
                 gedanken.append(_gedacht)
             rufe = nachricht.get("tool_calls") or []
+
+            # Was Tim SAGT, waehrend er ein Werkzeug greift, ist sein
+            # Denkweg - er landet nur im falschen Feld.
+            #
+            # Gemessen am 29.08.2026, nachdem Mexla fragte, wo Tims
+            # Gedanken geblieben sind: Sobald "tools" mitgeschickt
+            # werden, liefert laguna KEIN thinking mehr. Dieselbe Frage,
+            # derselbe Aufruf:
+            #     ohne tools:  1338 Zeichen thinking
+            #     mit  tools:     0 Zeichen thinking, 1 tool_call
+            # Mit think=True und think="high" ebenso null. Es liegt also
+            # nicht am Schalter und nicht an der Zentrale, sondern am
+            # Modell-Template - und weil der Chat IMMER Werkzeuge
+            # anbietet, blieb der Denkweg praktisch immer leer.
+            #
+            # Der Text der Werkzeugrunden ist der brauchbare Ersatz: Dort
+            # steht woertlich, was er vorhat ("Ich werde kurz nachdenken,
+            # um die Uhrzeit ..."). Er wird als Denkweg gefuehrt, aber
+            # ehrlich benannt - es ist gesagtes Denken, kein verstecktes.
+            if rufe:
+                _zwischentext = str(nachricht.get("content") or "").strip()
+                if _zwischentext:
+                    gedanken.append(
+                        "Vor dem Werkzeug (%s):\n%s"
+                        % (", ".join(str((r.get("function") or {}).get("name", "?"))
+                                     for r in rufe[:4]) or "?",
+                           _zwischentext))
             if not rufe:
                 break
 
