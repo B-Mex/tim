@@ -22,6 +22,15 @@
       "melden": "leise+laut"
     },
     {
+      "name": "handbuch_pflege",
+      "beschreibung": "Sonntags 10:00 - was aus dem Lernprotokoll ins Handbuch gehoerte. Nur ein VORSCHLAG in berichte/handbuch_vorschlag.md; HANDBUCH.md bleibt unangetastet, eintragen tut es Mexla.",
+      "schritte": [
+        {"aktion": "handbuch_vorschlag"}
+      ],
+      "einordnen": true,
+      "melden": "leise+laut"
+    },
+    {
       "name": "sicherung_check",
       "beschreibung": "Sonntags 18:00 - bereit zum Sichern? Datenschutz + git-Stand. Der Push bleibt bei Mexla.",
       "schritte": [
