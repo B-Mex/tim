@@ -4214,9 +4214,18 @@ def _selbsttest() -> int:
                         break
             return rest[:ende] if ende else None
 
+        # Nur der KOPF zaehlt - alles vor dem ersten Neuzeichnen.
+        # Der ganze Funktionsrumpf taugt hier nicht: Der Takt-Block mit
+        # seinem eigenen clearInterval steht in DERSELBEN Funktion, also
+        # bestand der Test auch dann, wenn die Aufraeum-Zeile ganz fehlte
+        # (in der Mutationsprobe am 29.08.2026 genau so passiert - der
+        # erste Anlauf dieses Tests war wertlos). Aufgeraeumt werden muss
+        # aber VOR dem Neuzeichnen, sonst ueberlebt das alte Intervall.
         _zeige = _js_rumpf(_ohne_komm, "async function zeigeAuge(ziel)")
-        pruefe(_zeige is not None and "clearInterval" in _zeige,
-               "zeigeAuge raeumt den alten Bildtakt ab (sonst flackert es)")
+        _kopf = _zeige.split("ziel.innerHTML")[0] if _zeige else ""
+        pruefe(_zeige is not None and "clearInterval" in _kopf,
+               "zeigeAuge raeumt den alten Bildtakt ab, BEVOR es neu "
+               "zeichnet (sonst flackert es)")
         # Und die zweite Haelfte: der Takt selbst muss sich beenden,
         # wenn das Auge aus ist - statt sich nur neu zu zeichnen.
         _aus = _re.search(r"if \(!n\.da \|\| !n\.an\)\s*\{(.{0,240}?)\}",
