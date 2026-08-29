@@ -1130,14 +1130,16 @@ def _selbsttest() -> int:
         else:
             pruefe(False, "werkstatt.py ladbar")
 
-        # --- Die Diagnose-Trias (24.08.2026): nur lesend, nur sie selbst ---
-        # Die drei Aktionen versprechen in ihrer Beschreibung "nur
+        # --- Die nur lesenden Pruefskripte: nur sie selbst ---
+        # Die Diagnose-Trias (24.08.2026) und seit dem 29.08.2026 der
+        # Handbuch-Vorschlag versprechen in ihrer Beschreibung "nur
         # lesend". Das Versprechen wohnt in den Skripten (deren
         # Selbsttests belegen es: Baum-Stand vorher/nachher, git status,
-        # GET-Zaehler) - hier wird festgehalten, dass wirklich NUR diese
-        # Skripte laufen, ohne Zusatzargumente und ohne Shell.
+        # GET-Zaehler, Schreib-Waechter) - hier wird festgehalten, dass
+        # wirklich NUR diese Skripte laufen, ohne Zusatzargumente und
+        # ohne Shell.
         for _name in ("ha_diagnose", "doppelablage_pruefen",
-                      "datenschutz_pruefen"):
+                      "datenschutz_pruefen", "handbuch_vorschlag"):
             _befehl = [str(t) for t in AKTIONEN[_name][1](None)]
             pruefe(_befehl[-1].endswith(_name + ".py") and len(_befehl) == 2,
                    f"'{_name}' ruft genau das eigene Pruefskript",
@@ -1145,6 +1147,43 @@ def _selbsttest() -> int:
             pruefe(not any(";" in t or "&&" in t or "|" in t
                            for t in _befehl),
                    f"'{_name}' enthaelt keine Shell-Verkettung")
+
+        # Und die Gegenprobe zur Kernlinie: Der Handbuch-Vorschlag darf
+        # HANDBUCH.md nicht schreiben. Eine Entscheidung, die nur als
+        # Beschreibung dasteht, haelt nicht - deshalb wird sie hier an
+        # FIXTUREN gemessen (Tims echtes Handbuch wird nicht angefasst,
+        # auch nicht lesend).
+        _spec_h = _ilu_d.spec_from_file_location(
+            "_handbuch_probe", str(HARNESS_DIR / "handbuch_vorschlag.py"))
+        if _spec_h and _spec_h.loader:
+            _h = _ilu_d.module_from_spec(_spec_h)
+            _spec_h.loader.exec_module(_h)
+            pruefe(_h.HANDBUCH.name == "HANDBUCH.md"
+                   and str(_h.ZIEL).startswith("/opt/ki-server/berichte/"),
+                   "handbuch_vorschlag liest das Handbuch, schreibt nach "
+                   "berichte/", f"{_h.HANDBUCH} -> {_h.ZIEL}")
+            import hashlib as _hl
+            with _tf_p.TemporaryDirectory() as _tmp_h:
+                _hb = Path(_tmp_h) / "HANDBUCH.md"
+                _lp = Path(_tmp_h) / "LERNPROTOKOLL.md"
+                _hb.write_text("# Probe\n\nDie Kurzfassung von 1 "
+                               "Lernnotizen (LERNPROTOKOLL.md, "
+                               "24.-26.08.2026).\n\n## KERN - gilt immer\n\n"
+                               "1. Nichts behaupten ohne Messung.\n")
+                _lp.write_text("# Probe\n\n## 2026-08-24 05:00 - probe\n\n"
+                               "Alte Notiz.\n\n## 2026-08-27 05:00 - probe\n\n"
+                               "Der Selbsttest muss gruen sein, gemessen "
+                               "und nicht geraten, sonst gilt es nicht.\n")
+                _vorher = _hl.sha256(_hb.read_bytes()).hexdigest()
+                _rc_h, _ = _h.vorschlag_schreiben(
+                    _hb, _lp, Path(_tmp_h) / "vorschlag.md")
+                pruefe(_rc_h == 0 and (Path(_tmp_h) / "vorschlag.md").is_file(),
+                       "handbuch_vorschlag legt seinen Vorschlag ab")
+                pruefe(_hl.sha256(_hb.read_bytes()).hexdigest() == _vorher,
+                       "und laesst HANDBUCH.md dabei unveraendert - "
+                       "die Kernlinie")
+        else:
+            pruefe(False, "handbuch_vorschlag.py ladbar")
 
         # --- Benchmark-Aktionen: nur ueber den Starter, nie direkt ---
         # Der Starter haelt das Lock (kein Doppellauf) und den Kill-Switch-
