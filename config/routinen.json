@@ -13,6 +13,15 @@
       "melden": "leise+laut"
     },
     {
+      "name": "mikrofon_wache",
+      "beschreibung": "Alle 10 Minuten - hoert der Sprachassistent wirklich, oder lebt er nur? Ohne Einordnung: Bei diesem Takt waere ein Modellaufruf je Lauf teuer und laut. Leise wenn gruen, Meldung aufs Handy nur bei Taubheit. Taktzeile: */10 * * * * /opt/ki-server/venv/bin/python /opt/ki-server/harness/routine.py mikrofon_wache >> /opt/ki-server/logs/routine.log 2>&1 # m1-routine",
+      "schritte": [
+        {"aktion": "mikrofon_waechter"}
+      ],
+      "einordnen": false,
+      "melden": "leise+laut"
+    },
+    {
       "name": "selbsttest_woche",
       "beschreibung": "Montags 06:45 - liest den Bericht des 04:00-Selbsttestlaufs und ordnet ein",
       "schritte": [
