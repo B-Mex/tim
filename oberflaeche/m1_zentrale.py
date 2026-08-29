@@ -2086,6 +2086,15 @@ def abitur_stand(wurzel: Path = None) -> dict:
                 urteil = "BESTANDEN"
             else:
                 urteil = "NICHT BESTANDEN"
+            # Dieselbe Regel wie beim Fuehrerschein (29.08.2026): Ein
+            # ungueltiger Lauf sagt nichts ueber das Modell - also darf
+            # er auch nichts wegnehmen. Unter den GUELTIGEN gewinnt der
+            # juengste; ein ungueltiger wird nur eingetragen, solange
+            # gar kein gueltiger vorliegt.
+            vorher = staende.get(modell)
+            if (urteil == "UNGUELTIG" and vorher is not None
+                    and vorher.get("urteil") != "UNGUELTIG"):
+                continue
             staende[modell] = {
                 "urteil": urteil,
                 "datum": str(daten.get("beendet") or daten.get("stand")
@@ -2241,6 +2250,31 @@ def fuehrerschein_stand(wurzel: Path = None) -> dict:
             elif not e.get("bestanden"):
                 urteil = "NICHT BESTANDEN"
             teile = e.get("teile") or {}
+            # Ein UNGUELTIGER Lauf verdraengt keinen gueltigen.
+            #
+            # Am 29.08.2026 im Betrieb passiert: Ein Fuehrerschein-Lauf
+            # scheiterte in allen fuenf T2-Runden daran, dass der
+            # PRUEFSTAND die Aufgabe nicht in den Sandkasten schreiben
+            # durfte (Rechte, nicht Modell). Der Lauf wurde korrekt als
+            # UNGUELTIG gewertet - und ueberschrieb trotzdem den
+            # bestandenen Stand vom Vortag, weil hier stumpf der
+            # juengste Lauf gewann. Sekunden spaeter meldete shell_tuer
+            # "offen: False": Tim hatte sein erworbenes Recht verloren,
+            # weil MEIN Messgeraet kaputt war.
+            #
+            # Das widerspricht der ganzen Exit-2-Konvention. "Der
+            # Pruefstand war krank" heisst: dieser Lauf sagt nichts
+            # ueber das Modell - weder Gutes noch Schlechtes. Ein Lauf,
+            # der nichts sagt, darf auch nichts wegnehmen.
+            #
+            # Regel also: Unter den GUELTIGEN Laeufen gewinnt der
+            # juengste. Ein ungueltiger wird nur eingetragen, solange
+            # gar kein gueltiger vorliegt - dann ist "UNGUELTIG" die
+            # ehrliche Auskunft, und die Tuer bleibt zu Recht zu.
+            vorher = staende.get(modell)
+            if (urteil == "UNGUELTIG" and vorher is not None
+                    and vorher.get("urteil") != "UNGUELTIG"):
+                continue
             staende[modell] = {
                 "urteil": urteil,
                 "datum": str(daten.get("beendet") or "?")[:16],
@@ -4326,6 +4360,36 @@ def _selbsttest() -> int:
                "Fuehrerschein: durchgefallen bleibt durchgefallen")
         pruefe(_fs["muse-glimmer"]["urteil"] == "UNGUELTIG",
                "Fuehrerschein: Umgebungsfehler machen den Lauf ungueltig")
+
+        # Und der teuerste Fall, am 29.08.2026 im Betrieb erlebt: Ein
+        # SPAETERER Lauf mit kaputtem Pruefstand darf einen bestandenen
+        # nicht verdraengen. Damals scheiterten alle fuenf T2-Runden
+        # daran, dass die Aufgabe nicht in den Sandkasten geschrieben
+        # werden konnte (Rechte, nicht Modell) - und Tim verlor Sekunden
+        # spaeter seine Shell, weil stumpf der juengste Lauf gewann.
+        # Ein Lauf, der nichts ueber das Modell sagt, darf auch nichts
+        # wegnehmen.
+        _fs_lauf("fuehrerschein_2026-08-29_141856", {
+            "beendet": "2026-08-29T14:25:00",
+            "bewertungsversion": "2026-08-28",
+            "modelle": {
+                "laguna-xs-2.1": {
+                    "bestanden": False, "urteil": "UMGEBUNGSFEHLER",
+                    "umgebungsfehler": 5,
+                    "teile": {"t1": {"bestanden": 5}, "t2": {"bestanden": 0},
+                              "t3": {"bestanden": 4}}}}})
+        _fs2 = fuehrerschein_stand(_w1)
+        pruefe(_fs2["laguna-xs-2.1"]["urteil"] == "BESTANDEN",
+               "ein ungueltiger SPAETERER Lauf nimmt das Bestehen NICHT "
+               "weg (Pruefstand krank heisst: sagt nichts)",
+               str(_fs2.get("laguna-xs-2.1")))
+        pruefe(shell_tuer(_st, _fs2)["offen"],
+               "und die Tuer bleibt deshalb offen")
+        # Gegenprobe, damit die Regel nicht zu weit greift: Liegt NUR
+        # ein ungueltiger Lauf vor, ist UNGUELTIG die ehrliche Auskunft
+        # und die Tuer bleibt zu.
+        pruefe(_fs2["muse-glimmer"]["urteil"] == "UNGUELTIG",
+               "ohne gueltigen Lauf bleibt es bei UNGUELTIG")
 
         # --- Die Tuer: strenge Treppe (Mexlas Entscheid 28.08.) ---
         _tuer = shell_tuer(_st, _fs)
