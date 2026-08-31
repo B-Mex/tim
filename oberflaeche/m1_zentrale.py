@@ -3082,10 +3082,20 @@ def _werkzeuge_anbieten(erlaubt: set) -> list:
 # Im Lauf vom 30.08. wurde das Loch benutzt: T2 per "cat" an der
 # Messstrecke vorbei, T3 mit "launchctl bootout" mitten in der
 # Gefahr-Pruefung. Folgenlos, aber von der Bewertung ungesehen.
-PRUEFUNGSDATEIEN = (
-    Path("/opt/ki-server/config/PRUEFUNGSMODUS"),   # versteckt Werkstatt
-    Path("/opt/ki-server/config/PRUEFUNGSLAUF"),    # sperrt die Shell
-)
+PRUEFUNGSLAUF = CONFIG_DIR / "PRUEFUNGSLAUF"   # sperrt die Shell
+
+
+def pruefungsdateien() -> tuple:
+    """Beide Pruefungsschalter - zur LAUFZEIT geholt, nicht beim Import.
+
+    Frueher stand hier eine Konstante mit fest verdrahteten Pfaden.
+    Folge: Der Selbsttest haengte PRUEFUNGSSCHALTER auf ein temporaeres
+    Verzeichnis um, _pruefung_laeuft() las aber weiter /opt/ki-server -
+    und die Zusicherung "in der Pruefung laeuft ein direkter Aufruf ins
+    Leere" war gruen, ohne je gemessen worden zu sein. Aufgefallen am
+    01.09.2026, als eine Reparatur an der Ampel den Test umwarf.
+    """
+    return (PRUEFUNGSSCHALTER, PRUEFUNGSLAUF)
 
 
 def _pruefung_laeuft() -> bool:
@@ -3095,7 +3105,7 @@ def _pruefung_laeuft() -> bool:
     aufgeht - lieber eine Shell zu wenig als eine Pruefung, die sich
     selbst bewerten kann.
     """
-    for p in PRUEFUNGSDATEIEN:
+    for p in pruefungsdateien():
         try:
             if p.exists():
                 return True
@@ -4398,9 +4408,22 @@ def _selbsttest() -> int:
             # Dateisystem.
             pruefe("shell_befehl" not in _namen,
                    "im Pruefungsmodus wird die Shell NIE angeboten")
-            pruefe(shell_werkzeug_frei("laguna-xs-2.1")[0] is False,
+            # Nicht nur DASS er ins Leere laeuft, sondern WARUM.
+            # Ohne die Begruendung war diese Zeile jahrelang gruen,
+            # weil zufaellig die Treppe zu war (Befund 01.09.2026).
+            _frei, _grund = shell_werkzeug_frei("laguna-xs-2.1")
+            pruefe(_frei is False and "Pruefungslauf" in _grund,
                    "und auch ein direkter Aufruf laeuft in der Pruefung "
-                   "ins Leere")
+                   "ins Leere - und zwar WEGEN der Pruefung", _grund)
+            # Gegenrichtung: ohne Schalter darf dieselbe Sperre nicht
+            # mehr greifen. Sonst koennte der Test auch dann gruen sein,
+            # wenn shell_werkzeug_frei immer False zurueckgibt.
+            PRUEFUNGSSCHALTER.unlink()
+            _frei2, _grund2 = shell_werkzeug_frei("laguna-xs-2.1")
+            pruefe("Pruefungslauf" not in _grund2,
+                   "ohne Schalter sperrt die Pruefungssperre nicht mehr",
+                   _grund2)
+            PRUEFUNGSSCHALTER.write_text("probe")
         finally:
             PRUEFUNGSSCHALTER = _echt_schalter
 
