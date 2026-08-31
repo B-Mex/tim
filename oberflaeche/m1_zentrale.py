@@ -2152,7 +2152,21 @@ def abitur_stand(wurzel: Path = None) -> dict:
 # einer Gegenprobe pruefbar. Ein Waehler-Modell waere ein zusaetzlicher
 # Rundlauf pro Frage und muesste selbst erst durchs Abitur.
 HANDBUCH = HOME / "Desktop" / "Tim-Werkstatt" / "gelernt" / "HANDBUCH.md"
-HANDBUCH_MAX_ZEICHEN = 6000
+# Wieviel Handbuch hoechstens in den Prompt darf.
+#
+# Am 31.08.2026 auf 12000 erhoeht, und zwar aus einem gemessenen
+# Grund: Das Handbuch war auf 7749 Zeichen gewachsen. Der KERN allein
+# ist rund 2000; wer zwei, drei Fachkapitel dazuzieht, lag ueber der
+# alten Grenze von 6000 - und ganz[:6000] schnitt dann MITTEN im
+# Kapitel ab, ohne ein Wort darueber zu verlieren. Ein Modell, dem
+# eine Regel auf halbem Satz abbricht, weiss nicht, dass ihm etwas
+# fehlt; es liest den Rumpf und haelt ihn fuer das Ganze.
+#
+# 12000 Zeichen sind rund 3000 Token. Bei num_ctx 32768 (laguna) ist
+# das ein Zehntel des Fensters - vertretbar fuer Wissen, das jede
+# Antwort besser macht. Waechst das Handbuch weiter, meldet es sich
+# jetzt selbst (siehe handbuch_fuer_chat).
+HANDBUCH_MAX_ZEICHEN = 12000
 
 # Stichwort -> Kapitelueberschrift (Teilstring genuegt). Steht hier und
 # nicht im Handbuch, damit die Zuordnung testbar bleibt.
@@ -2230,7 +2244,23 @@ def handbuch_fuer_chat(frage: str = "", knapp: bool = False) -> str:
                 stuecke.append("Passend zu dieser Frage - %s:\n%s"
                                % (name, passend))
     ganz = "\n\n".join(stuecke)
-    return ("\n\n" + ganz[:HANDBUCH_MAX_ZEICHEN]) if ganz else ""
+    if not ganz:
+        return ""
+    if len(ganz) > HANDBUCH_MAX_ZEICHEN:
+        # Nicht mitten im Satz kappen, und vor allem: es SAGEN. Ein
+        # stiller Abschnitt ist die schlimmere Haelfte des Problems -
+        # Tim liest den Rumpf und haelt ihn fuer die ganze Regel.
+        gekuerzt = ganz[:HANDBUCH_MAX_ZEICHEN]
+        schnitt = gekuerzt.rfind("\n")
+        if schnitt > HANDBUCH_MAX_ZEICHEN // 2:
+            gekuerzt = gekuerzt[:schnitt]
+        ganz = (gekuerzt
+                + "\n\n[Dein Handbuch ist laenger als hier hineinpasst "
+                  "(%d von %d Zeichen). Was fehlt, steht in "
+                  "gelernt/HANDBUCH.md - sag Mexla Bescheid, wenn dir "
+                  "eine Regel abgeschnitten vorkommt.]"
+                % (len(gekuerzt), len(ganz)))
+    return "\n\n" + ganz
 
 
 def letzte_frage(verlauf: list) -> str:
