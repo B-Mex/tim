@@ -1,0 +1,11 @@
+# muse-glimmer - Renderer-Modell mit Vision (Projektor: clip), Werkzeuge/Chat
+# Nachbauen:  ollama create muse-glimmer -f modelfiles/muse-glimmer.modelfile
+# ANPASSEN: FROM zeigt auf den lokalen Ollama-Registry-Namen, weil die
+# Quell-GGUF (Hauptmodell + Vision-Projektor) nicht unter modelle/ liegt.
+FROM muse-glimmer:latest
+# Bewusst KEIN TEMPLATE: RENDERER/PARSER liefern das echte Chat-Format.
+RENDERER glimmer
+PARSER glimmer
+PARAMETER temperature 1
+PARAMETER top_k 64
+PARAMETER top_p 0.95
