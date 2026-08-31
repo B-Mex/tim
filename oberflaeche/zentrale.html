@@ -276,7 +276,7 @@ document.querySelectorAll(".reiter").forEach(b => b.onclick = () => {
 });
 
 function zeichne() {
-  if (TAKT) { clearInterval(TAKT); TAKT = null; }
+  taktAbraeumen();
   const ziel = document.getElementById("haupt");
   if (ANSICHT === "uebersicht") return zeigeUebersicht(ziel);
   if (ANSICHT === "licht")      return zeigeLicht(ziel);
@@ -290,12 +290,89 @@ function zeichne() {
   if (ANSICHT === "werkstatt")  return zeigeWerkstatt(ziel);
 }
 
+/* ---------- Nachladen ohne Neuzeichnen ----------
+   Mexlas Beschwerde vom 31.08.2026: „Die Aktualisierung vom
+   Metriken-Bildschirm beim Sprechen klappt immer noch nicht." Dazu:
+   „die anderen reiter habe ich noch nicht geschaut."
+
+   Am selben Tag nachgemessen: /api/sprachlog liefert alle zehn Sekunden
+   neue Zeilen (Weckwort, Nachgehoert, Befehl, Antwort), das Protokoll
+   waechst dabei sichtbar mit. Die Daten kamen also an — es holte sie
+   nur niemand ab. Sechs Reiter luden ihren Inhalt genau EINMAL, beim
+   Oeffnen, und standen danach still: Metriken, Uebersicht, Berichte,
+   Werkstatt, Shell, und der Benchmark, wenn beim Oeffnen gerade kein
+   Lauf arbeitete.
+
+   Der Chat hat seinen eigenen Takt (chatTaktStarten), weil er eines
+   mehr koennen muss: waehrend einer laufenden Anfrage schweigen. Alle
+   uebrigen Reiter teilen sich den hier.
+
+   Die drei Fallen, an denen so ein Takt sonst scheitert:
+
+   1. NIE die ganze Ansicht neu zeichnen. Der Takt fasst nur den
+      Inhaltsbereich an, den der Reiter ihm nennt. Ein Takt, der
+      zeigeXY() aufruft, loescht getippten Text, klappt einen gerade
+      geoeffneten Bericht zu und reisst laufende Bildstroeme ab —
+      schlimmer als das Problem, das er behebt.
+   2. Den alten Takt abraeumen, BEVOR ein neuer startet. Sonst laufen
+      Zombie-Intervalle parallel. Genau das war am 29.08.2026 das
+      Flackern im Auge-Reiter.
+   3. Nur bei ECHTER Aenderung neu zeichnen. Dafuer die Unterschrift:
+      bleibt sie gleich, passiert nichts. Sonst springt die Ansicht im
+      Sekundentakt nach unten, waehrend man oben liest. */
+let NACHLADETAKT = null;
+
+/* Beide Taktgeber an einer Stelle abraeumen. zeigeAuge macht das
+   bewusst selbst und mit eigener Begruendung im Kopf — hier haengen
+   die Reiter dran, die sich den Takt oben teilen. */
+function taktAbraeumen() {
+  if (TAKT) { clearInterval(TAKT); TAKT = null; }
+  if (NACHLADETAKT) { clearInterval(NACHLADETAKT); NACHLADETAKT = null; }
+}
+
+/* ansicht      — laeuft nur, solange genau dieser Reiter offen ist
+   holen        — liefert die frischen Daten (Promise)
+   unterschrift — macht aus den Daten eine Zeichenkette; gleiche
+                  Unterschrift heisst: nichts tun (Falle 3)
+   uebernehmen  — schreibt NUR in den Inhaltsbereich (Falle 1)
+   stand        — Unterschrift dessen, was gerade auf dem Schirm steht.
+                  Ohne sie zeichnete die allererste Runde immer neu und
+                  ruckte den Bildlauf zurueck, obwohl sich nichts
+                  geaendert hat. */
+function nachladeTakt(ansicht, holen, unterschrift, uebernehmen, stand, ms) {
+  taktAbraeumen();                     /* Falle 2: erst abraeumen, dann starten */
+  let letzte = stand;
+  NACHLADETAKT = setInterval(async () => {
+    if (ANSICHT !== ansicht) { taktAbraeumen(); return; }
+    let d;
+    /* Ein Aussetzer ist kein Grund, die Anzeige zu leeren: still
+       bleiben und es in der naechsten Runde erneut versuchen. */
+    try { d = await holen(); } catch (e) { return; }
+    if (ANSICHT !== ansicht) return;   /* waehrend des Wartens umgeschaltet */
+    const neu = unterschrift(d);
+    if (neu === letzte) return;
+    letzte = neu;
+    uebernehmen(d);
+  }, ms || 3000);
+}
+
+/* Ein mitlaufendes Protokoll nachfuehren, ohne den Leser zu stoeren:
+   Wer unten steht, bleibt unten und sieht das Neue. Wer hochgescrollt
+   hat, um etwas zu lesen, bleibt genau dort stehen. textContent statt
+   innerHTML — dann muss nichts escapt werden. */
+function protokollNachfuehren(feld, text) {
+  if (!feld) return;
+  const unten = feld.scrollHeight - feld.scrollTop - feld.clientHeight < 40;
+  feld.textContent = text;
+  if (unten) feld.scrollTop = feld.scrollHeight;
+}
+
 /* ---------- Übersicht ---------- */
-async function zeigeUebersicht(ziel) {
-  ziel.innerHTML = `<h1>Übersicht</h1>
-    <div class="unterzeile">Was gerade läuft und was erlaubt ist.</div>
-    <div class="hinweis">lädt …</div>`;
-  const d = await hole("/api/zustand");
+/* Die Karten stecken in einer eigenen Funktion, damit der Nachlade-Takt
+   am Ende genau sie tauschen kann. Die Werkzeug-Karte bleibt bewusst
+   DRAUSSEN: in #werkzeugausgabe steht die Ausgabe eines angeklickten
+   Werkzeugs, und die darf ein Takt nicht wegwischen (Falle 1). */
+function uebersichtKarten(d) {
   MODELLE = d.modelle || [];
 
   const stop = d.killswitch
@@ -320,9 +397,7 @@ async function zeigeUebersicht(ziel) {
   const fsZeilen = Object.entries(fs).map(([m, s]) => fuehrerscheinZeile(m, s))
     .join("") || `<div class="hinweis">noch kein Führerschein-Lauf</div>`;
 
-  ziel.innerHTML = `
-    <h1>Übersicht</h1>
-    <div class="unterzeile">Stand ${esc(d.zeit)}</div>
+  return `
     <div class="gitter">
       <div class="karte">
         <h3>Dienste</h3>
@@ -395,6 +470,31 @@ async function zeigeUebersicht(ziel) {
           <a href="#" onclick="reiterOeffnen('benchmark');return false"
              style="color:var(--akzent)">Im Reiter Benchmark starten →</a></div>
       </div>
+    </div>`;
+}
+
+/* Die Unterschrift der KARTEN — ohne d.zeit. Die Uhr des Servers ist
+   bei jedem Abruf anders; stuende sie hier drin, zeichnete der Takt
+   die ganze Ampel alle fuenf Sekunden neu, obwohl sich nichts geaendert
+   hat (Falle 3). Die Uhr wird stattdessen getrennt nachgefuehrt: sie
+   soll ticken, denn eine stehende Zeile „Stand 18:04" ist genau der
+   Eindruck von Veraltetsein, den dieser ganze Umbau beseitigen soll. */
+function uebersichtUnterschrift(d) {
+  return JSON.stringify([d.dienste, d.speicher, d.killswitch, d.autonomie,
+                         d.abitur, d.fuehrerschein, d.shell_tuer, d.modelle]);
+}
+
+async function zeigeUebersicht(ziel) {
+  taktAbraeumen();
+  ziel.innerHTML = `<h1>Übersicht</h1>
+    <div class="unterzeile">Was gerade läuft und was erlaubt ist.</div>
+    <div class="hinweis">lädt …</div>`;
+  const d = await hole("/api/zustand");
+  ziel.innerHTML = `
+    <h1>Übersicht</h1>
+    <div class="unterzeile" id="uebersichtstand">Stand ${esc(d.zeit)}</div>
+    <div id="uebersichtkarten">${uebersichtKarten(d)}</div>
+    <div class="gitter" style="margin-top:12px">
       <div class="karte" style="grid-column:1/-1">
         <h3>Werkzeuge</h3>
         <div id="werkzeuge" class="hinweis">lädt …</div>
@@ -403,6 +503,26 @@ async function zeigeUebersicht(ziel) {
     </div>`;
 
   zeigeWerkzeuge();
+
+  /* Hier steht das, was sich ohne Zutun aendert: Dienste gehen an und
+     aus, ein Abiturlauf schaltet die Ampel um, der Kill-Switch kann
+     von woanders gesetzt werden. Das alles stand bis zum 31.08.2026
+     bis zum naechsten Neuladen falsch auf dem Schirm. */
+  let kartenStand = uebersichtUnterschrift(d);
+  nachladeTakt("uebersicht", () => hole("/api/zustand"),
+    n => String(n.zeit || ""),          /* die Uhr: laeuft jede Runde mit */
+    n => {
+      const stand = document.getElementById("uebersichtstand");
+      if (stand) stand.textContent = "Stand " + (n.zeit || "");
+      /* Die Karten dagegen nur, wenn sich wirklich etwas geaendert hat
+         — sonst blitzt die halbe Seite im Sekundentakt auf. */
+      const neu = uebersichtUnterschrift(n);
+      if (neu === kartenStand) return;
+      kartenStand = neu;
+      const karten = document.getElementById("uebersichtkarten");
+      if (karten) karten.innerHTML = uebersichtKarten(n);
+    },
+    String(d.zeit || ""), 5000);
 }
 
 /* ---------- Autonomie-Schalter ----------
@@ -1395,6 +1515,7 @@ async function chatLoeschen(id) {
 }
 
 async function zeigeShell(ziel) {
+  taktAbraeumen();
   ziel.innerHTML = `<h1>Shell</h1><div class="unterzeile">lädt …</div>`;
   const d = await hole("/api/shell");
 
@@ -1440,6 +1561,20 @@ async function zeigeShell(ziel) {
   if (feld) feld.addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); shellStarten(); }
   });
+
+  /* Nur die Protokollliste, mit Absicht: Im Eingabefeld darueber kann
+     ein halb getippter Befehl stehen, und in #shellausgabe das Ergebnis
+     des letzten Laufs. Beides darf ein Takt nicht anfassen (Falle 1).
+     Wert ist das trotzdem: Bei bestandener Treppe fuehrt Tim eigene
+     Befehle aus, und die tauchten hier bis zum 31.08.2026 erst nach
+     einem Neuladen auf. */
+  nachladeTakt("shell", () => hole("/api/shell"),
+    n => JSON.stringify(n.protokoll || []),
+    n => {
+      const liste = document.getElementById("shellprotokoll");
+      if (liste) liste.innerHTML = protokollZeilen(n.protokoll);
+    },
+    JSON.stringify(d.protokoll || []), 5000);
 }
 
 function protokollZeilen(liste) {
@@ -1588,18 +1723,35 @@ async function zuWav(blob) {
 }
 
 /* ---------- Berichte ---------- */
+function berichteListe(d) {
+  return (d.berichte||[]).map(b => `<div class="zeile">
+      <span><button class="knopf klein" onclick="lies('${esc(b.name)}')">${esc(b.name)}</button></span>
+      <span class="wert">${esc(b.geaendert)} · ${(b.groesse/1024).toFixed(1)} kB</span>
+    </div>`).join("") || `<div class="hinweis">Noch keine Berichte.</div>`;
+}
+
 async function zeigeBerichte(ziel) {
+  taktAbraeumen();
   ziel.innerHTML = `<h1>Berichte</h1><div class="unterzeile">lädt …</div>`;
   const d = await hole("/api/berichte");
   ziel.innerHTML = `<h1>Berichte</h1>
-    <div class="unterzeile">Ergebnisse der Abläufe, neueste zuerst.</div>
-    <div class="karte">
-      ${(d.berichte||[]).map(b => `<div class="zeile">
-        <span><button class="knopf klein" onclick="lies('${esc(b.name)}')">${esc(b.name)}</button></span>
-        <span class="wert">${esc(b.geaendert)} · ${(b.groesse/1024).toFixed(1)} kB</span>
-      </div>`).join("") || `<div class="hinweis">Noch keine Berichte.</div>`}
-    </div>
+    <div class="unterzeile">Ergebnisse der Abläufe, neueste zuerst. Neue
+      Berichte erscheinen von selbst.</div>
+    <div class="karte" id="berichteliste">${berichteListe(d)}</div>
     <div id="berichtfeld"></div>`;
+
+  /* Routinen und Abiturlaeufe schreiben ihre Berichte, waehrend man
+     hier zusieht — bis zum 31.08.2026 kam der neue Bericht erst nach
+     einem Neuladen an. Getauscht wird NUR die Liste: #berichtfeld
+     bleibt unberuehrt, sonst klappte der Takt einen gerade offenen
+     Bericht beim Lesen zu (Falle 1). */
+  nachladeTakt("berichte", () => hole("/api/berichte"),
+    n => JSON.stringify(n.berichte || []),
+    n => {
+      const liste = document.getElementById("berichteliste");
+      if (liste) liste.innerHTML = berichteListe(n);
+    },
+    JSON.stringify(d.berichte || []), 5000);
 }
 async function lies(name) {
   const feld = document.getElementById("berichtfeld");
@@ -1610,13 +1762,12 @@ async function lies(name) {
 }
 
 /* ---------- Metriken ---------- */
-async function zeigeMetriken(ziel) {
-  ziel.innerHTML = `<h1>Metriken</h1><div class="unterzeile">lädt …</div>`;
-  const [d, s] = await Promise.all([hole("/api/telemetrie"),
-                                    hole("/api/sprachlog").catch(() => ({}))]);
-  ziel.innerHTML = `<h1>Metriken</h1>
-    <div class="unterzeile">Aus <code>harness_log.jsonl</code> — jeder Lauf
-      wird dort verzeichnet.</div>
+/* Der Inhalt steckt in benannten Bereichen, damit der Nachlade-Takt
+   genau sie tauschen kann und nichts sonst — insbesondere nicht das
+   <pre> mit dem Sprachprotokoll, dessen Bildlaufstand erhalten
+   bleiben muss. */
+function metrikenTelemetrie(d) {
+  return `
     <div class="gitter" style="margin-bottom:14px">
       <div class="karte"><h3>Läufe</h3>
         <div class="zeile"><span>gesamt</span><span class="wert">${d.gesamt}</span></div>
@@ -1634,20 +1785,60 @@ async function zeigeMetriken(ziel) {
         <span class="wert">${esc((e.ts||"").slice(0,16).replace("T"," "))} ·
           ${e.versuche} Versuch(e) · ${e.dauer_sek}s</span></div>`).join("")
         || `<div class="hinweis">Noch keine Läufe verzeichnet.</div>`}
-    </div>
+    </div>`;
+}
+function metrikenSprachkopf(s) {
+  return `<div class="zeile"><span>Zustand</span>
+      <span class="wert" style="color:var(${s.laeuft ? "--gut" : "--schlecht"})">
+        ${s.laeuft ? "läuft — hört auf „Hey Tim“" : "aus"}</span></div>
+    <div class="unterzeile">Was zuletzt gehört wurde, aus
+      <code>sprachassistent.log</code>. An und aus geht bei den
+      Abläufen: <code>sprachassistent_stoppen</code> /
+      <code>sprachassistent_starten</code>.</div>`;
+}
+function metrikenLog(s) {
+  return (s.zeilen || []).join("\n") || "Noch nichts protokolliert.";
+}
+function metrikenHolen() {
+  return Promise.all([hole("/api/telemetrie"),
+                      hole("/api/sprachlog").catch(() => ({}))]);
+}
+
+async function zeigeMetriken(ziel) {
+  taktAbraeumen();
+  ziel.innerHTML = `<h1>Metriken</h1><div class="unterzeile">lädt …</div>`;
+  const [d, s] = await metrikenHolen();
+  ziel.innerHTML = `<h1>Metriken</h1>
+    <div class="unterzeile">Aus <code>harness_log.jsonl</code> — jeder Lauf
+      wird dort verzeichnet. Zahlen und Sprachprotokoll laufen von selbst
+      mit, ohne Neuladen.</div>
+    <div id="metrikentelemetrie">${metrikenTelemetrie(d)}</div>
     <div class="karte" style="margin-top:14px"><h3>Sprachassistent</h3>
-      <div class="zeile"><span>Zustand</span>
-        <span class="wert" style="color:var(${s.laeuft ? "--gut" : "--schlecht"})">
-          ${s.laeuft ? "läuft — hört auf „Hey Tim“" : "aus"}</span></div>
-      <div class="unterzeile">Was zuletzt gehört wurde, aus
-        <code>sprachassistent.log</code>. An und aus geht bei den
-        Abläufen: <code>sprachassistent_stoppen</code> /
-        <code>sprachassistent_starten</code>.</div>
-      <pre id="sprachlog" style="max-height:280px;overflow:auto">${
-        esc((s.zeilen||[]).join("\n") || "Noch nichts protokolliert.")}</pre>
+      <div id="sprachkopf">${metrikenSprachkopf(s)}</div>
+      <pre id="sprachlog" style="max-height:280px;overflow:auto"></pre>
     </div>`;
   const protokoll = document.getElementById("sprachlog");
-  if (protokoll) protokoll.scrollTop = protokoll.scrollHeight;
+  if (protokoll) {
+    protokoll.textContent = metrikenLog(s);
+    protokoll.scrollTop = protokoll.scrollHeight;
+  }
+
+  /* Der eigentliche Fix zu Mexlas Meldung. Spricht er mit Tim,
+     schreibt der Sprachassistent binnen Sekunden „Wake Word erkannt",
+     „Befehl" und „Antwort" in sein Protokoll — der Reiter zeigte das
+     bis heute erst nach einem Neuladen. Getauscht werden nur die drei
+     Bereiche unten, nie die ganze Ansicht. */
+  nachladeTakt("metriken", metrikenHolen,
+    p => JSON.stringify(p),
+    ([nd, ns]) => {
+      const zahlen = document.getElementById("metrikentelemetrie");
+      if (zahlen) zahlen.innerHTML = metrikenTelemetrie(nd);
+      const kopf = document.getElementById("sprachkopf");
+      if (kopf) kopf.innerHTML = metrikenSprachkopf(ns);
+      protokollNachfuehren(document.getElementById("sprachlog"),
+                           metrikenLog(ns));
+    },
+    JSON.stringify([d, s]), 3000);
 }
 
 /* ---------- Werkstatt ----------
@@ -1657,13 +1848,9 @@ function kbGroesse(n) {
   return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " kB";
 }
 
-async function zeigeWerkstatt(ziel) {
-  ziel.innerHTML = `<h1>Werkstatt</h1><div class="unterzeile">lädt …</div>`;
-  let d;
-  try { d = await hole("/api/werkstatt"); }
-  catch (e) { ziel.innerHTML = `<h1>Werkstatt</h1>
-    <div class="hinweis">nicht erreichbar</div>`; return; }
-
+/* Wie bei der Uebersicht: der Inhalt in einer eigenen Funktion, damit
+   der Nachlade-Takt genau ihn tauschen kann. */
+function werkstattInhalt(d) {
   const baum = (liste, leer) => liste.length
     ? liste.map(f => `<div class="zeile">
         <span><code>${esc(f.pfad)}</code></span>
@@ -1674,11 +1861,7 @@ async function zeigeWerkstatt(ziel) {
   const wie = {schreiben: "geschrieben", testen: "getestet",
                lernnotiz: "gelernt"};
 
-  ziel.innerHTML = `<h1>Werkstatt</h1>
-    <div class="unterzeile">${esc(d.ordner)} — Tim darf ausschließlich im
-      Sandkasten schreiben. Nichts davon wirkt im echten System;
-      übernommen wird von Hand.</div>
-
+  return `
     <div class="karte" style="margin-bottom:14px"><h3>Aufgaben</h3>
       ${d.aufgaben.length
         ? d.aufgaben.map(a => `<div class="zeile"><span><code>${esc(a)}</code></span>
@@ -1729,6 +1912,34 @@ async function zeigeWerkstatt(ziel) {
     </div>`;
 }
 
+async function zeigeWerkstatt(ziel) {
+  taktAbraeumen();
+  ziel.innerHTML = `<h1>Werkstatt</h1><div class="unterzeile">lädt …</div>`;
+  let d;
+  try { d = await hole("/api/werkstatt"); }
+  catch (e) { ziel.innerHTML = `<h1>Werkstatt</h1>
+    <div class="hinweis">nicht erreichbar</div>`; return; }
+
+  ziel.innerHTML = `<h1>Werkstatt</h1>
+    <div class="unterzeile">${esc(d.ordner)} — Tim darf ausschließlich im
+      Sandkasten schreiben. Nichts davon wirkt im echten System;
+      übernommen wird von Hand.</div>
+    <div id="werkstattinhalt">${werkstattInhalt(d)}</div>`;
+
+  /* Arbeitet Tim gerade eine Werkstatt-Aufgabe ab, wachsen Sandkasten,
+     Lernprotokoll und Protokollliste waehrend man zusieht — bis zum
+     31.08.2026 sah man davon nichts ohne Neuladen. */
+  nachladeTakt("werkstatt", () => hole("/api/werkstatt"),
+    n => JSON.stringify([n.aufgaben, n.sandkasten, n.geschafft,
+                         n.gelernt, n.protokoll]),
+    n => {
+      const feld = document.getElementById("werkstattinhalt");
+      if (feld) feld.innerHTML = werkstattInhalt(n);
+    },
+    JSON.stringify([d.aufgaben, d.sandkasten, d.geschafft,
+                    d.gelernt, d.protokoll]), 5000);
+}
+
 function reiterOeffnen(name) {
   // Den echten Reiter-Knopf klicken statt die Ansicht selbst zu setzen:
   // So laufen Markierung und Inhalt garantiert nicht auseinander.
@@ -1773,6 +1984,7 @@ async function werkstattAufraeumen() {
    Benchmark-Berichte an einer Stelle. Ausgefuehrt wird alles ueber
    /api/start -> Job-Server-Positivliste - hier wird nur gelesen. */
 async function zeigeBenchmark(ziel) {
+  taktAbraeumen();
   ziel.innerHTML = `<h1>Benchmark</h1><div class="unterzeile">lädt …</div>`;
   let d;
   try { d = await hole("/api/benchmark"); }
@@ -1887,22 +2099,28 @@ async function zeigeBenchmark(ziel) {
     </div>
     <div id="benchberichtfeld"></div>`;
 
-  /* Solange ein Lauf arbeitet, die Statuszeile mitziehen - aber nur die,
-     damit ein geoeffneter Bericht beim Lesen nicht zugeklappt wird. */
-  if (d.laeuft) {
-    TAKT = setInterval(async () => {
-      let n;
-      try { n = await hole("/api/benchmark"); } catch (e) { return; }
+  /* Die Statuszeile mitziehen - aber nur die, damit ein geoeffneter
+     Bericht beim Lesen nicht zugeklappt wird.
+
+     Bis zum 31.08.2026 stand dieser Takt in einem `if (d.laeuft)`: Er
+     startete NUR, wenn beim Oeffnen des Reiters schon ein Lauf
+     arbeitete. Wer den Reiter im Leerlauf offen liess und den Lauf von
+     woanders anstiess - aus dem Chat, per Routine, vom Handy - sah bis
+     zum Neuladen nichts. Jetzt laeuft er immer und schaut in beide
+     Richtungen.
+
+     Die eine Stelle, an der hier bewusst doch die ganze Ansicht neu
+     gezeichnet wird: wenn ein Lauf FERTIG ist. Dann gibt es neue
+     Zahlen und einen neuen Bericht, und das passiert genau einmal pro
+     Lauf - kein Takt, der sich selbst neu zeichnet. */
+  nachladeTakt("benchmark", () => hole("/api/benchmark"),
+    n => JSON.stringify(n.laeuft || null),
+    n => {
+      if (!n.laeuft) { zeigeBenchmark(document.getElementById("haupt")); return; }
       const feld = document.getElementById("benchstatus");
-      if (!feld) return;
-      if (n.laeuft) {
-        feld.innerHTML = `<span class="wert" style="color:var(--warn,#e0a800)">läuft seit ${esc(n.laeuft.start||"?")} — ${esc(n.laeuft.beschreibung||"")}</span>`;
-      } else {
-        clearInterval(TAKT); TAKT = null;
-        zeigeBenchmark(document.getElementById("haupt"));
-      }
-    }, 10000);
-  }
+      if (feld) feld.innerHTML = `<span class="wert" style="color:var(--warn,#e0a800)">läuft seit ${esc(n.laeuft.start||"?")} — ${esc(n.laeuft.beschreibung||"")}</span>`;
+    },
+    JSON.stringify(d.laeuft || null), 10000);
 }
 
 async function benchAktion(aktion, argument, knopf, feldname) {

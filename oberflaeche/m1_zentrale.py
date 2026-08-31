@@ -4729,6 +4729,135 @@ def _selbsttest() -> int:
                "das Flag wird in einem finally zurueckgesetzt - sonst "
                "steht der Takt nach einem Fehler fuer immer still")
 
+        # --- Der geteilte Nachlade-Takt (31.08.2026) ---
+        # Mexla: "Die Aktualisierung vom Metriken-Bildschirm beim
+        # Sprechen klappt immer noch nicht", dazu "die anderen reiter
+        # habe ich noch nicht geschaut". Nachgemessen: /api/sprachlog
+        # liefert alle zehn Sekunden neue Zeilen - die Daten kamen an,
+        # es holte sie nur niemand ab. Sechs Reiter luden genau einmal.
+        #
+        # Geprueft wird der RUMPF der Funktionen, nicht die Datei: Stuende
+        # das gesuchte Wort nur in einem Kommentar, bestuende der Test aus
+        # dem falschen Grund - dieselbe Lehre wie beim Auge-Takt.
+        _nt = _js_rumpf(_ohne_komm, "function nachladeTakt(")
+        pruefe(_nt is not None, "es gibt einen geteilten Nachlade-Takt")
+        _vor_start = _nt.split("setInterval")[0] if _nt else ""
+        pruefe("taktAbraeumen" in _vor_start,
+               "der Nachlade-Takt raeumt den alten ab, BEVOR er einen "
+               "neuen startet (Falle 2: sonst Zombie-Intervalle)")
+        pruefe(_nt is not None and "ANSICHT !== ansicht" in _nt,
+               "er beendet sich, sobald der Reiter gewechselt wird")
+        pruefe(_nt is not None and "neu === letzte" in _nt,
+               "und uebernimmt nur bei ECHTER Aenderung (Falle 3: sonst "
+               "springt die Ansicht im Sekundentakt nach unten)")
+
+        _ta = _js_rumpf(_ohne_komm, "function taktAbraeumen()")
+        pruefe(_ta is not None and _ta.count("clearInterval") >= 2
+               and "NACHLADETAKT" in _ta and "TAKT = null" in _ta,
+               "taktAbraeumen raeumt BEIDE Taktgeber ab")
+        _zn = _js_rumpf(_ohne_komm, "function zeichne()")
+        pruefe(_zn is not None and "taktAbraeumen" in _zn,
+               "der Ansichtswechsel raeumt den Takt ab - sonst schreibt "
+               "ein alter Takt in den neuen Reiter")
+
+        # Falle 1: Kein Reiter darf sich im Takt selbst neu zeichnen.
+        # Geprueft wird der Aufruf-Block, nicht die ganze Funktion:
+        # zeigeMetriken RUFT sich natuerlich nirgends selbst, aber der
+        # Rueckgabe-Block des Takts koennte es tun.
+        def _takt_block(reiter):
+            """Der nachladeTakt(...)-Aufruf eines Reiters, ab Klammer."""
+            marke = 'nachladeTakt("%s"' % reiter
+            if marke not in _ohne_komm:
+                return None
+            rest = _ohne_komm[_ohne_komm.index(marke) + len(marke) - 1:]
+            tiefe, ende = 0, 0
+            for pos, z in enumerate(rest):
+                if z == "(":
+                    tiefe += 1
+                elif z == ")":
+                    tiefe -= 1
+                    if tiefe == 0:
+                        ende = pos
+                        break
+            return rest[:ende] if ende else None
+
+        for _reiter, _zeige in (("metriken", "zeigeMetriken"),
+                                ("uebersicht", "zeigeUebersicht"),
+                                ("berichte", "zeigeBerichte"),
+                                ("werkstatt", "zeigeWerkstatt"),
+                                ("shell", "zeigeShell")):
+            _blk = _takt_block(_reiter)
+            pruefe(_blk is not None,
+                   f"der Reiter {_reiter} laedt von selbst nach")
+            pruefe(_blk is not None and _zeige not in _blk,
+                   f"und {_reiter} zeichnet dabei NUR seinen Inhalt, nie "
+                   f"die ganze Ansicht (Falle 1)")
+
+        # Der gemeldete Fall selbst: Beim Sprechen aendert sich das
+        # Sprachprotokoll. Holt der Metriken-Takt es nicht, ist der Fix
+        # wirkungslos - genau der Zustand, den Mexla gemeldet hat.
+        _mh = _js_rumpf(_ohne_komm, "function metrikenHolen()")
+        pruefe(_mh is not None and "/api/sprachlog" in _mh
+               and "/api/telemetrie" in _mh,
+               "der Metriken-Takt holt Sprachprotokoll UND Telemetrie "
+               "nach - sonst sieht Mexla beim Sprechen weiter nichts")
+        _bm = _takt_block("metriken")
+        pruefe(_bm is not None and "metrikenHolen" in _bm,
+               "und er benutzt dafuer denselben Abruf wie beim Oeffnen")
+
+        # Das mitlaufende Protokoll darf den Leser nicht wegscrollen.
+        _pn = _js_rumpf(_ohne_komm, "function protokollNachfuehren(")
+        pruefe(_pn is not None and "scrollTop" in _pn and "unten" in _pn,
+               "das Sprachprotokoll haelt den Bildlauf: wer hochgescrollt "
+               "hat, um zu lesen, bleibt stehen")
+
+        # Der Benchmark-Takt lief bis zum 31.08.2026 nur, wenn beim
+        # Oeffnen schon ein Lauf arbeitete. Ein von woanders gestarteter
+        # Lauf blieb damit unsichtbar.
+        _zb = _js_rumpf(_ohne_komm, "async function zeigeBenchmark(ziel)")
+        pruefe(_zb is not None and "if (d.laeuft) {" not in _zb,
+               "der Benchmark-Takt haengt nicht mehr davon ab, ob beim "
+               "Oeffnen schon ein Lauf lief")
+
+        # uebersichtUnterschrift WIRKLICH ausfuehren, nicht nur nach
+        # Stichworten durchsuchen: Sie ist eine reine Funktion, also
+        # laesst sie sich einzeln fahren - und nur so faellt auf, wenn
+        # d.zeit doch mit hineinrutscht. Die Uhr des Servers ist bei
+        # JEDEM Abruf anders; stuende sie in der Unterschrift, zeichnete
+        # der Takt die ganze Ampel alle fuenf Sekunden neu.
+        _uu = _js_rumpf(_ohne_komm, "function uebersichtUnterschrift(d)")
+        if _uu:
+            _probe_u = (
+                "function uebersichtUnterschrift(d)" + _uu + "}\n"
+                "var a = {zeit:'18:04', dienste:[1], abitur:{m:'ok'}};\n"
+                "var b = {zeit:'18:09', dienste:[1], abitur:{m:'ok'}};\n"
+                "var c = {zeit:'18:04', dienste:[1], abitur:{m:'weg'}};\n"
+                "JSON.stringify(["
+                "  uebersichtUnterschrift(a)===uebersichtUnterschrift(b),\n"
+                "  uebersichtUnterschrift(a)!==uebersichtUnterschrift(c)])")
+            with _tf.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write(_probe_u)
+                _udatei = f.name
+            try:
+                _lauf = _sp.run(
+                    ["osascript", "-l", "JavaScript", "-e",
+                     'function run(argv){var f=$.NSString.'
+                     'stringWithContentsOfFileEncodingError($(argv[0]),4,null);'
+                     'try{return String(eval(f.js))}'
+                     'catch(e){return "FEHLER: "+e.message}}', _udatei],
+                    capture_output=True, text=True, timeout=30)
+                _erg = (_lauf.stdout or "").strip()
+                pruefe(_erg == "[true,true]",
+                       "die Uebersicht-Unterschrift ignoriert die Uhr, "
+                       "meldet aber jede echte Aenderung",
+                       _erg or (_lauf.stderr or "").strip())
+            except FileNotFoundError:
+                print("  (uebersprungen: osascript fehlt)")
+            finally:
+                Path(_udatei).unlink(missing_ok=True)
+        else:
+            pruefe(False, "uebersichtUnterschrift() gibt es")
+
         # Die Ankerphrasen-Zeile WIRKLICH ausfuehren, nicht nur nach
         # Stichworten durchsuchen. Sie ist eine reine Funktion, also
         # laesst sie sich mit einer esc-Attrappe einzeln fahren - und
