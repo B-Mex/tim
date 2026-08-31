@@ -104,12 +104,20 @@ def sollwert_messen(ruf=_ruf, bestaetigen=dummy_bestaetigen) -> list:
 
 # Wieviel die genannte Helligkeit neben dem gemessenen Bereich liegen
 # darf. Der Bereich selbst deckt schon die ganze Laufzeit ab (der
-# Beobachter misst waehrenddessen mit); diese Zugabe faengt nur den
-# Rundungs- und Ablesespielraum. Gemessen am 31.08.2026: Der
-# Spitzenwert schwankte in 90 s Ruhe um 0,020 - 0,05 ist grosszuegig,
-# ohne dass Raten durchkaeme (wer 50 Prozent raet, liegt bei echten
-# 96 Prozent weit daneben).
-WERT_TOLERANZ = 0.05
+# Beobachter misst waehrenddessen mit); diese Zugabe faengt nur
+# Rundung ("96 Prozent" gegen gemessene 0,969) und den Abstand
+# zwischen zwei Proben.
+#
+# BEKANNTE SCHWAECHE, offen benannt statt uebersehen: Der Beweis
+# "das Auge wurde benutzt" ist nur so stark, wie der Messwert
+# unratbar ist. Steht das Messfeld nahe am Rand der Skala - die
+# Buerowand lag am 31.08.2026 bei 0,96 -, dann liegt ein glatt
+# geratenes "100 Prozent" dicht genug dran. In der Bildmitte der
+# Skala traegt die Probe voll, oben und unten nur halb. Deshalb hier
+# 0,03 statt der urspruenglichen 0,05: gemessen schwankte der
+# Spitzenwert in 90 s Ruhe um 0,020, mehr Spielraum braucht ehrliches
+# Ablesen nicht - und jeder Zehntel weniger macht das Raten schwerer.
+WERT_TOLERANZ = 0.03
 
 # Eine Helligkeitsangabe im Antworttext. NUR im Fenster um ein
 # Helligkeitswort herum - dieselbe teuer gelernte Lehre wie bei den
