@@ -1703,8 +1703,23 @@ DU KANNST ARBEIT ABGEBEN:
 WAS DU AUSFUEHREN KANNST (seit 23.08.2026):
 - aktion_starten: genau EINE Aktion aus der festen Positivliste des
   Job-Servers - Licht schalten, Dienste starten/stoppen, Status pruefen.
-  Was erlaubt ist, zeigt dir aktionen_zeigen. Der Job-Server prueft
-  jeden Aufruf selbst (Positivliste, Kill-Switch, NIEMALS-Grenzen).
+  Welche AKTIONEN es gibt, zeigt dir aktionen_zeigen. Der Job-Server
+  prueft jeden Aufruf selbst (Positivliste, Kill-Switch,
+  NIEMALS-Grenzen). Achtung: aktionen_zeigen listet auch die
+  autonomie_*-Aktionen auf, die aus dem Chat GESPERRT sind - die
+  bedient Mexla selbst.
+
+  WICHTIG, und am 31.08.2026 teuer gelernt: Diese Aktionsliste ist
+  NICHT dieselbe wie deine Werkzeugliste. Gefragt, ob er Git-Befehle
+  ausfuehren koenne, sah Tim in aktionen_zeigen nach, fand dort kein
+  git - und antwortete "kann ich nicht", waehrend shell_befehl in
+  seinen Werkzeugen stand und genau das gekonnt haette. Zweimal
+  hintereinander, an zwei verschiedenen Tagen.
+
+  Also: Was DU kannst, steht in deinen WERKZEUGEN. aktionen_zeigen
+  beantwortet nur, welche fertigen Ablaeufe der Job-Server anbietet.
+  Fehlt dort etwas, heisst das nicht, dass du es nicht kannst -
+  sondern nur, dass es keine vorgefertigte Aktion dafuer gibt.
 - kamerabild: zeigt Mexla das aktuelle Bild deines Auges im Chat.
 Wenn Mexla dich um etwas bittet, das eine dieser Aktionen erledigt, dann
 FUEHRE ES AUS, statt zu erklaeren, dass du es nicht koenntest.
@@ -2594,8 +2609,13 @@ CHAT_WERKZEUGE = [
 SHELL_WERKZEUG = {"type": "function", "function": {
     "name": "shell_befehl",
     "description": (
-        "Fuehrt einen Befehl auf dem Mac AUS - wirklich, nicht als "
-        "Vorschlag. Du hast dieses Werkzeug, weil du den Terminal-"
+        "Fuehrt einen BELIEBIGEN Befehl auf dem Mac aus - wirklich, "
+        "nicht als Vorschlag. Beliebig heisst beliebig: git, ollama, "
+        "ls, grep, python, launchctl, alles was in einem Terminal "
+        "geht. Es gibt dafuer KEINE Liste, in der du erst nachsehen "
+        "muesstest - wird nach etwas gefragt, das ein Terminalbefehl "
+        "erledigt, ist DIESES Werkzeug die Antwort. "
+        "Du hast es, weil du den Terminal-"
         "Fuehrerschein bestanden hast; es gilt weiter, was du dort "
         "gezeigt hast. Lesende Befehle sind fast immer der richtige "
         "erste Schritt: erst nachsehen, dann urteilen. Was gefaehrlich "
@@ -3349,11 +3369,29 @@ def werkzeug_ausfuehren(name: str, argumente: dict,
             liste = daten.get("aktionen") if isinstance(daten, dict) else None
             if not liste:
                 return "Job-Server nicht erreichbar - keine Aktionen verfuegbar."
-            zeilen = ["%s%s - %s" % (
-                n, " <Argument noetig>" if a.get("braucht_argument") else "",
-                a.get("beschreibung", ""))
-                for n, a in sorted(liste.items())]
-            return "Erlaubte Aktionen:\n" + "\n".join(zeilen)
+            # Gesperrtes NICHT als "erlaubt" ausgeben. Die
+            # autonomie_*-Aktionen stehen in der Job-Server-Liste (weil
+            # Mexlas Knoepfe in der Oberflaeche sie brauchen), sind aber
+            # aus dem Chat ausdruecklich verboten - aktion_starten
+            # weist sie ab. Sie unter der Ueberschrift "Erlaubte
+            # Aktionen" zu fuehren, hiess Tim etwas anzubieten, was er
+            # dann nicht darf (Befund vom 31.08.2026).
+            zeilen, gesperrt = [], []
+            for n, a in sorted(liste.items()):
+                zeile = "%s%s - %s" % (
+                    n, " <Argument noetig>" if a.get("braucht_argument") else "",
+                    a.get("beschreibung", ""))
+                (gesperrt if n in CHAT_GESPERRTE_AKTIONEN else zeilen).append(zeile)
+            text = ("Aktionen, die du starten kannst (%d):\n%s"
+                    % (len(zeilen), "\n".join(zeilen)))
+            if gesperrt:
+                text += ("\n\nAus dem Chat GESPERRT (%d) - die bedient "
+                         "Mexla selbst, ein Aufruf wird abgewiesen:\n%s"
+                         % (len(gesperrt), "\n".join(gesperrt)))
+            text += ("\n\nDas ist die Liste der fertigen ABLAEUFE des "
+                     "Job-Servers - nicht die Liste dessen, was du kannst. "
+                     "Was du kannst, steht in deinen Werkzeugen.")
+            return text
 
         if name == "aktion_starten":
             aktion = str(argumente.get("name", "")).strip()
