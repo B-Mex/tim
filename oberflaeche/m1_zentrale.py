@@ -4745,8 +4745,15 @@ def _selbsttest() -> int:
         pruefe("taktAbraeumen" in _vor_start,
                "der Nachlade-Takt raeumt den alten ab, BEVOR er einen "
                "neuen startet (Falle 2: sonst Zombie-Intervalle)")
-        pruefe(_nt is not None and "ANSICHT !== ansicht" in _nt,
-               "er beendet sich, sobald der Reiter gewechselt wird")
+        # Nicht bloss "ANSICHT !== ansicht" suchen: Diese Bedingung steht
+        # ZWEIMAL im Rumpf - einmal als Wache am Rundenanfang, die den
+        # Takt beendet, und einmal nach dem Warten auf die Daten, die nur
+        # aussteigt. In der Mutationsprobe am 31.08.2026 habe ich die
+        # erste geloescht, und der Test blieb gruen, weil er die zweite
+        # fand. Geprueft wird darum das Abraeumen IN der Wache.
+        pruefe(_nt is not None
+               and "ANSICHT !== ansicht) { taktAbraeumen()" in _nt,
+               "er beendet sich selbst, sobald der Reiter gewechselt wird")
         pruefe(_nt is not None and "neu === letzte" in _nt,
                "und uebernimmt nur bei ECHTER Aenderung (Falle 3: sonst "
                "springt die Ansicht im Sekundentakt nach unten)")
@@ -4765,11 +4772,20 @@ def _selbsttest() -> int:
         # zeigeMetriken RUFT sich natuerlich nirgends selbst, aber der
         # Rueckgabe-Block des Takts koennte es tun.
         def _takt_block(reiter):
-            """Der nachladeTakt(...)-Aufruf eines Reiters, ab Klammer."""
+            """Der ganze nachladeTakt(...)-Aufruf eines Reiters.
+
+            Die Klammertiefe muss bei der OEFFNENDEN Klammer anfangen.
+            Der erste Anlauf setzte hier len(marke)-1 an und begann damit
+            beim Anfuehrungszeichen von "metriken" - dann schloss schon
+            das erste JSON.stringify(...) den Block, und uebrig blieb ein
+            Schnipsel ohne den Uebernehmen-Teil. Der Test bestand danach
+            IMMER, auch mit eingebautem zeigeMetriken(); in der
+            Mutationsprobe am 31.08.2026 genau so aufgefallen.
+            """
             marke = 'nachladeTakt("%s"' % reiter
             if marke not in _ohne_komm:
                 return None
-            rest = _ohne_komm[_ohne_komm.index(marke) + len(marke) - 1:]
+            rest = _ohne_komm[_ohne_komm.index(marke) + len("nachladeTakt"):]
             tiefe, ende = 0, 0
             for pos, z in enumerate(rest):
                 if z == "(":
