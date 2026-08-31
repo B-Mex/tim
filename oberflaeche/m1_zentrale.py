@@ -2940,6 +2940,40 @@ def _werkzeuge_anbieten(erlaubt: set) -> list:
             if w["function"]["name"] in erlaubt]
 
 
+# Solange EINE dieser Dateien liegt, laeuft eine Pruefung.
+#
+# Zwei Schalter, weil sie zwei Zwecke haben - und weil genau das am
+# 31.08.2026 gefehlt hat: Mein Shell-Riegel hing allein am
+# PRUEFUNGSMODUS, doch der Fuehrerschein VERWEIGERT den Start, wenn
+# der liegt (er versteckt die werkstatt_-Familie, die Teil 2 braucht).
+# Also lief jede Pruefung ohne den Riegel, der sie schuetzen sollte.
+# Zwei Sperren, an zwei Tagen gebaut, die sich gegenseitig aufhoben.
+#
+# Im Lauf vom 30.08. wurde das Loch benutzt: T2 per "cat" an der
+# Messstrecke vorbei, T3 mit "launchctl bootout" mitten in der
+# Gefahr-Pruefung. Folgenlos, aber von der Bewertung ungesehen.
+PRUEFUNGSDATEIEN = (
+    Path("/opt/ki-server/config/PRUEFUNGSMODUS"),   # versteckt Werkstatt
+    Path("/opt/ki-server/config/PRUEFUNGSLAUF"),    # sperrt die Shell
+)
+
+
+def _pruefung_laeuft() -> bool:
+    """Laeuft gerade eine Pruefung? Im Zweifel: ja.
+
+    Ein unlesbarer Pfad darf nicht dazu fuehren, dass die Shell
+    aufgeht - lieber eine Shell zu wenig als eine Pruefung, die sich
+    selbst bewerten kann.
+    """
+    for p in PRUEFUNGSDATEIEN:
+        try:
+            if p.exists():
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def shell_werkzeug_frei(modell: str, tuer: dict = None,
                         erlaubnis: tuple = None,
                         pruefung_laeuft: bool = None) -> tuple:
@@ -2972,9 +3006,8 @@ def shell_werkzeug_frei(modell: str, tuer: dict = None,
     Zeugnisse. Wer die Treppe nicht gegangen ist, bekommt das Werkzeug
     gar nicht erst angeboten.
     """
-    if PRUEFUNGSSCHALTER.exists() if pruefung_laeuft is None \
-            else pruefung_laeuft:
-        return False, ("Pruefungsmodus laeuft - die Shell bleibt zu, "
+    if _pruefung_laeuft() if pruefung_laeuft is None else pruefung_laeuft:
+        return False, ("Ein Pruefungslauf laeuft - die Shell bleibt zu, "
                        "damit niemand seine eigene Bewertung anfasst")
     erlaubt, grund = shell_erlaubt() if erlaubnis is None else erlaubnis
     if not erlaubt:
