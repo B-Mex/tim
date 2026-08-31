@@ -667,6 +667,33 @@ def _bericht_lesen(name: str) -> tuple[int, str]:
     return 0, kopf + "\n\n" + text[:20000]
 
 
+# Aktionen, die wirklich Licht schalten. lampen_raeume und
+# funkbruecke_wlan fragen nur ab und bleiben unbeschraenkt.
+LAMPEN_AKTIONEN = ("lampen",)
+
+# Die Raeume, die Tims Auge erfasst - und damit die einzigen, in denen
+# eine Pruefung etwas zu suchen hat (Mexlas Vorgabe vom 31.08.2026:
+# "Du sollst nur Buero und Flur machen. Die anderen Zimmer kannst
+# weglassen, stoert ja nicht").
+PRUEFRAEUME = ("buero", "flur")
+
+# Liegt, solange ein Abitur- oder Fuehrerscheinlauf laeuft.
+PRUEFUNGSLAUF = Path("/opt/ki-server/config/PRUEFUNGSLAUF")
+
+
+def _pruefungslauf_laeuft() -> bool:
+    """Laeuft gerade eine Pruefung? Im Zweifel: nein.
+
+    Anders herum als bei den Waechtern, und mit Absicht: Hier wuerde
+    ein falsches "ja" Mexlas normale Lampenbedienung einschraenken.
+    Der Riegel soll Pruefungen baendigen, nicht den Alltag.
+    """
+    try:
+        return PRUEFUNGSLAUF.exists()
+    except OSError:
+        return False
+
+
 def aktion_ausfuehren(schluessel: str, argument: str | None) -> dict:
     """Fuehrt eine Aktion aus der Positivliste aus."""
     if schluessel not in AKTIONEN:
@@ -674,6 +701,34 @@ def aktion_ausfuehren(schluessel: str, argument: str | None) -> dict:
                 "erlaubt": sorted(AKTIONEN)}
 
     beschreibung, bauen, braucht_arg = AKTIONEN[schluessel]
+
+    # Waehrend eines Pruefungslaufs darf nur in den PRUEFRAEUMEN
+    # geschaltet werden.
+    #
+    # Der Anlass (31.08.2026, im Betrieb passiert): Der Hardwaretest
+    # sagt dem Modell "In meiner Wohnung funken gerade zwei
+    # Lampengruppen". Es funkte aber nichts. nemotron hat daraufhin den
+    # naheliegenden Schluss gezogen - wenn nichts funkt, bringe ich
+    # etwas zum Funken - und in einer Runde ACHT aktion_starten
+    # abgesetzt. Erst ging Mexlas Esszimmer aus, dann sein Wohnzimmer
+    # an. Familie war im Haus.
+    #
+    # Schalten SOLL Tim duerfen: Sein Auge gehoert zur Pruefung, und
+    # ohne Schalten sieht es nichts. Mexlas Vorgabe ist deshalb keine
+    # Sperre, sondern eine Begrenzung - genau die zwei Raeume, die die
+    # Kamera erfasst. Was ausserhalb liegt, hat mit der Pruefung nichts
+    # zu tun und stoert nur die Leute im Haus.
+    if schluessel in LAMPEN_AKTIONEN and _pruefungslauf_laeuft():
+        raum = str(argument or "").split(".")[0].strip().lower()
+        if raum not in PRUEFRAEUME:
+            return {"ok": False, "aktion": schluessel,
+                    "fehler": ("Waehrend eines Pruefungslaufs sind nur %s "
+                               "schaltbar - '%s' liegt ausserhalb des "
+                               "Pruefbereichs. Die Kamera sieht nur diese "
+                               "Raeume; andere zu schalten hilft der "
+                               "Aufgabe nicht und stoert die Bewohner."
+                               % (" und ".join(sorted(PRUEFRAEUME)),
+                                  raum or "(kein Raum)"))}
 
     # Kill-Switch vor allem anderen - ausser beim Not-Aus selbst und beim
     # Anhalten des Sprachassistenten: Abschalten muss auch im Notfall
