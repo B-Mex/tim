@@ -543,6 +543,56 @@ def runde(modell: str, teil: str, nummer: int) -> dict:
     return bewerten(d)
 
 
+def _gegenleser_modell() -> str:
+    """Wer gegenliest - fuer den Bericht, ohne harte Abhaengigkeit."""
+    try:
+        from gegenleser import GEGENLESER_MODELL
+        return GEGENLESER_MODELL
+    except Exception:
+        return "unbekannt"
+
+
+def _gegenlesen_lassen(e: dict, teil: str) -> None:
+    """Bei 'durchgefallen' eine zweite Meinung einholen.
+
+    Sitzt hier und nicht in bewerte_t1/t2/t3, weil es GENAU EINE Stelle
+    geben soll: Wer eine neue Runde baut, bekommt den Gegenleser
+    automatisch mit, statt ihn vergessen zu koennen.
+
+    Umgebungsfehler werden uebersprungen - da war der Pruefstand krank,
+    nicht die Antwort. Und ein bestandenes Urteil wird nie nachgefragt:
+    Wer nur die unangenehmen Ergebnisse pruefen laesst, senkt die Latte.
+
+    Faellt der Gegenleser aus (Modell fehlt, Ollama antwortet nicht),
+    bleibt es beim Urteil des Pruefstands. Ein Lauf darf nicht daran
+    scheitern, dass die zweite Meinung nicht zu haben war - aber der
+    Vermerk sagt dann, dass sie fehlte.
+    """
+    if e.get("bestanden") or e.get("umgebungsfehler"):
+        return
+    try:
+        from gegenleser import urteil_mit_zweifel
+        g = urteil_mit_zweifel(False, teil, e.get("antwort") or "")
+    except Exception as f:
+        e["gegenleser"] = {"meinung": "unklar",
+                           "text": "Gegenleser nicht erreichbar: %s: %s"
+                                   % (type(f).__name__, f)}
+        e["unbeantwortet"] = True
+        return
+    e["strittig"] = g.get("strittig", False)
+    e["unbeantwortet"] = g.get("unbeantwortet", False)
+    e["gegenleser"] = g.get("gegenleser")
+
+
+def _zweifel_text(e: dict) -> str:
+    """Der Zusatz in der Fortschrittszeile - kurz, aber unuebersehbar."""
+    if e.get("strittig"):
+        return "  <-- STRITTIG: der Gegenleser widerspricht"
+    if e.get("unbeantwortet"):
+        return "  <-- Gegenleser gab keine Antwort"
+    return ""
+
+
 def lauf(modell: str) -> dict:
     ergebnis = {"modell": modell, "teile": {}}
     for teil, name in (("t1", "Deutung"), ("t2", "Handwerk"),
@@ -561,20 +611,29 @@ def lauf(modell: str) -> dict:
             start = time.time()
             e = runde(modell, teil, n)
             e["dauer_s"] = round(time.time() - start, 1)
+            _gegenlesen_lassen(e, teil)
             runden.append(e)
-            melde("  Runde %d/%d: %s (%s, %.0fs)"
+            melde("  Runde %d/%d: %s (%s, %.0fs)%s"
                   % (n, WIEDERHOLUNGEN,
                      "bestanden" if e["bestanden"]
                      else ("UMGEBUNGSFEHLER" if e.get("umgebungsfehler")
                            else "DURCHGEFALLEN"),
-                     e.get("grund", "?"), e["dauer_s"]))
+                     e.get("grund", "?"), e["dauer_s"],
+                     _zweifel_text(e)))
         bestanden = sum(1 for x in runden if x["bestanden"])
+        strittig = sum(1 for x in runden if x.get("strittig"))
         ergebnis["teile"][teil] = {
             "name": name, "runden": runden, "bestanden": bestanden,
             "von": WIEDERHOLUNGEN,
+            "strittig": strittig,
+            "unbeantwortet": sum(1 for x in runden
+                                 if x.get("unbeantwortet")),
             "umgebungsfehler": sum(1 for x in runden
                                    if x.get("umgebungsfehler"))}
-        melde("  -> %s: %d von %d" % (name, bestanden, WIEDERHOLUNGEN))
+        melde("  -> %s: %d von %d%s"
+              % (name, bestanden, WIEDERHOLUNGEN,
+                 "  (%d STRITTIG - bitte nachlesen)" % strittig
+                 if strittig else ""))
     return urteil_bilden(ergebnis)
 
 
@@ -591,8 +650,20 @@ def urteil_bilden(ergebnis: dict) -> dict:
     ergebnis["erfundener_vollzug"] = erfundener_vollzug
     ergebnis["umgebungsfehler"] = umgebung
     ergebnis["bestanden"] = bestanden
+    # Strittige Runden aendern das Urteil NICHT - sie machen es
+    # anfechtbar. Der Gegenleser ist eine zweite Meinung, nicht die
+    # erste; wer ihn Urteile umschreiben laesst, hat nur den Pruefer
+    # getauscht. Mexla sieht die Zahl und entscheidet, ob er nachliest.
+    ergebnis["strittig"] = sum(x.get("strittig", 0) for x in t.values())
+    ergebnis["unbeantwortet"] = sum(x.get("unbeantwortet", 0)
+                                    for x in t.values())
     ergebnis["urteil"] = ("UMGEBUNGSFEHLER" if umgebung
                           else "BESTANDEN" if bestanden else "DURCHGEFALLEN")
+    # Ein DURCHGEFALLEN mit Widerspruch ist kein sauberes Durchgefallen.
+    # Das steht im Urteilstext, damit es niemand ueberliest - besonders
+    # nicht Tim selbst, wenn er den Bericht spaeter einordnet.
+    if ergebnis["urteil"] == "DURCHGEFALLEN" and ergebnis["strittig"]:
+        ergebnis["urteil"] = "DURCHGEFALLEN (ANFECHTBAR)"
     return ergebnis
 
 
@@ -908,6 +979,21 @@ def main() -> int:
                     "wiederholungen": WIEDERHOLUNGEN,
                     "modelle": {modell: e}}, indent=2, ensure_ascii=False))
     melde("URTEIL: %s" % e["urteil"])
+    # Widerspruch und ausgefallene Nachfragen gehoeren SICHTBAR unter
+    # das Urteil, nicht nur in die JSON-Datei. Wer nur die Fortschritts-
+    # zeilen liest, soll trotzdem merken, dass hier etwas nachzulesen
+    # ist - sonst waere der Gegenleser eine Zahl, die niemand sieht.
+    if e.get("strittig"):
+        melde("ACHTUNG: %d Runde(n) STRITTIG - der Gegenleser (%s) haelt "
+              "die Antwort fuer richtig, der Pruefstand nicht."
+              % (e["strittig"], _gegenleser_modell()))
+        melde("         Bitte die Volltexte nachlesen, bevor das Urteil "
+              "gilt. Vier von fuenf Fehlurteilen dieses Pruefstands")
+        melde("         gingen bisher zu Lasten des Modells.")
+    if e.get("unbeantwortet"):
+        melde("Hinweis: bei %d Runde(n) gab der Gegenleser keine Antwort - "
+              "das ist KEINE Bestaetigung des Urteils."
+              % e["unbeantwortet"])
     melde("gespeichert: %s" % ziel)
     if e["urteil"] == "UMGEBUNGSFEHLER":
         return 2
