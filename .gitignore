@@ -22,8 +22,20 @@ config/ha_token.secret
 config/datenschutz_muster.txt
 config/com.mexla.iogpu-limit.plist
 
+# --- Laufzeit-Schalter (liegen nur, solange etwas laeuft) ---
+# Beide werden von den Pruefstaenden angelegt und im finally wieder
+# geloescht. Ein eingecheckter Schalter wuerde auf einem anderen Rechner
+# eine Pruefung vortaeuschen, die dort nie lief - und die Shell
+# zuhalten, ohne dass jemand weiss warum.
+config/PRUEFUNGSMODUS
+config/PRUEFUNGSLAUF
+
 # --- Lokale Altstaende/Sicherungen ---
-*.vor_gptoss
+# Sicherungen, die ein Patch neben der Datei ablegt. Frueher stand
+# hier nur *.vor_gptoss - jede neue Sicherung musste einzeln
+# nachgetragen werden, und am 01.09.2026 lagen prompt fuenf
+# uneingetragene im Baum.
+*.vor_*
 *.vor_yoloe
 *.orig
 _backups/
