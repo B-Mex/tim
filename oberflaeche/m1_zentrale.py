@@ -2106,6 +2106,36 @@ ABITUR_WURZEL = HOME / "Desktop" / "M1_DEPLOYMENT" / "docs"
 ABITUR_MINDEST_BEWERTUNG = "2026-08-27"
 
 
+def ist_abgebrochen(daten: dict) -> bool:
+    """Wurde dieser Lauf nie zu Ende gefahren?
+
+    `beendet` schreibt der Pruefstand erst, wenn er durch ist. Fehlt es,
+    lief der Lauf noch oder wurde abgeschossen - in beiden Faellen hat
+    niemand das Modell fertig geprueft, und ein halbes Urteil ist keins.
+
+    Im Zweifel FALSE: Fehlt das Feld in einem alten Format, gilt der
+    Lauf weiter. Nachgemessen am 01.09.2026 ueber alle 15 vorhandenen
+    Laeufe - nur der eine abgeschossene hat kein `beendet`.
+    """
+    return not str(daten.get("beendet") or "").strip()
+
+
+def ist_kalibrierlauf(daten: dict) -> bool:
+    """Wurde dieser Lauf angelegt, um den PRUEFSTAND zu messen?
+
+    Ein Kalibrierlauf prueft das Werkzeug, nicht das Werkstueck. Sein
+    Ergebnis gehoert deshalb in keine Ampel - weder als Erfolg noch als
+    Misserfolg. Ohne diese Unterscheidung nahm der Lauf vom 31.08.2026
+    (angeordnet, um den Gegenleser zu pruefen) laguna die Shell weg,
+    obwohl Mexla ausdruecklich das Gegenteil angesagt hatte.
+
+    Im Zweifel FALSE: Ein Lauf ohne Kennzeichen ist eine echte Pruefung.
+    Lieber ein Kalibrierlauf, der zaehlt, als eine echte Pruefung, die
+    stillschweigend verschwindet.
+    """
+    return bool(daten.get("kalibrierlauf"))
+
+
 def abitur_stand(wurzel: Path = None) -> dict:
     """Der juengste Abitur-Stand je Modell, fuer die Ampel der Uebersicht.
 
@@ -2129,6 +2159,8 @@ def abitur_stand(wurzel: Path = None) -> dict:
         try:
             daten = json.loads(gj.read_text(encoding="utf-8"))
         except (ValueError, OSError):
+            continue
+        if ist_kalibrierlauf(daten) or ist_abgebrochen(daten):
             continue
         wdh = int(daten.get("wiederholungen") or 0)
         bv = str(daten.get("bewertungsversion") or "")
@@ -2339,6 +2371,8 @@ def fuehrerschein_stand(wurzel: Path = None) -> dict:
         try:
             daten = json.loads(gj.read_text(encoding="utf-8"))
         except (ValueError, OSError):
+            continue
+        if ist_kalibrierlauf(daten) or ist_abgebrochen(daten):
             continue
         bv = str(daten.get("bewertungsversion") or "")
         for modell, e in (daten.get("modelle") or {}).items():
@@ -4481,6 +4515,46 @@ def _selbsttest() -> int:
         pruefe(_st["qwen3.6:35b-a3b"]["urteil"] == "UNGUELTIG",
                "Ampel: Umgebungsfehler machen den Lauf ungueltig, nicht rot",
                str(_st.get("qwen3.6:35b-a3b")))
+        # Ein Kalibrierlauf prueft den PRUEFSTAND, nicht das Modell -
+        # und darf deshalb nichts wegnehmen. Am 31.08.2026 nahm er
+        # laguna die Shell weg, obwohl Mexla ausdruecklich angesagt
+        # hatte, dass die Rechte bleiben.
+        _abi_lauf(_w1, "abitur_2026-08-31_211617", {
+            "wiederholungen": 5, "beendet": "2026-08-31T21:41:00",
+            "bewertungsversion": "2026-08-27", "kalibrierlauf": True,
+            "modelle": {"laguna-xs-2.1": {
+                "vorpruefung_bestanden": False,
+                "pruefungen": {"hardware": {"bestanden": 3, "von": 5}},
+                "finale": None}}})
+        _st_k = abitur_stand(_w1)
+        pruefe(_st_k["laguna-xs-2.1"]["urteil"] == "BESTANDEN"
+               and _st_k["laguna-xs-2.1"]["ordner"] == "abitur_2026-08-28_120000",
+               "Ampel: ein Kalibrierlauf nimmt kein bestandenes Zeugnis weg",
+               str(_st_k.get("laguna-xs-2.1")))
+        # Ein abgebrochener Lauf hat das Modell nicht durchfallen
+        # lassen - er hat es nicht zu Ende geprueft.
+        _abi_lauf(_w1, "abitur_2026-08-31_180800", {
+            "wiederholungen": 5, "stand": "2026-08-31T18:31:29",
+            "bewertungsversion": "2026-08-27",
+            "modelle": {"laguna-xs-2.1": {
+                "vorpruefung_bestanden": False,
+                "pruefungen": {"hardware": {"bestanden": 4, "von": 5}},
+                "finale": None}}})
+        _st_ab = abitur_stand(_w1)
+        pruefe(_st_ab["laguna-xs-2.1"]["urteil"] == "BESTANDEN"
+               and _st_ab["laguna-xs-2.1"]["ordner"] == "abitur_2026-08-28_120000",
+               "Ampel: ein abgebrochener Lauf nimmt kein Zeugnis weg",
+               str(_st_ab.get("laguna-xs-2.1")))
+        pruefe(ist_abgebrochen({"stand": "x"})
+               and not ist_abgebrochen({"beendet": "2026-08-28T18:07:37"})
+               and ist_abgebrochen({"beendet": ""}),
+               "abgebrochen erkennt man am fehlenden Ende")
+
+        pruefe(ist_kalibrierlauf({"kalibrierlauf": True})
+               and not ist_kalibrierlauf({})
+               and not ist_kalibrierlauf({"kalibrierlauf": False}),
+               "ein Lauf ohne Kennzeichen ist eine echte Pruefung")
+
         pruefe(_st["nemotron-3.5-lightning"]["urteil"] == "NICHT BESTANDEN",
                "Ampel: Finale 3 von 5 ist kein Bestehen",
                str(_st.get("nemotron-3.5-lightning")))
