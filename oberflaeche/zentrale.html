@@ -1226,6 +1226,55 @@ async function zeigeChat(ziel) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sende(); }
   });
   zeichneVerlauf();
+  chatTaktStarten();
+}
+
+/* ---------- Der Chat holt neue Nachrichten von selbst ----------
+   Mexlas Beschwerde vom 31.08.2026: „jedes mal wenn ich mit tim
+   schreibe oder spreche muss ich den reiter danach neu laden."
+
+   Der Grund: Der Verlauf wurde NUR beim Öffnen des Reiters geladen.
+   Antwortet Tim über den Sprachassistenten, oder schreibt eine Routine
+   ihre Einordnung in die Unterhaltung „routine", stand das im Verlauf
+   auf dem Mac — nur nicht auf dem Schirm.
+
+   Drei Dinge, an denen so ein Takt sonst scheitert, und wie sie hier
+   gelöst sind:
+
+   1. NICHT die Ansicht neu zeichnen. zeichneVerlauf() füllt allein den
+      Verlaufs-Container; das Eingabefeld bleibt unberührt. Ein Takt,
+      der zeigeChat() aufruft, würde Mexla mitten im Tippen den Text
+      löschen — schlimmer als das Problem, das er behebt. (Genau so ein
+      sich selbst neu zeichnender Takt war heute früh das Flackern im
+      Auge-Reiter.)
+   2. Nur bei ECHTER Änderung neu zeichnen. Sonst springt die Ansicht
+      im Sekundentakt nach unten, während man oben liest.
+   3. Während einer laufenden Anfrage schweigen. Sonst überschreibt der
+      Takt die frische Antwort mit dem Serverstand von vor einer
+      Sekunde. */
+let CHATTAKT = null;
+let ANTWORT_LAEUFT = false;
+
+function chatTaktStarten() {
+  if (CHATTAKT) { clearInterval(CHATTAKT); CHATTAKT = null; }
+  CHATTAKT = setInterval(async () => {
+    if (ANSICHT !== "chat") { clearInterval(CHATTAKT); CHATTAKT = null; return; }
+    if (ANTWORT_LAEUFT) return;
+    let d;
+    try {
+      d = await hole("/api/verlauf?chat=" + encodeURIComponent(CHAT_AKTIV));
+    } catch (e) { return; }
+    const neu = d.nachrichten || [];
+    const letzteAlt = VERLAUF.length ? VERLAUF[VERLAUF.length - 1] : null;
+    const letzteNeu = neu.length ? neu[neu.length - 1] : null;
+    const geaendert = neu.length !== VERLAUF.length
+      || (letzteNeu && letzteAlt && letzteNeu.content !== letzteAlt.content);
+    if (!geaendert) return;
+    VERLAUF = neu.map(n =>
+      ({role: n.role, content: n.content, ts: n.ts, bildName: n.bild,
+        gedanken: n.gedanken || null, werkzeuge: n.werkzeuge || []}));
+    zeichneVerlauf();
+  }, 3000);
 }
 
 /* Die Ankerphrasen-Zeile — drei Zustände, nicht zwei.
@@ -1294,12 +1343,17 @@ async function sende() {
   warte.textContent = modell + " denkt nach … (großes Modell: bis zu einer Minute)";
   v.appendChild(warte); v.scrollTop = v.scrollHeight;
   document.getElementById("sendeknopf").disabled = true;
+  // Der Nachlade-Takt schweigt, solange die Anfrage läuft: Sonst holt
+  // er den Serverstand von VOR dieser Frage und überschreibt damit
+  // sowohl die eigene Frage als auch die gerade eintreffende Antwort.
+  ANTWORT_LAEUFT = true;
 
   let d;
   try {
     d = await hole("/api/chat", {method: "POST",
       body: JSON.stringify({modell, nachrichten: VERLAUF, chat: CHAT_AKTIV})});
   } catch (e) { d = {fehler: "Anfrage fehlgeschlagen"}; }
+  finally { ANTWORT_LAEUFT = false; }
   document.getElementById("sendeknopf").disabled = false;
   // Sichtbar machen, wann Tim nachgesehen hat: sonst lässt sich
   // Gesuchtes nicht von Erfundenem unterscheiden.

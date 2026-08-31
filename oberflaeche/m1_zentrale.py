@@ -4708,6 +4708,27 @@ def _selbsttest() -> int:
         pruefe(_aus is not None and "clearInterval" in _aus.group(1),
                "der Bildtakt beendet sich selbst, wenn das Auge aus ist")
 
+        # Der Chat-Nachladetakt (31.08.2026, Mexlas Beschwerde: "muss
+        # ich den Reiter danach neu laden"). Drei Eigenschaften, ohne
+        # die er mehr schadet als nuetzt:
+        _ct = _js_rumpf(_ohne_komm, "function chatTaktStarten()")
+        pruefe(_ct is not None and "clearInterval" in _ct.split("setInterval")[0],
+               "der Chat-Takt raeumt den alten ab, BEVOR er einen neuen "
+               "startet")
+        pruefe(_ct is not None and "ANTWORT_LAEUFT" in _ct,
+               "und schweigt, solange eine Anfrage laeuft - sonst "
+               "ueberschreibt er die frische Antwort")
+        pruefe(_ct is not None and "zeigeChat" not in _ct,
+               "er zeichnet NUR den Verlauf, nie die ganze Ansicht - "
+               "sonst waere Mexlas getippter Text weg")
+        pruefe(_ct is not None and "geaendert" in _ct,
+               "und nur bei echter Aenderung - sonst springt die "
+               "Ansicht im Sekundentakt nach unten")
+        # Gegenprobe zum Flag: es muss auch wieder freigegeben werden.
+        pruefe("finally { ANTWORT_LAEUFT = false; }" in _ohne_komm,
+               "das Flag wird in einem finally zurueckgesetzt - sonst "
+               "steht der Takt nach einem Fehler fuer immer still")
+
         # Die Ankerphrasen-Zeile WIRKLICH ausfuehren, nicht nur nach
         # Stichworten durchsuchen. Sie ist eine reine Funktion, also
         # laesst sie sich mit einer esc-Attrappe einzeln fahren - und
