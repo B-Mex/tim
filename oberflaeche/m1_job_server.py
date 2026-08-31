@@ -294,14 +294,14 @@ AKTIONEN = {
     ),
     "modell_benchmark_modell": (
         "Ein bestimmtes installiertes Modell testen/messen (Argument: "
-        "Name, Punkt statt Doppelpunkt erlaubt, z.B. qwen3.5.9b)",
+        "Name, Punkt statt Doppelpunkt erlaubt, z.B. laguna-xs-2.1)",
         lambda arg: [_py(), str(HARNESS_DIR / "benchmark_starter.py"),
                      "--modell", str(arg or "")],
         True,
     ),
     "modell_benchmark_vergleich": (
         "Mehrere Modelle gegeneinander testen (Argument: Namen mit zwei "
-        "Unterstrichen getrennt, z.B. qwen3.5.9b__gpt-oss.20b; ein Lauf, "
+        "Unterstrichen getrennt, z.B. laguna-xs-2.1__nemotron-3.5-lightning; ein Lauf, "
         "ein Vergleichsbericht)",
         lambda arg: [_py(), str(HARNESS_DIR / "benchmark_starter.py"),
                      "--vergleich", str(arg or "")],

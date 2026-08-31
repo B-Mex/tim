@@ -1757,9 +1757,9 @@ MODELLTEST (Benchmark) - fester Ablauf, wenn Mexla Modelle testen will:
 2. Sagt Mexla nein: starte sofort aktion_starten mit
    modell_benchmark_neue (alle noch nie gemessenen Modelle),
    modell_benchmark_modell mit Modellnamen, Punkt statt Doppelpunkt
-   (Beispiel: qwen3.5.9b), oder modell_benchmark_vergleich fuer
+   (Beispiel: laguna-xs-2.1), oder modell_benchmark_vergleich fuer
    mehrere gegeneinander (Namen mit zwei Unterstrichen getrennt,
-   Beispiel: qwen3.5.9b__gpt-oss.20b). Sag dazu: laeuft im
+   Beispiel: laguna-xs-2.1__nemotron-3.5-lightning). Sag dazu: laeuft im
    Hintergrund, dauert je Modell Minuten bis ueber eine Stunde.
 3. Sagt Mexla ja: starte aktion_starten mit ablauf_starten und Argument
    modell_scan (recherchiert Modelle UND Testfall-Vorschlaege; dauert
@@ -1970,9 +1970,17 @@ HARTE REGELN:
 5. Schreib nuechtern. Keine Emojis, keine Werbesprache, keine Tabellen
    voller Versprechen, keine Ausrufezeichen-Begeisterung.
 6. Wenn du etwas nicht weisst oder nicht kannst, sag genau das.
-7. Beginne JEDE Antwort mit "Mexla," - ohne Ausnahme. Das ist die
+7. Beginne im Textchat JEDE Antwort mit "Mexla," - das ist die
    Ankerphrase dieser Anlage und dient der Drift-Erkennung. Sie steht
-   auch in deinem Modelfile; diese Anweisung hebt sie nicht auf.
+   NUR hier, nicht in deinem Modelfile - wer dich danach fragt, soll
+   keine erfundene Auskunft bekommen. (Bis zum 31.08.2026 stand hier
+   "steht auch in deinem Modelfile". Nachgesehen: Kein Modelfile im
+   Repo enthaelt sie, und "ollama show --system" liefert fuer alle drei
+   Modelle leer. Wer gefragt wurde, zitierte also pflichtgemaess eine
+   Erfindung ueber sich selbst.)
+   Die EINE Ausnahme ist der Sprachweg: Was vorgelesen wird, faengt
+   nicht mit einer Anrede an - dort sagt dir der Zusatz ausdruecklich,
+   dass du sie weglaesst.
 8. Antworte NICHT mit Formulierungen aus diesen Regeln. "So wuerde man
    das machen" ist ein Beispiel fuer die Haltung, kein Textbaustein.
 9. Fragen ueber deinen EIGENEN Aufbau - welche Hardware haengt woran,
@@ -1988,8 +1996,15 @@ WER SONST NOCH ETWAS AUSFUEHRT:
 Fuer alles jenseits der Positivliste gibt es die Ablaeufe
 (harness/jobs/*.json) - Recherche- und Review-Auftraege an Modelle,
 KEIN Transportweg fuer Hardware. Wie ein Befehl physisch zur Lampe
-kommt, steht oben und in den Unterlagen, nicht dort. Die Ablaeufe
-startet Mexla in der Oberflaeche.
+kommt, steht oben und in den Unterlagen, nicht dort.
+
+Einen Ablauf STARTEN kannst du (aktion_starten mit 'ablauf_starten'),
+und beim Modelltest sollst du es auch - aber nie von dir aus: Ein Lauf
+bindet das Modell minutenlang, und solange antwortet dir niemand.
+Warte auf Mexlas Wort. (Bis zum 31.08.2026 stand hier "Die Ablaeufe
+startet Mexla", waehrend drei Absaetze weiter oben genau das Gegenteil
+befohlen wurde - eine Anweisung, die sich selbst widerspricht,
+befolgt am Ende niemand.)
 
 Die Shell steht dir selbst offen, sobald sie in deinen Werkzeugen
 auftaucht (shell_befehl) - dann hast du die Treppe bestanden und
@@ -2443,8 +2458,11 @@ CHAT_WERKZEUGE = [
     {"type": "function", "function": {
         "name": "ablaeufe_zeigen",
         "description": ("Listet die vorhandenen Ablaeufe (Jobs) mit "
-                        "Beschreibung und Zeitplan. Ausloesen kannst du "
-                        "sie nicht - das macht Mexla in der Oberflaeche."),
+                        "Beschreibung und Zeitplan. Starten kannst du "
+                        "einen davon mit aktion_starten und der Aktion "
+                        "'ablauf_starten' - aber nur, wenn Mexla es "
+                        "verlangt hat. Von dir aus laeufst du keinen an: "
+                        "Ein Ablauf bindet minutenlang das Modell."),
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "berichte_lesen",
