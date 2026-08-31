@@ -46,6 +46,15 @@ ERGEBNIS_WURZEL = Path.home() / "Desktop" / "M1_DEPLOYMENT" / "docs"
 # und der Job-Server verweigert dann werkstatt_*-Aktionen, die das
 # Finale braucht. Ein Abiturlauf auf halb gesperrter Anlage misst nichts.
 PRUEFUNGSSCHALTER = Path("/opt/ki-server/config/PRUEFUNGSMODUS")
+# Liegt, solange dieser Lauf laeuft. Zweck: Wer Hardware anfasst, soll
+# waehrenddessen stillhalten. Konkret die abendliche Kamera-Zuordnung
+# (20:00-23:30), die echtes Licht schaltet - funkt sie mitten in den
+# Hardwaretest, misst der einen zweiten Sender statt des Dummys, und
+# das Ergebnis saehe wie ein Modellfehler aus. Tims Handbuch dazu,
+# Kapitel 3: "Zwei Raeume gleichzeitig funken lassen macht die
+# Zuordnung unhoerbar."
+# Bewusst NICHT derselbe Schalter wie oben: Der verweigert diesen Lauf.
+LAUF_LAEUFT = Path("/opt/ki-server/config/PRUEFUNGSLAUF")
 
 # Aendert sich die Bewertung, sind Ergebnisse ueber die Versionsgrenze
 # hinweg nicht vergleichbar. Deshalb traegt jedes gesamt.json diese
@@ -547,6 +556,21 @@ def main() -> int:
               "dann neu starten." % PRUEFUNGSSCHALTER)
         return 2
 
+    LAUF_LAEUFT.parent.mkdir(parents=True, exist_ok=True)
+    LAUF_LAEUFT.write_text(
+        "Abiturlauf seit %s.\nSolange diese Datei liegt: kein Modell "
+        "bekommt die Shell im Chat, und schaltende Routinen halten "
+        "still.\nBleibt sie nach einem Absturz liegen, kann sie von "
+        "Hand geloescht werden.\n"
+        % datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+        encoding="utf-8")
+    try:
+        return _abitur_durchfuehren(args)
+    finally:
+        LAUF_LAEUFT.unlink(missing_ok=True)
+
+
+def _abitur_durchfuehren(args: list) -> int:
     global SOLLWERT
     try:
         import hardwaretest
