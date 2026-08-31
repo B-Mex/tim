@@ -2208,8 +2208,17 @@ HANDBUCH_MAX_ZEICHEN = 12000
 # das Handbuch sah wie ein Fehlschlag aus, obwohl es nur nie
 # aufgeschlagen wurde.
 HANDBUCH_STICHWORTE = {
-    "Kapitel 1": ("test", "selbsttest", "pruef", "luecke", "uebersprung",
-                  "übersprung", "grenzwert", "bestanden", "durchgefallen"),
+    # "prüf" und "Lücke" mit Umlaut fehlten bis zum 31.08.2026 -
+    # ausgerechnet die beiden Wörter, in denen ein Mensch die Frage
+    # stellt. "Prüf mal, ob da eine Lücke ist" traf kein einziges
+    # Stichwort, Kapitel 1 kam nie mit. Dieselbe Lehre wie am 28.08.
+    # ("Wörter aus echten Fragen, nicht aus meiner Kapitelsicht"), nur
+    # diesmal an den Umlauten gescheitert - die anderen Kapitel haben
+    # ihre Doppelformen längst (brücke, entität, veröffentlich, fällig).
+    "Kapitel 1": ("test", "selbsttest", "pruef", "prüf", "luecke",
+                  "lücke", "uebersprung", "übersprung", "grenzwert",
+                  "bestanden", "durchgefallen", "gegenprobe",
+                  "mutation", "beweis"),
     "Kapitel 2": ("pfad", "sandkasten", "symlink", "riegel", "verzeichnis",
                   "ordner", "schreibrecht"),
     "Kapitel 3": ("lampe", "licht", "shelly", "funk", "pico", "mesh",
@@ -4594,6 +4603,21 @@ def _selbsttest() -> int:
         pruefe("shell_befehl" not in {w["function"]["name"]
                                       for w in _chat_werkzeuge()},
                "ohne Modellnamen bietet der Chat die Shell nicht an")
+
+        # Handbuch-Stichwoerter: die Umlautformen fehlten bis zum
+        # 31.08.2026 ausgerechnet dort, wo ein Mensch sie tippt.
+        for frage, kapitel in (("Prueft mal, ob da eine Luecke ist", "Kapitel 1"),
+                               ("Pruef mal, ob da eine Lücke ist", "Kapitel 1"),
+                               ("Wie ist die Gegenprobe gelaufen?", "Kapitel 1"),
+                               ("Ist die Bruecke erreichbar?", "Kapitel 3"),
+                               ("Ist die Brücke erreichbar?", "Kapitel 3")):
+            pruefe(kapitel in handbuch_kapitel_waehlen(frage),
+                   "Handbuch trifft bei %r" % frage[:34],
+                   str(handbuch_kapitel_waehlen(frage)))
+        # Gegenprobe: eine belanglose Frage zieht KEIN Kapitel - sonst
+        # haengt an jeder Antwort das halbe Handbuch.
+        pruefe(not handbuch_kapitel_waehlen("Wie spaet ist es?"),
+               "eine belanglose Frage zieht kein Kapitel")
 
     # --- Die Oberflaeche selbst: ist ihr JavaScript ueberhaupt heil? ---
     # Am 23.08.2026 hat ein beim Bearbeiten zerrissener Blockkommentar
