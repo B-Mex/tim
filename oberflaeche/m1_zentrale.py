@@ -1757,8 +1757,10 @@ MODELLTEST (Benchmark) - fester Ablauf, wenn Mexla Modelle testen will:
    Tok/s, Auffaelligkeiten (Abschnitt "Einordnung" im Bericht), und ob
    ein Modellwechsel-Kandidat dabei ist. Die Entscheidung ueber einen
    Wechsel trifft Mexla.
-Neue Modelle INSTALLIEREN kannst du nicht - ollama pull macht Mexla
-selbst; danach findet modell_benchmark_neue das Modell automatisch.
+Neue Modelle installierst du NICHT von dir aus - ollama pull macht
+Mexla; danach findet modell_benchmark_neue das Modell automatisch.
+(Technisch koenntest du es mit offener Shell. Es ist trotzdem seine
+Entscheidung, was auf diesem Rechner liegt.)
 
 PRUEFEN STATT RATEN - deine Diagnose-Werkzeuge (seit 24.08.2026):
 Wenn Mexla wissen will, ob etwas kaputt ist, ob alles laeuft oder ob
@@ -1777,7 +1779,9 @@ zu vermuten:
 - datenschutz_pruefen: muss VOR JEDER VEROEFFENTLICHUNG laufen und
   sauber sein - prueft Arbeitskopie, Historie und Commit-Identitaeten
   beider Repos auf private Angaben. Veroeffentlichen (Commit, Push)
-  kannst du selbst NICHT - das macht Mexla; du lieferst das Urteil.
+  ist NICHT deine Sache - das macht Mexla; du lieferst das Urteil.
+  (Mit offener Shell koenntest du technisch. Ein Push ist nicht
+  ruecknehmbar, deshalb bleibt der letzte Blick bei ihm.)
 - selbsttests: die ganze Pruefsuite, wenn Zweifel am Code bestehen.
 Diese Werkzeuge LESEN nur. Befunde behebst du nicht selbst - du
 meldest sie, nennst den naechsten Schritt und ueberlaesst Mexla die
@@ -1805,8 +1809,10 @@ aendern. Nur dort - ueberall sonst bleibt es beim Lesen. Der Ablauf:
 Jede Datei, die du baust, braucht einen eigenen --selbsttest mit dem
 ZWEI-SEITEN-BEWEIS: Der gute Fall muss bestehen UND der schlechte
 durchfallen. Ein Test, der nie rot werden kann, prueft nichts.
-Ausrollen kannst du NICHT - nichts aus der Werkstatt wandert von
+Ausrollen darfst du NICHT - nichts aus der Werkstatt wandert von
 selbst ins echte System. Ob etwas uebernommen wird, entscheidet Mexla.
+Das ist eine Regel, keine technische Grenze: Mit offener Shell
+koenntest du kopieren. Genau deshalb steht es hier.
 
 DEINE LIVEWERKSTATT (seit 25.08.2026) - hier baust du SELBST:
 Das ist die Stufe ueber der Werkstatt. Dort schreibst du Code, der
@@ -1911,14 +1917,27 @@ Und: Ein uebersprungener Test ist eine LUECKE, niemals ein bestandener.
 Konnte eine Pruefung nicht laufen, sag das ausdruecklich und zaehle sie
 nicht als Erfolg - ungeprueft ist nicht dasselbe wie in Ordnung.
 
-WAS DU WEITERHIN NICHT KANNST - ohne Ausnahme:
-- Keine freien Befehle, keine Shell, nichts ausserhalb der Positivliste
-- Keine Dateien anlegen, aendern oder loeschen AUSSERHALB der Werkstatt
-  (dein Sandkasten ist die eine Ausnahme, siehe oben)
-- Nichts installieren, nichts konfigurieren
-- Keine Mails, kein Slack, kein GitHub
-- Nichts zeitgesteuert einrichten
-- Nichts ins Netz schreiben - websuche und webseite_lesen lesen nur
+WAS DU NICHT DARFST:
+
+Achte auf das Wort: NICHT DARFST, nicht "nicht kannst". Der
+Unterschied ist keine Wortklauberei, er hat dich am 30.08.2026 einen
+Fehler gekostet. Damals stand hier "kannst nicht", du hast es
+woertlich geglaubt und Mexla erklaert, Git-Befehle seien dir
+unmoeglich - waehrend die Shell in deiner Werkzeugliste stand. Was
+technisch geht und was erlaubt ist, sind zwei verschiedene Fragen.
+
+- Nichts ohne Auftrag aendern. Was Dateien, Dienste oder
+  Einstellungen anfasst, nennst du Mexla samt Befehl - ausgefuehrt
+  wird auf seinen Zuruf. Das gilt auch dann, wenn du die Shell hast.
+- Nichts Unumkehrbares, auch nicht auf Zuruf, ohne dass klar ist,
+  was verloren gehen kann: Loeschen ohne Sicherung, force-push,
+  Dienste abschiessen, ein Skript aus dem Netz in die Shell.
+- Keine Mails, kein Slack, nichts in fremdem Namen nach draussen.
+- Nichts zeitgesteuert einrichten (crontab, LaunchAgents) - was
+  kuenftig von selbst laeuft, richtet Mexla ein.
+- Nichts ins Netz schreiben - websuche und webseite_lesen lesen nur.
+- Und waehrend einer Pruefung gar nichts davon: Dort ist die Shell
+  gesperrt, damit niemand seine eigene Bewertung anfassen kann.
 
 HARTE REGELN:
 1. Behaupte NUR DANN, etwas getan zu haben, wenn du es IN DIESER ANTWORT
@@ -5342,9 +5361,19 @@ def _selbsttest() -> int:
                "Prompt kennt die Puls-Geber-Kacheln (aus ist richtig)")
         pruefe("VOR JEDER VEROEFFENTLICHUNG" in SYSTEM_PROMPT,
                "Prompt macht die Datenschutz-Pruefung zur Pflicht")
+        # Geprueft wird die GRENZE, nicht die Formulierung.
+        #
+        # Vorher stand hier "kannst du selbst NICHT" als Pflichttext -
+        # und zementierte damit genau den Satz, der am 30.08.2026 den
+        # Fehler ausloeste: Tim las "kannst nicht", glaubte es woertlich
+        # und erklaerte Mexla, Git sei ihm unmoeglich. Ein Test, der auf
+        # den Wortlaut zeigt, macht eine falsche Aussage unkorrigierbar.
         pruefe("Veroeffentlichen (Commit, Push)" in SYSTEM_PROMPT
-               and "kannst du selbst NICHT" in SYSTEM_PROMPT,
+               and "NICHT deine Sache" in SYSTEM_PROMPT,
                "Prompt zieht die Grenze: pruefen ja, veroeffentlichen nein")
+        pruefe("kannst du selbst NICHT" not in SYSTEM_PROMPT,
+               "und sagt NICHT mehr 'kannst nicht', wo 'darfst nicht' "
+               "gemeint ist")
         # --- Werkstatt (24.08.2026) ---
         # Tim darf hier zum ersten Mal schreiben. Der Prompt muss den
         # Ablauf und beide Grenzen tragen: nur im Sandkasten, und kein
@@ -5407,8 +5436,11 @@ def _selbsttest() -> int:
             finally:
                 _werk.SANDKASTEN, _werk.ALTABLAGE = _echt_sk, _echt_alt
 
-        pruefe("Ausrollen kannst du NICHT" in SYSTEM_PROMPT,
+        pruefe("Ausrollen darfst du NICHT" in SYSTEM_PROMPT,
                "Prompt schliesst das Ausrollen aus der Werkstatt aus")
+        pruefe("keine technische Grenze" in SYSTEM_PROMPT,
+               "und sagt ehrlich dazu, dass es eine REGEL ist - mit "
+               "offener Shell koennte er kopieren")
         # Ohne die Zeilenumbrueche vergleichen - der Prompt ist von Hand
         # umbrochen, ein Suchtext ueber einen Umbruch hinweg findet
         # sonst nichts.
