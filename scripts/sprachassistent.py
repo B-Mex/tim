@@ -687,6 +687,151 @@ def _audio_neu_laden():
         pass
 
 
+# --- Warum -9986 wirklich kommt ---------------------------------------
+# Gemessen am 31.08.2026. Anlass: 11807 Zeilen "Aufnahmestrom gestoert:
+# ... PaErrorCode -9986" in logs/sprachassistent.log und fuenf Tage
+# Verdacht gegen Webcam, USB-Hub und Kameradienst - keiner davon war
+# schuld. Im Systemprotokoll steht der wahre Grund:
+#
+#   coreaudiod  HALB_SharedBuffer::Lock: mlock failed: byte size 81920,
+#               errno 35 Resource temporarily unavailable
+#   coreaudiod  IOWorkLoop: failed to start the hardware
+#   coreaudiod  stopping with error 2003329396
+#
+# 2003329396 ist 0x77686174, also 'what' - genau das err=''what'' aus
+# der PaMacCore-Zeile, kAudioHardwareUnspecifiedError.
+#
+# CoreAudio nagelt fuer JEDEN Aufnahmestrom einen 80-KiB-Puffer im
+# Arbeitsspeicher fest (mlock). Haelt Ollama ein grosses Modell im
+# vereinheitlichten Speicher, steht der festgenagelte Speicher ueber
+# vm.global_user_wire_limit - dann scheitert jedes weitere mlock, auch
+# das winzige von CoreAudio. PortAudio reicht das als -9986 durch.
+#
+# Nachgemessen, beide Richtungen, Mac Studio M1 Max 32 GB:
+#   nemotron-3.5-lightning (23,66 GiB): wired 27,33 GiB > Grenze 25,28
+#       -> mlock scheitert, 18 Fehler/min, 0x gehoert
+#   kein Modell:            wired  1,84 GiB
+#       -> mlock gelingt 6/6, 0 Fehler, 42x gehoert je Minute
+#   laguna-xs-2.1 (19,05 GiB): wired 21,31 GiB
+#       -> mlock gelingt 3/3, 0 Fehler, 44x gehoert je Minute
+#
+# Das Mikrofon ist in all diesen Faellen in Ordnung. Deshalb darf der
+# Assistent hier NICHT die Geraeteliste neu laden - das ist die falsche
+# Medizin und war der Grund, warum die Suche so lange in die Irre lief.
+MLOCK_PROBE_BYTES = 81920      # exakt die Groesse aus dem CoreAudio-Protokoll
+WARTEN_BEI_KLEMME = 20         # s zwischen Neuversuchen, wenn kein Strom steht
+# Wie lange eine aufgeschobene Erneuerung wartet, bevor sie es erneut
+# versucht. Deutlich kuerzer als STROM_ERNEUERN: sobald das Modell
+# entladen ist, soll der Strom zuegig wieder planmaessig erneuert werden
+# - der Schutz vor dem Rauschen einer abgezogenen Webcam (22.08.2026)
+# darf nur aufgeschoben, nicht aufgehoben werden.
+AUFSCHUB_BEI_KLEMME = 30
+
+
+def _wired_und_grenze():
+    """(festgenagelt, Grenze) in GiB - (None, None), wenn nicht lesbar."""
+    wired = grenze = None
+    try:
+        aus = subprocess.run(["vm_stat"], capture_output=True, text=True,
+                             timeout=10).stdout
+        for zeile in aus.splitlines():
+            if "wired down" in zeile:
+                roh = zeile.split(":")[1].strip().rstrip(".")
+                # vm_stat trennt Tausender je nach Sprache mit . oder ,
+                wired = int(re.sub(r"[.,]", "", roh)) * 16384 / 2 ** 30
+                break
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    try:
+        aus = subprocess.run(["sysctl", "-n", "vm.global_user_wire_limit"],
+                             capture_output=True, text=True, timeout=10).stdout
+        grenze = int(aus.strip()) / 2 ** 30
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return wired, grenze
+
+
+def _grosse_modelle():
+    """Was Ollama gerade im Speicher haelt, als lesbarer Text - oder ''."""
+    try:
+        antwort = requests.get("http://127.0.0.1:11434/api/ps", timeout=3)
+        modelle = antwort.json().get("models", [])
+    except (requests.RequestException, ValueError, KeyError):
+        return ""
+    teile = [f"{m.get('name', '?')} ({m.get('size_vram', 0) / 2 ** 30:.2f} GiB)"
+             for m in modelle if m.get("size_vram")]
+    return ", ".join(teile)
+
+
+def klemme_text(fehlernummer, wired=None, grenze=None, modelle=""):
+    """Die Erklaerung als reiner Text - ohne zu messen.
+
+    Getrennt von der Probe, damit der Selbsttest den Wortlaut pruefen
+    kann, ohne dass zufaellig gerade ein grosses Modell geladen sein
+    muss (31.08.2026: der erste Versuch bestand genau deshalb aus dem
+    falschen Grund - der Mutationstest hat es gezeigt).
+    """
+    zahlen = ""
+    if wired is not None and grenze is not None:
+        zahlen = f" Festgenagelt {wired:.2f} GiB, Grenze {grenze:.2f} GiB."
+    schuld = f" Ollama haelt: {modelle}." if modelle else ""
+    return (
+        f"Der Speicher laesst sich nicht mehr festnageln "
+        f"(mlock {MLOCK_PROBE_BYTES} B: {os.strerror(fehlernummer)})."
+        f"{zahlen}{schuld}"
+        " Das Mikrofon ist in Ordnung - CoreAudio bekommt nur seinen"
+        " 80-KiB-Puffer nicht. Abhilfe: grosses Modell entladen"
+        " ('ollama stop <modell>') oder iogpu.wired_limit_mb senken."
+    )
+
+
+def speicher_klemmt():
+    """Erklaerung, wenn sich Speicher nicht mehr festnageln laesst.
+
+    Probiert dieselbe 80-KiB-Festnagelung, an der CoreAudio scheitert -
+    ohne Mikrofon, ohne Kamera, ohne Mikrofonberechtigung. Gelingt sie,
+    liegt die Stoerung NICHT am Speicher, und die Funktion gibt None
+    zurueck. Auch eine kaputte Probe gibt None zurueck: lieber nichts
+    sagen als etwas Falsches behaupten.
+    """
+    try:
+        import ctypes
+        import ctypes.util
+
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        puffer = ctypes.create_string_buffer(MLOCK_PROBE_BYTES)
+        ctypes.set_errno(0)
+        ergebnis = libc.mlock(ctypes.byref(puffer),
+                              ctypes.c_size_t(MLOCK_PROBE_BYTES))
+        fehlernummer = ctypes.get_errno()
+        if ergebnis == 0:
+            libc.munlock(ctypes.byref(puffer),
+                         ctypes.c_size_t(MLOCK_PROBE_BYTES))
+            return None
+    except Exception:
+        return None
+
+    wired, grenze = _wired_und_grenze()
+    return klemme_text(fehlernummer, wired, grenze, _grosse_modelle())
+
+
+_klemme_zuletzt = 0.0
+
+
+def _klemme_melden(text):
+    """Den Grund sagen - aber hoechstens alle 5 Minuten.
+
+    Warum gedrosselt (31.08.2026): Der Grund aendert sich waehrend
+    einer Klemme nicht, und genau das Zuschuetten des Protokolls mit
+    immer derselben Zeile hat die Ursache fuenf Tage lang versteckt.
+    """
+    global _klemme_zuletzt
+    if time.time() - _klemme_zuletzt < 300:
+        return
+    _klemme_zuletzt = time.time()
+    print(f"  Grund: {text}", flush=True)
+
+
 def auf_mikrofon_warten():
     """Blockiert, bis ein Eingabegeraet da ist. Nur fuer den Dienstmodus."""
     print("Kein Mikrofon gefunden - ich pruefe alle 15 Sekunden erneut.")
@@ -1732,9 +1877,17 @@ if "--selbsttest" in sys.argv:
     # mehr hat. Am 22.08.2026 ist genau das im Harness zweimal passiert
     # und nur durch den Mutationstest aufgefallen. Nicht einfach "alles
     # vor dem Selbsttest" nehmen: die Hauptschleife steht dahinter.
+    #
+    # rpartition, nicht partition (31.08.2026): Die Suchzeile darunter
+    # enthaelt den Schlusstext selbst und war damit sein erster Treffer.
+    # Der Schnitt endete deshalb HIER statt am echten Blockende - alle
+    # Pruefungen darunter blieben in _datei stehen und fanden sich
+    # selbst. Genau die Falle, vor der der Absatz oben warnt; sie ist
+    # beim Mutationstest der neuen Speicher-Pruefung aufgefallen, weil
+    # das Entfernen des echten Codes unbemerkt blieb.
     _ganz = open(__file__, encoding="utf-8").read()
     _vor, _, _rest = _ganz.partition('if "--selbsttest" in sys.argv:')
-    _, _, _nach = _rest.partition("sys.exit(1 if _fehler else 0)")
+    _, _, _nach = _rest.rpartition("sys.exit(1 if _fehler else 0)")
     _datei = _vor + _nach
     import inspect as _inspect
     _quelle = _inspect.getsource(transkribieren)
@@ -1769,6 +1922,121 @@ if "--selbsttest" in sys.argv:
     _pruefe(_datei.count("mikrofon_waehlen()") >= 3,
             "Mikrofon wird bei jedem Stromaufbau neu bestimmt",
             f"{_datei.count('mikrofon_waehlen()')} Stellen")
+
+    # Der Schnitt oben muss den GANZEN Selbsttest erwischen. Bis zum
+    # 31.08.2026 tat er das nicht: die Suchzeile enthielt ihren eigenen
+    # Schlusstext, also endete der Schnitt dort, und alle Pruefungen
+    # darunter blieben in _datei stehen und fanden sich selbst. Diese
+    # Marke steht nur in dieser einen Zeile - findet sie sich in
+    # _datei, hat der Schnitt zu frueh geendet. Bewusst als ein Stueck
+    # geschrieben: zusammengesetzt wuerde sie im Quelltext nicht
+    # auftauchen und die Pruefung waere blind.
+    _pruefe("SCHNITTMARKE-SELBSTTEST-2026-08-31" not in _datei,
+            "Selbsttest-Block wird vollstaendig herausgeschnitten")
+
+    # Speicherklemme als Ursache von -9986 (nachgemessen 31.08.2026,
+    # siehe Kommentarblock bei speicher_klemmt()).
+    _pruefe(MLOCK_PROBE_BYTES == 81920,
+            "Probe nagelt genau so viel fest wie CoreAudio (81920 B)",
+            str(MLOCK_PROBE_BYTES))
+
+    # Die Reihenfolge IST der Fix: erst nach der Speicherklemme sehen,
+    # dann erst am Geraet ruetteln. Andersherum laedt der Dienst die
+    # Geraeteliste neu, obwohl das Mikrofon gar nicht das Problem ist -
+    # genau die falsche Faehrte, die vom 26. bis 31.08.2026 verfolgt
+    # wurde.
+    #
+    # Geprueft wird der Syntaxbaum, nicht der Text (31.08.2026): Ein
+    # erster Versuch suchte die beiden Namen als Zeichenkette - und
+    # bestand weiter, nachdem der echte Code entfernt war, weil der
+    # ERKLAERENDE KOMMENTAR den Namen ebenfalls enthaelt. Der
+    # Mutationstest hat das gezeigt. Ein Kommentar steht nicht im Baum.
+    import ast as _ast
+    _zweige = []
+    for _knoten in _ast.walk(_ast.parse(_ganz)):
+        if not isinstance(_knoten, _ast.ExceptHandler):
+            continue
+        _rufe = [(_k.lineno, _k.func.id) for _k in _ast.walk(_knoten)
+                 if isinstance(_k, _ast.Call)
+                 and isinstance(_k.func, _ast.Name)]
+        _namen = {n for _, n in _rufe}
+        if {"speicher_klemmt", "_audio_neu_laden"} <= _namen:
+            _erste = {}
+            for _zeile, _name in sorted(_rufe):
+                _erste.setdefault(_name, _zeile)
+            _zweige.append((_erste["speicher_klemmt"],
+                            _erste["_audio_neu_laden"]))
+    _pruefe(len(_zweige) == 1 and _zweige[0][0] < _zweige[0][1],
+            "Fehlerzweig prueft die Speicherklemme VOR der Geraeteliste",
+            str(_zweige))
+
+    # Die planmaessige Erneuerung darf einen ARBEITENDEN Strom nicht
+    # gegen Taubheit eintauschen: Vor dem Schliessen muss geprueft
+    # werden, ob sich ein neuer ueberhaupt oeffnen liesse. Wieder ueber
+    # den Baum, damit ein Kommentar allein nicht besteht: gesucht wird
+    # ein if, dessen Bedingung STROM_ERNEUERN nennt und in dessen Koerper
+    # speicher_klemmt() wirklich aufgerufen wird.
+    _erneuerung_prueft = False
+    for _knoten in _ast.walk(_ast.parse(_ganz)):
+        if not isinstance(_knoten, _ast.If):
+            continue
+        if "STROM_ERNEUERN" not in {_n.id for _n in _ast.walk(_knoten.test)
+                                    if isinstance(_n, _ast.Name)}:
+            continue
+        for _rumpf in _knoten.body:
+            for _k in _ast.walk(_rumpf):
+                if isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Name) \
+                        and _k.func.id == "speicher_klemmt":
+                    _erneuerung_prueft = True
+    _pruefe(_erneuerung_prueft,
+            "Planmaessige Erneuerung schiebt bei Speicherklemme auf")
+
+    # Der Aufschub muss kuerzer sein als der Regeltakt - sonst wird aus
+    # dem Aufschub eine heimliche Abschaltung des Geraetewechsel-Schutzes.
+    _pruefe(0 < AUFSCHUB_BEI_KLEMME < STROM_ERNEUERN,
+            "Aufschub ist kuerzer als der Erneuerungstakt",
+            f"{AUFSCHUB_BEI_KLEMME}s vs {STROM_ERNEUERN}s")
+
+    # Der Waechter (harness/mikrofon_waechter.py) ruft TAUB erst nach
+    # FEHLER_FUER_TAUB=3 Neuaufsetzungen innerhalb von STILLE_MINUTEN=10.
+    # Wird hier zu lange gewartet, sieht er zu wenige und schweigt,
+    # obwohl Tim taub ist. 3 Fehler muessen also deutlich unter 10 min
+    # zusammenkommen.
+    _pruefe(0 < WARTEN_BEI_KLEMME * 3 <= 300,
+            "Wartetakt laesst den Waechter noch 3 Fehler je 10 min sehen",
+            f"{WARTEN_BEI_KLEMME}s x3 = {WARTEN_BEI_KLEMME * 3}s")
+
+    # Die Drosselung darf den Grund nicht doppelt ins Protokoll
+    # schreiben - genau dieses Zuschuetten hat die Ursache versteckt.
+    import io as _io
+    import contextlib as _ctx
+    _klemme_zuletzt = 0.0
+    _topf = _io.StringIO()
+    with _ctx.redirect_stdout(_topf):
+        _klemme_melden("Probegrund")
+        _klemme_melden("Probegrund")
+    _pruefe(_topf.getvalue().count("Probegrund") == 1,
+            "Grund wird gedrosselt, nicht bei jedem Fehler wiederholt",
+            f"{_topf.getvalue().count('Probegrund')}x")
+
+    # Der Wortlaut muss das Mikrofon ausdruecklich entlasten - sonst
+    # schickt die Meldung den naechsten Sucher wieder zur Webcam, so
+    # wie es vom 26. bis 31.08.2026 lief. Geprueft wird klemme_text()
+    # direkt: unabhaengig davon, ob gerade ein Modell geladen ist.
+    _wortlaut = klemme_text(35, 27.33, 25.28, "grossmodell (23.66 GiB)")
+    _pruefe("Mikrofon ist in Ordnung" in _wortlaut,
+            "Meldung entlastet das Mikrofon ausdruecklich", _wortlaut[:90])
+    _pruefe("27.33" in _wortlaut and "25.28" in _wortlaut
+            and "grossmodell" in _wortlaut,
+            "Meldung nennt Zahlen und den Speicherfresser beim Namen",
+            _wortlaut[:90])
+
+    # Die Probe selbst darf nie werfen und nie etwas behaupten, was sie
+    # nicht gemessen hat: entweder None (Speicher frei) oder Text.
+    _befund = speicher_klemmt()
+    _pruefe(_befund is None or isinstance(_befund, str),
+            "Speicherprobe liefert None oder eine Erklaerung",
+            str(_befund)[:90])
 
     # Gleichlauf mit autonomie.py - wie im Selbsttest der Zentrale.
     try:
@@ -1886,6 +2154,28 @@ while True:
                 # Regelmaessig erneuern, damit ein Geraetewechsel
                 # auffaellt (siehe STROM_ERNEUERN).
                 if time.time() - _strom_seit >= STROM_ERNEUERN:
+                    # Aber NICHT, solange der Speicher klemmt
+                    # (31.08.2026): Ein bereits laufender Aufnahmestrom
+                    # ueberlebt eine Speicherklemme muehelos - gemessen
+                    # bei 27,86 GiB festgenageltem Speicher: 41x
+                    # gehoert je Minute, kein einziger Fehler. Nur das
+                    # OEFFNEN eines Stroms braucht die 80-KiB-
+                    # Festnagelung, an der CoreAudio scheitert.
+                    #
+                    # Wer hier trotzdem schliesst, tauscht einen
+                    # arbeitenden Strom gegen Taubheit, bis das grosse
+                    # Modell wieder entladen ist. Genau so ist Tim am
+                    # 31.08.2026 um 18:34:10 verstummt: das Modell lag
+                    # im Speicher, die naechste planmaessige Erneuerung
+                    # kam - und der neue Strom ging nicht mehr auf.
+                    _klemme = speicher_klemmt()
+                    if _klemme:
+                        _klemme_melden("Erneuern des Aufnahmestroms "
+                                       "aufgeschoben, ich hoere weiter. "
+                                       + _klemme)
+                        _strom_seit = (time.time() - STROM_ERNEUERN
+                                       + AUFSCHUB_BEI_KLEMME)
+                        continue
                     break
 
                 audio = puffer_letzte(puffer, PRUEFFENSTER)
@@ -1909,6 +2199,19 @@ while True:
     except Exception as e:
         print(f"Aufnahmestrom gestoert: {e}")
         _fehler_folge += 1
+        # Seit 31.08.2026: erst nachsehen, WARUM (siehe speicher_klemmt()).
+        # Klemmt der festgenagelte Speicher, ist das Eingabegeraet
+        # unschuldig - dann waere das Neuladen der Geraeteliste die
+        # falsche Medizin, und ein Neuversuch alle 2 s erzeugt nur
+        # Protokollrauschen (11807 Zeilen bis zum 31.08.). Der Waechter
+        # zaehlt weiter mit: 20 s Takt heisst in seinem 10-Minuten-
+        # Fenster rund 30 Neuaufsetzungen, weit ueber FEHLER_FUER_TAUB=3.
+        _klemme = speicher_klemmt()
+        if _klemme:
+            _klemme_melden(_klemme)
+            _fehler_folge = 0
+            time.sleep(WARTEN_BEI_KLEMME)
+            continue
         if _fehler_folge >= 3:
             # Mehrfach hintereinander: meist ist das Eingabegeraet weg
             # (Webcam abgezogen, AirPods getrennt). Geraeteliste neu
