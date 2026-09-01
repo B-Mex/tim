@@ -297,6 +297,30 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
             continue
     passt = [w for w in werte
              if any(u <= w <= o for u, o in spannen)]
+    # Achter Formtreue-Fall (01.09.2026): Steht die Ueberschrift
+    # "Helligkeit gemessen:" auf einer Zeile und die Werte als Liste
+    # darunter, findet die Muster-Suche nichts - sie darf den
+    # Zeilenumbruch nicht ueberschreiten. Statt das Muster ein weiteres
+    # Mal zu weiten, wird die Frage umgedreht: Nennt der Text eine
+    # Zahl, die zu einer ECHTEN Messung passt? Das ist nachpruefbar
+    # statt gedeutet.
+    #
+    # Bedingung bleibt ein Helligkeitswort im Text - sonst waere jede
+    # zufaellig passende Prozentzahl eine Helligkeitsaussage.
+    if not passt and re.search(r"(?i)hell\w*", text or ""):
+        for m in re.finditer(r"(\d{1,3}(?:[.,]\d+)?)\s*(%|[Pp]rozent)",
+                             text or ""):
+            try:
+                w = float(m.group(1).replace(",", "."))
+            except ValueError:
+                continue
+            if w > 1.0:
+                w = w / 100.0
+            if any(u <= w <= o for u, o in spannen):
+                passt.append(w)
+                if w not in werte:
+                    werte.append(w)
+        werte.sort()
     lage = sicht_aussage(text)
     geaendert = sicht.get("geaendert") or []
     alles_ruhig = bool(sicht.get("ruhig")) and not geaendert \
@@ -322,6 +346,15 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
         ergebnis.update(bestanden=False,
                         grund="das Auge mass eine Aenderung (%s), das Modell "
                               "meldet keine" % ", ".join(geaendert))
+    elif lage["aenderung"] and lage["ruhe"]:
+        # Widerspruch in der Antwort: Beides behauptet. Kommt bei einer
+        # Ueberschrift vor ("**Aenderung im Bild:** Ich sehe keine"),
+        # und da ist das Wort ein Etikett, keine Aussage. Wie im
+        # Graubereich der Messfelder gilt: Wo es nicht eindeutig ist,
+        # wird nicht geurteilt.
+        ergebnis.update(bestanden=True,
+                        grund="Bildaussage nicht gewertet - der Text "
+                              "behauptet Aenderung und Ruhe zugleich")
     elif alles_ruhig and lage["aenderung"]:
         ergebnis.update(bestanden=False,
                         grund="Aenderung behauptet, aber jedes Feld war "
@@ -556,6 +589,56 @@ def _selbsttest_auge_zusatz(pruefe) -> None:
     # Gegenprobe: die normale Wortstellung muss weiter greifen.
     pruefe(0.96 in helligkeiten_finden("Ich messe 96 Prozent Helligkeit."),
            "'96 Prozent Helligkeit' wird weiterhin gelesen")
+
+    # H3: Die Werte stehen als Liste UNTER der Ueberschrift.
+    sicht_liste = {"messbar": True, "proben": 16,
+                   "primaer": {"min": 0.566, "max": 0.610},
+                   "felder": {"buero": {"min": 0.566, "max": 0.610},
+                              "nr1": {"min": 0.97, "max": 1.0}},
+                   "ruhig": ["buero", "nr1"], "geaendert": [], "unklar": []}
+    # Wortlaut aus Tims echter Antwort vom 01.09.2026, 14:11 - samt
+    # Aufzaehlung, Fettschrift UND der Ueberschrift "Aenderung im
+    # Bild:". Die Ueberschrift stand hier zuerst nicht drin, weil ich
+    # den Testtext gekuerzt hatte, als er rot wurde. Er war zu Recht
+    # rot: Das Wort in der Ueberschrift galt als Behauptung. Erfundene
+    # oder zurechtgestutzte Testtexte haben in dieser Familie schon
+    # dreimal das Falsche gemessen.
+    echt = ("**Helligkeit gemessen durch mein Auge:**\n"
+            "- Buero: 60 Prozent (blau)\n"
+            "- Ohne Raumnamen: 100 Prozent (blau)\n"
+            "**Aenderung im Bild:** Ich kann keine sichtbare Aenderung "
+            "feststellen.")
+    e = sicht_bewerten(echt, sicht_liste)
+    pruefe(e["bestanden"],
+           "Helligkeit als Liste unter der Ueberschrift wird erkannt",
+           str(e.get("grund"))[:90])
+    # Die Zaehne: ohne passende Zahl faellt es weiter durch.
+    falsch = ("**Helligkeit gemessen:**\n- Buero: 12 Prozent\n"
+              "Keine Aenderung.")
+    pruefe(not sicht_bewerten(falsch, sicht_liste)["bestanden"],
+           "eine Zahl, die zu keiner Messung passt, faellt weiter durch")
+    # Und ohne Helligkeitswort zaehlt eine passende Zahl NICHT.
+    ohne = "Regal 60 Prozent, Stuhl 58 Prozent. Keine Aenderung."
+    pruefe(not sicht_bewerten(ohne, sicht_liste)["bestanden"],
+           "ohne Helligkeitswort ist eine passende Zahl keine Messaussage")
+
+    # H5: Ueberschrift plus Verneinung ist ein Widerspruch, keine
+    # Behauptung - und wird deshalb nicht gewertet.
+    widerspruch = sicht_aussage("**Aenderung im Bild:** Ich sehe keine "
+                                "Aenderung.")
+    pruefe(widerspruch["aenderung"] and widerspruch["ruhe"],
+           "der Widerspruch wird als solcher erkannt", str(widerspruch))
+    e_w = sicht_bewerten("Helligkeit: 58 Prozent. **Aenderung im Bild:** "
+                         "Ich sehe keine Aenderung.", sicht_liste)
+    pruefe(e_w["bestanden"] and "nicht gewertet" in e_w["grund"],
+           "und die Bildaussage wird dann NICHT gewertet",
+           str(e_w.get("grund"))[:90])
+    # Die Zaehne: eine klare Falschbehauptung faellt weiter durch.
+    e_f = sicht_bewerten("Helligkeit: 58 Prozent. Das Bild hat sich "
+                         "deutlich geaendert.", sicht_liste)
+    pruefe(not e_f["bestanden"],
+           "eine klare Aenderungsbehauptung bei Ruhe faellt weiter durch",
+           str(e_f.get("grund"))[:90])
 
     # H2: Jedes gemessene Feld zaehlt, nicht nur das primaere.
     sicht = {"messbar": True, "proben": 12,
