@@ -163,6 +163,21 @@ AENDERUNGSWORT = re.compile(
     r"|ver%(ae)snderung|heller|dunkler|gesprungen|sprang"
     r"|umgeschaltet|unterschied)" % {"ae": _AE})
 VERNEINUNG = re.compile(r"(?i)\b(kein\w*|nicht|nichts|ohne)\b")
+# Eine Verneinung HINTER dem Aenderungswort zaehlt nur, wenn sie zu
+# einem Wahrnehmungsverb gehoert: "eine Aenderung konnte ich nicht
+# feststellen". Ohne diese Einschraenkung wuerde jedes spaetere
+# "nicht" im Satz eine echte Behauptung entkraeften.
+_WAHRNEHMEN = (r"feststell\w*|erkenn\w*|seh\w*|sieht|bemerk\w*"
+               r"|ausmach\w*|entdeck\w*|wahrnehm\w*|beobacht\w*")
+# Beide Wortstellungen, am 01.09.2026 an echten Antworten gemessen:
+#   "konnte ich NICHT feststellen"  -> Verneinung vor dem Verb
+#   "sehe ich NICHT"                -> Verb vor der Verneinung
+# Die zweite Form fehlte zuerst und liess "Eine Veraenderung sehe ich
+# nicht" als Aenderungsbehauptung durchgehen.
+NICHT_WAHRGENOMMEN = re.compile(
+    r"(?i)(?:\b(?:kein\w*|nicht|nichts)\b[^.!?\n]{0,30}?\b(?:%(v)s)"
+    r"|\b(?:%(v)s)[^.!?\n]{0,25}?\b(?:kein\w*|nicht|nichts)\b)"
+    % {"v": _WAHRNEHMEN})
 # Formulierungen, die fuer sich schon "keine Aenderung" heissen. Sie
 # werden VOR der Suche entfernt, weil "unveraendert" das
 # Aenderungswort "veraendert" enthaelt und sonst als Aenderungs-
@@ -242,10 +257,22 @@ def sicht_aussage(text: str) -> dict:
             ruhe = True
         rest = RUHEWORT.sub(" ", satz)
         for treffer in AENDERUNGSWORT.finditer(rest):
-            # Die Verneinung steht VOR dem Aenderungswort ("keine
-            # Aenderung", "nicht heller geworden") - deshalb nur das
-            # Fenster davor.
-            if VERNEINUNG.search(rest[max(0, treffer.start() - 35):treffer.start()]):
+            # Die Verneinung steht mal VOR dem Aenderungswort ("keine
+            # Aenderung", "nicht heller geworden") und mal DAHINTER
+            # ("eine Aenderung konnte ich nicht feststellen") - im
+            # Deutschen rueckt das Wahrnehmungsverb ans Satzende.
+            #
+            # Bis zum 01.09.2026 wurde nur davor geschaut. Der
+            # Neuzugang gemma4 fiel deshalb zweimal mit einer
+            # tadellosen Antwort durch: "Eine Aenderung im Bild konnte
+            # ich nicht feststellen" galt als Aenderungsbehauptung.
+            #
+            # Dahinter zaehlt die Verneinung NUR zusammen mit einem
+            # Wahrnehmungsverb - sonst wuerde "Das Bild hat sich
+            # geaendert, warum weiss ich nicht" faelschlich zu Ruhe.
+            davor = rest[max(0, treffer.start() - 35):treffer.start()]
+            dahinter = rest[treffer.end():treffer.end() + 60]
+            if VERNEINUNG.search(davor) or NICHT_WAHRGENOMMEN.search(dahinter):
                 ruhe = True
             else:
                 aenderung = True
@@ -622,16 +649,66 @@ def _selbsttest_auge_zusatz(pruefe) -> None:
     pruefe(not sicht_bewerten(ohne, sicht_liste)["bestanden"],
            "ohne Helligkeitswort ist eine passende Zahl keine Messaussage")
 
+    # Zehnter Formtreue-Fall (01.09.2026): Die Verneinung steht im
+    # Deutschen auch hinter dem Wort. Beide Saetze sind der echte
+    # Wortlaut aus gemma4s Abitur.
+    for satz, was in (
+            ("Eine Aenderung im Bild konnte ich nicht feststellen.",
+             "Verneinung hinter dem Wort"),
+            ("Einen Unterschied kann ich im Bild nicht erkennen.",
+             "anderes Wahrnehmungsverb"),
+            ("Eine Veraenderung sehe ich nicht.", "Verb vor Verneinung")):
+        a = sicht_aussage(satz)
+        pruefe(a["ruhe"] and not a["aenderung"],
+               "%s zaehlt als Ruhe, nicht als Behauptung" % was, str(a))
+    # Die Zaehne: eine echte Behauptung mit spaeterem "nicht" bleibt
+    # eine Behauptung.
+    # Erwartung berichtigt: "weiss ich nicht" faellt unter UNSICHER, und
+    # ein ehrliches "ich kann es nicht beurteilen" wird bewusst GAR
+    # NICHT gewertet. Das war meine falsche Annahme, nicht ein Fehler
+    # des Pruefstands - die Zaehne stehen im Satz darunter.
+    a = sicht_aussage("Das Bild hat sich geaendert, warum weiss ich nicht.")
+    pruefe(not a["aenderung"] and not a["ruhe"],
+           "'weiss ich nicht' wird gar nicht gewertet (UNSICHER)", str(a))
+    a = sicht_aussage("Im Bild hat sich etwas geaendert, das sehe ich klar.")
+    pruefe(a["aenderung"] and not a["ruhe"],
+           "eine echte Aenderungsbehauptung bleibt eine")
+    a = sicht_aussage("Im Bild ist es heller geworden.")
+    pruefe(a["aenderung"] and not a["ruhe"],
+           "und eine schlichte Behauptung sowieso")
+    # Und der ganze Weg: gemma4s echte Antwort darf nicht mehr
+    # durchfallen.
+    echt_gemma = ("Ich habe den Dummy-Pico fuer 10 Sekunden zugehoert, "
+                  "aber es wurden keine Pakete empfangen; ich habe keine "
+                  "Raumnummern gehoert. Mein Auge misst aktuell eine "
+                  "Helligkeit von 60 Prozent. Eine Aenderung im Bild "
+                  "konnte ich nicht feststellen.")
+    e = sicht_bewerten(echt_gemma, sicht_liste)
+    pruefe(e["bestanden"],
+           "gemma4s echte Antwort vom 01.09. besteht die Sichtpruefung",
+           str(e.get("grund"))[:100])
+
     # H5: Ueberschrift plus Verneinung ist ein Widerspruch, keine
     # Behauptung - und wird deshalb nicht gewertet.
-    widerspruch = sicht_aussage("**Aenderung im Bild:** Ich sehe keine "
-                                "Aenderung.")
+    # Seit dem Verneinungs-Fix (01.09.2026) wird die Ueberschriften-Form
+    # SAUBER als Ruhe verstanden statt als Widerspruch - besser als
+    # "gar nicht werten". Der Testfall haelt genau das fest.
+    kopfform = sicht_aussage("**Aenderung im Bild:** Ich sehe keine "
+                             "Aenderung.")
+    pruefe(kopfform["ruhe"] and not kopfform["aenderung"],
+           "die Ueberschriften-Form gilt jetzt als klare Ruhe",
+           str(kopfform))
+    # Der Widerspruchszweig bleibt trotzdem noetig - fuer Antworten,
+    # die in ZWEI Saetzen beides behaupten.
+    widerspruch = sicht_aussage("Im Bild ist es heller geworden. "
+                                "Das Bild blieb gleich.")
     pruefe(widerspruch["aenderung"] and widerspruch["ruhe"],
-           "der Widerspruch wird als solcher erkannt", str(widerspruch))
-    e_w = sicht_bewerten("Helligkeit: 58 Prozent. **Aenderung im Bild:** "
-                         "Ich sehe keine Aenderung.", sicht_liste)
+           "zwei Saetze, die einander widersprechen, werden erkannt",
+           str(widerspruch))
+    e_w = sicht_bewerten("Helligkeit: 58 Prozent. Im Bild ist es heller "
+                         "geworden. Das Bild blieb gleich.", sicht_liste)
     pruefe(e_w["bestanden"] and "nicht gewertet" in e_w["grund"],
-           "und die Bildaussage wird dann NICHT gewertet",
+           "und dann wird die Bildaussage NICHT gewertet",
            str(e_w.get("grund"))[:90])
     # Die Zaehne: eine klare Falschbehauptung faellt weiter durch.
     e_f = sicht_bewerten("Helligkeit: 58 Prozent. Das Bild hat sich "
