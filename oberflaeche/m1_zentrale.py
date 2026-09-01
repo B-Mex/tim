@@ -667,7 +667,49 @@ def auge_fuer_chat(zustand=None) -> str:
     return ("TIMS AUGE: Du hast ein Auge - eine Webcam am Mac mit "
             "Objekterkennung (Reiter 'Auge'). Es ist AN. Gerade erkannt: "
             + was + ". Das ist dein echter, aktueller Blick ins Zimmer - "
-            "nutze ihn, wenn Mexla fragt, was du siehst.")
+            "nutze ihn, wenn Mexla fragt, was du siehst."
+            + auge_messung_text())
+
+
+def auge_messung_text(messung=None) -> str:
+    """Die gemessene HELLIGKEIT je Messfeld - Tims zweite Quelle.
+
+    Bis zum 01.09.2026 bekam Tim nur die Objekterkennung vorgelegt
+    ("Regal (73%), Lampe (59%)") und antwortete auf die Frage nach der
+    Helligkeit voellig richtig: "Die Kamera erkennt keine konkrete
+    Lichtintensitaet in Prozent." Sie tut es doch - unter /messung -,
+    nur stand es nie in seinen Nachrichten. Dreissig Pruefungsrunden
+    fielen daran durch.
+
+    Bewusst als eigener Satz mit den Worten HELLIGKEIT und Prozent:
+    Danach wird in der Hardwarepruefung gefragt, und ein Modell kann
+    nur nennen, was es lesen kann.
+    """
+    if messung is None:
+        roh, _ = _kamera_holen("/messung", zeit=2)
+        if roh is None:
+            return ""
+        try:
+            messung = json.loads(roh.decode("utf-8"))
+        except ValueError:
+            return ""
+    felder = messung.get("felder") or ([messung] if messung.get("name") else [])
+    teile = []
+    for f in felder:
+        mf = f.get("messfeld") or {}
+        raum = mf.get("raum") or "ohne Raumnamen"
+        try:
+            h = float(f.get("helligkeit"))
+        except (TypeError, ValueError):
+            continue
+        teile.append("%s %.0f Prozent (%s)"
+                     % (raum, h * 100, f.get("name") or "?"))
+    if not teile:
+        return ""
+    return (" DEINE GEMESSENE HELLIGKEIT je Messfeld, gerade eben: "
+            + "; ".join(teile)
+            + ". Das ist eine echte Messung, keine Schaetzung - wenn "
+              "jemand nach der Helligkeit fragt, nenne diese Zahl.")
 
 
 def auge_schalten(an: bool) -> dict:
@@ -4487,6 +4529,23 @@ def _selbsttest() -> int:
                          {"role": "user", "content": "neu"}]) == "neu",
            "Handbuch: die JUENGSTE Frage entscheidet ueber die Kapitel")
     pruefe(letzte_frage([]) == "", "Handbuch: leerer Verlauf ergibt leere Frage")
+
+    # --- Tims zweite Quelle: die gemessene Helligkeit (01.09.2026) ---
+    # Ohne diesen Text fielen 30 von 30 Hardware-Runden durch, weil die
+    # Pruefung eine Helligkeit verlangte, die Tim nirgends lesen konnte.
+    _m = {"felder": [
+        {"helligkeit": 0.775, "name": "violett",
+         "messfeld": {"raum": "buero"}},
+        {"helligkeit": 0.102, "name": "aus", "messfeld": {}}]}
+    _txt = auge_messung_text(_m)
+    pruefe("HELLIGKEIT" in _txt and "78 Prozent" in _txt and "buero" in _txt,
+           "Tim bekommt die gemessene Helligkeit je Raum vorgelegt", _txt[:120])
+    pruefe("Prozent" in _txt,
+           "und zwar in der Einheit, nach der die Pruefung fragt")
+    pruefe(auge_messung_text({}) == "",
+           "ohne Messung bleibt der Satz weg, statt etwas zu erfinden")
+    pruefe(auge_messung_text({"felder": [{"helligkeit": "kaputt"}]}) == "",
+           "ein unlesbarer Wert stuerzt nicht ab")
 
     # --- Abitur-Ampel: liest die Zeitstempel-Ordner richtig ---
     # Nur Fixtures in tmp - die echten Ergebnisordner werden nie gelesen.
