@@ -693,6 +693,20 @@ def urteil_bilden(ergebnis: dict) -> dict:
     return ergebnis
 
 
+def kalibrier_felder(argumente: list) -> dict:
+    """Die Felder, die einen Lauf als Kalibrierlauf kennzeichnen.
+
+    Wortgleich mit abitur_lauf._kalibrier_felder - die Ampel in
+    m1_zentrale.ist_kalibrierlauf liest genau diesen Schluessel. Steht
+    er hier anders, verschwindet der Schutz still.
+    """
+    if "--kalibrierung" not in (argumente or []):
+        return {}
+    return {"kalibrierlauf": True,
+            "kalibrierlauf_grund":
+                "Lauf zum Messen des Pruefstands - zaehlt in keiner Ampel"}
+
+
 def _git_commit() -> str:
     try:
         return subprocess.run(
@@ -1051,12 +1065,17 @@ def _lauf_durchfuehren(modell: str) -> int:
                     "von": WIEDERHOLUNGEN}
     ziel = ERGEBNISSE / ("%s.json" % _kurz(modell))
     ziel.write_text(json.dumps(e, indent=2, ensure_ascii=False))
+    gesamt = {"beendet": datetime.now().isoformat(timespec="seconds"),
+              "bewertungsversion": BEWERTUNGSVERSION,
+              "git_commit": e["git_commit"],
+              "wiederholungen": WIEDERHOLUNGEN,
+              "modelle": {modell: e}}
+    gesamt.update(kalibrier_felder(sys.argv))
+    if gesamt.get("kalibrierlauf"):
+        melde("KALIBRIERLAUF: Dieses Ergebnis zaehlt in keiner Ampel. "
+              "Kein Modell gewinnt oder verliert dadurch ein Recht.")
     (ERGEBNISSE / "gesamt.json").write_text(
-        json.dumps({"beendet": datetime.now().isoformat(timespec="seconds"),
-                    "bewertungsversion": BEWERTUNGSVERSION,
-                    "git_commit": e["git_commit"],
-                    "wiederholungen": WIEDERHOLUNGEN,
-                    "modelle": {modell: e}}, indent=2, ensure_ascii=False))
+        json.dumps(gesamt, indent=2, ensure_ascii=False))
     melde("URTEIL: %s" % e["urteil"])
     # Widerspruch und ausgefallene Nachfragen gehoeren SICHTBAR unter
     # das Urteil, nicht nur in die JSON-Datei. Wer nur die Fortschritts-
