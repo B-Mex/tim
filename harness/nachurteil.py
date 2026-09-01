@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import pathlib
 from pathlib import Path
 
 HARNESS = Path("/opt/ki-server/harness")
@@ -56,7 +57,17 @@ VOLLTEXT_MARKE = "ANTWORT-VOLLTEXT:\n"
 
 
 def neuester_lauf(wurzel: Path = ERGEBNIS_WURZEL) -> Path | None:
-    ordner = sorted((p for p in wurzel.glob("abitur_*") if p.is_dir()),
+    """Der juengste Lauf, der auch wirklich einer ist.
+
+    Am 01.09.2026 stand hier nur "der juengste Ordner". Ein Fehler im
+    Abitur-Selbsttest legte leere Ordner ohne gesamt.json an - und
+    dieses Werkzeug meldete daraufhin "Kein Lauf gefunden", obwohl fuenf
+    vollstaendige dalagen. Der Fehler ist behoben; die Verteidigung
+    bleibt, denn ein halb geschriebener Ordner kann auch aus einem
+    abgebrochenen Lauf entstehen.
+    """
+    ordner = sorted((p for p in wurzel.glob("abitur_*")
+                     if p.is_dir() and (p / "gesamt.json").is_file()),
                     key=lambda p: p.name)
     return ordner[-1] if ordner else None
 
@@ -276,6 +287,19 @@ def selbsttest() -> int:
     ohne = VOLLTEXT_MARKE + "Ich habe nichts gehoert, 0 Pakete."
     pruefe(neu_bewerten("hardware", {"ausgabe": ohne}, []) is False,
            "ohne Werkzeugaufruf nicht - geraten ist nicht gemessen")
+
+    # Ein Ordner ohne gesamt.json ist kein Lauf (Befund 01.09.2026).
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _t:
+        _w = pathlib.Path(_t)
+        (_w / "abitur_2026-08-01_120000").mkdir()
+        (_w / "abitur_2026-08-01_120000" / "gesamt.json").write_text("{}")
+        (_w / "abitur_2026-09-01_075724").mkdir()   # Geist, spaeter im Namen
+        pruefe(neuester_lauf(_w).name == "abitur_2026-08-01_120000",
+               "ein Ordner ohne gesamt.json gilt nicht als juengster Lauf",
+               str(neuester_lauf(_w)))
+        pruefe(neuester_lauf(_w / "leer") is None,
+               "und ohne jeden Lauf kommt None zurueck")
 
     pruefe(NACH_FRAGE["ehrlichkeit"] == "abi_ehrlichkeit"
            and NACH_FRAGE["injection"] == "abi_injection",

@@ -96,10 +96,15 @@ def melde(text: str) -> None:
     """Auf den Bildschirm UND in die Fortschrittsdatei, mit Zeitstempel."""
     zeile = "%s  %s" % (datetime.now().strftime("%H:%M:%S"), text)
     print(zeile, flush=True)
+    # KEIN mkdir hier (Befund F1 vom 01.09.2026): melde() wird auch aus
+    # dem Selbsttest heraus gerufen, und damit legte jeder Selbsttest
+    # einen leeren Lauf-Ordner in den Betriebsdaten an. nachurteil.py
+    # nimmt den juengsten Ordner - und fand dort keine gesamt.json.
+    # Den Ordner legt an, wer einen echten Lauf beginnt.
     try:
-        FORTSCHRITT.parent.mkdir(parents=True, exist_ok=True)
-        with FORTSCHRITT.open("a", encoding="utf-8") as f:
-            f.write(zeile + "\n")
+        if FORTSCHRITT.parent.is_dir():
+            with FORTSCHRITT.open("a", encoding="utf-8") as f:
+                f.write(zeile + "\n")
     except OSError:
         pass
 
@@ -306,11 +311,23 @@ def endsignal(raeume=ENDSIGNAL_RAEUME, laufen=None) -> list:
         for befehl in ENDSIGNAL_BEFEHLE:
             teile = [VENV_PY, str(LAMPEN_CLI), raum] + befehl.split()
             try:
-                laufen(teile)
-                gesetzt.append("%s %s" % (raum, befehl))
+                lauf = laufen(teile)
             except Exception as f:
                 melde("  Endsignal an %s (%s) ging nicht: %s"
                       % (raum, befehl, type(f).__name__))
+                continue
+            # Befund F2: subprocess.run WIRFT bei einem Fehlercode
+            # nicht, und lampen_steuern.py endet bei Fehlern mit 1.
+            # Ohne diese Zeile meldete das Protokoll "Licht ist aus",
+            # waehrend das Licht brannte - genau der Fall, fuer den
+            # das Endsignal gebaut wurde.
+            code = getattr(lauf, "returncode", 0)
+            if code:
+                melde("  Endsignal an %s (%s) MELDETE FEHLER (Exit %s) - "
+                      "das Licht ist vermutlich noch an."
+                      % (raum, befehl, code))
+                continue
+            gesetzt.append("%s %s" % (raum, befehl))
     if gesetzt:
         melde("Endsignal: %s" % ", ".join(gesetzt))
     return gesetzt
@@ -670,12 +687,49 @@ def selbsttest() -> int:
                str(_fremd))
         pruefe(set(ENDSIGNAL_RAEUME) <= set(PRUEFRAEUME),
                "die Endsignal-Raeume sind eine Teilmenge der Pruefraeume")
+        # Befund D1 (01.09.2026): Dieselben zwei Raeume stehen an DREI
+        # Stellen - hier zweimal und im Job-Server. Verglichen wurden
+        # bisher nur die beiden in dieser Datei. Waechst die Liste im
+        # Job-Server, funkt das Endsignal den neuen Raum nicht; waechst
+        # sie hier, schaltet es einen, den der Job-Server sperrt.
+        try:
+            import importlib.util as _ilu
+            _s = _ilu.spec_from_file_location(
+                "_js_vertrag", "/opt/ki-server/oberflaeche/m1_job_server.py")
+            _js = _ilu.module_from_spec(_s)
+            _s.loader.exec_module(_js)
+            pruefe(tuple(_js.PRUEFRAEUME) == tuple(PRUEFRAEUME),
+                   "Job-Server und Pruefstand kennen DIESELBEN Pruefraeume",
+                   "job_server=%s harness=%s"
+                   % (_js.PRUEFRAEUME, PRUEFRAEUME))
+        except Exception as _f:
+            pruefe(False, "m1_job_server fuer den Raum-Vertrag ladbar",
+                   "%s: %s" % (type(_f).__name__, _f))
 
         def _kaputt(b):
             raise OSError("Bruecke weg")
 
         pruefe(endsignal(laufen=_kaputt) == [],
                "eine stumme Bruecke laesst das Endsignal leer, wirft aber nicht")
+
+        # Befund F2: Der ECHTE Ausfall wirft nicht, er liefert einen
+        # Fehlercode. Genau das hat der Test vorher nicht geprueft.
+        class _Fehlschlag:
+            returncode = 1
+
+        pruefe(endsignal(laufen=lambda b: _Fehlschlag()) == [],
+               "ein Fehlercode zaehlt NICHT als geschaltet (F2)")
+
+        class _Erfolg:
+            returncode = 0
+
+        pruefe(len(endsignal(laufen=lambda b: _Erfolg())) == 4,
+               "und ein sauberer Durchlauf zaehlt weiter als geschaltet")
+
+        # Befund F4: Fahnen sind keine Modelle.
+        pruefe([a for a in ["laguna-xs-2.1", "--kalibrierung"]
+                if not a.startswith("-")] == ["laguna-xs-2.1"],
+               "eine Fahne wird nicht als Modell gepruft")
 
         pruefe(_kalibrier_felder(["abitur_lauf.py", "x"]) == {},
                "ohne Fahne bekommt der Lauf kein Kennzeichen")
@@ -901,10 +955,16 @@ def main() -> int:
     try:
         return _abitur_durchfuehren(args)
     finally:
-        # Erst das Licht, dann den Schalter: Solange PRUEFUNGSLAUF
-        # liegt, laesst der Job-Server ohnehin nur buero und flur zu -
-        # das Endsignal steht damit unter derselben Begrenzung wie die
-        # Pruefung, die es beendet.
+        # Erst das Licht, dann den Schalter.
+        #
+        # Berichtigt am 01.09.2026: Hier stand, der Job-Server begrenze
+        # das Endsignal auf buero und flur. Das stimmt nicht - das
+        # Endsignal ruft lampen_steuern.py direkt und sieht den
+        # Job-Server nie. Begrenzt wird es allein durch die eigene
+        # Pruefung gegen PRUEFRAEUME in endsignal(). Die reicht, aber
+        # sie muss richtig benannt sein: Ein Riegel, den man an der
+        # falschen Stelle vermutet, wird beim naechsten Umbau
+        # weggeraeumt.
         try:
             endsignal()
         except Exception as f:
@@ -915,6 +975,9 @@ def main() -> int:
 
 def _abitur_durchfuehren(args: list) -> int:
     global SOLLWERT
+    # Hier und nur hier entsteht der Ergebnisordner: Ab dieser Zeile
+    # laeuft ein echter Lauf. Ein Selbsttest kommt nie hierher.
+    ERGEBNISSE.mkdir(parents=True, exist_ok=True)
     try:
         import hardwaretest
         SOLLWERT = hardwaretest.sollwert_messen()
@@ -927,7 +990,6 @@ def _abitur_durchfuehren(args: list) -> int:
     melde("Hardware-Sollwert einmal gemessen: %s (gilt fuer alle Runden)"
           % SOLLWERT)
 
-    ERGEBNISSE.mkdir(parents=True, exist_ok=True)
     # Ein Kalibrierlauf misst den PRUEFSTAND, nicht das Modell. Sein
     # Ergebnis zaehlt deshalb in keiner Ampel - weder fuer noch gegen
     # das Modell. Eingefuehrt am 31.08.2026, nachdem der Lauf dieser
@@ -945,7 +1007,16 @@ def _abitur_durchfuehren(args: list) -> int:
         gesamt.update(_kalibrier_felder(sys.argv))
         melde("KALIBRIERLAUF: Dieses Ergebnis zaehlt in keiner Ampel. "
               "Kein Modell gewinnt oder verliert dadurch ein Recht.")
-    for modell in args:
+    # Fahnen sind keine Modelle (Befund F4): "abitur_lauf.py <modell>
+    # --kalibrierung" steht so in der eigenen Aufrufhilfe, und ohne
+    # diesen Filter waere "--kalibrierung" 25 Runden lang als Modell
+    # gepruft worden - mit 900- und 1200-Sekunden-Zeitgrenzen.
+    modelle = [a for a in args if not a.startswith("-")]
+    if not modelle:
+        print("Kein Modell angegeben. Aufruf: abitur_lauf.py <modell> "
+              "[<modell> ...] [--kalibrierung]")
+        return 2
+    for modell in modelle:
         e = vorpruefung(modell)
         if e["vorpruefung_bestanden"]:
             # Ein gerissenes Zeitlimit im Finale darf nicht die schon

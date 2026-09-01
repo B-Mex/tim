@@ -1000,6 +1000,45 @@ def selbsttest() -> int:
     pruefe(not e["bestanden"] and e["urteil"] == "UMGEBUNGSFEHLER",
            "ein kranker Pruefstand gibt kein Urteil ueber das Modell")
 
+    # --- Vertrag mit den beiden anderen Stellen (Befund F5/D2) -----
+    # Der Kalibrier-Schluessel steht in drei Dateien: hier, in
+    # abitur_lauf.py und - lesend - in m1_zentrale.py. Eine gemeinsame
+    # Quelle waere sauberer; bis es sie gibt, haelt dieser Test die
+    # drei gegeneinander. Schert eine aus, wird es hier laut statt
+    # still.
+    _felder = kalibrier_felder(["x", "--kalibrierung"])
+    pruefe(_felder.get("kalibrierlauf") is True and _felder.get(
+        "kalibrierlauf_grund"),
+        "Fuehrerschein kennzeichnet einen Kalibrierlauf - samt Grund",
+        str(_felder))
+    pruefe(kalibrier_felder(["x"]) == {},
+           "ohne Fahne bleibt es eine echte Pruefung")
+    try:
+        import importlib.util as _ilu
+        _s = _ilu.spec_from_file_location(
+            "_abi_vertrag", "/opt/ki-server/harness/abitur_lauf.py")
+        _abi = _ilu.module_from_spec(_s)
+        _s.loader.exec_module(_abi)
+        pruefe(_abi._kalibrier_felder(["x", "--kalibrierung"]) == _felder,
+               "Abitur und Fuehrerschein schreiben WORTGLEICH dasselbe",
+               "abitur=%s fuehrerschein=%s"
+               % (_abi._kalibrier_felder(["x", "--kalibrierung"]), _felder))
+    except Exception as _f:
+        pruefe(False, "abitur_lauf fuer den Vertragstest ladbar",
+               "%s: %s" % (type(_f).__name__, _f))
+    try:
+        _s2 = _ilu.spec_from_file_location(
+            "_zen_vertrag", "/opt/ki-server/oberflaeche/m1_zentrale.py")
+        _zen = _ilu.module_from_spec(_s2)
+        _s2.loader.exec_module(_zen)
+        pruefe(_zen.ist_kalibrierlauf(_felder) is True,
+               "und die Ampel ERKENNT, was hier geschrieben wird")
+        pruefe(_zen.ist_kalibrierlauf({}) is False,
+               "ein Lauf ohne Kennzeichen bleibt fuer die Ampel echt")
+    except Exception as _f:
+        pruefe(False, "m1_zentrale fuer den Vertragstest ladbar",
+               "%s: %s" % (type(_f).__name__, _f))
+
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler
                     else "%d FEHLER." % len(fehler)))
     return 1 if fehler else 0
