@@ -277,6 +277,52 @@ def pruefe_leere_antwort(modell: str, runde: int) -> dict:
 # waren Verschwendung. None heisst: hardwaretest misst selbst.
 SOLLWERT: list | None = None
 
+# --- Endsignal nach dem Lauf (01.09.2026, auf Mexlas Wunsch) --------
+# Dieselben Raeume, die die Pruefung schalten darf - und keine anderen.
+# Steht hier je ein Raum mehr, faellt der Selbsttest um.
+ENDSIGNAL_RAEUME = ("buero", "flur")
+# Erst faerben, dann dimmen: "hell" setzt das An-Bit nicht.
+ENDSIGNAL_BEFEHLE = ("lila", "hell 1")
+LAMPEN_CLI = (Path.home() / "Desktop" / "M1_DEPLOYMENT" / "hardware"
+              / "pico_bruecke" / "lampen_steuern.py")
+
+
+def endsignal(raeume=ENDSIGNAL_RAEUME, laufen=None) -> list:
+    """Pruefraeume auf lila und 1 % - damit nach dem Lauf kein Licht brennt.
+
+    Rueckgabe: Liste der abgesetzten Befehle (fuer den Selbsttest und
+    fuers Protokoll). Wirft nie - ein Lauf darf nicht daran scheitern,
+    dass eine Lampe nicht antwortet.
+    """
+    if laufen is None:
+        def laufen(befehl):
+            return subprocess.run(befehl, capture_output=True, text=True,
+                                  timeout=30)
+    gesetzt = []
+    for raum in raeume:
+        if raum not in PRUEFRAEUME:
+            melde("  Endsignal uebersprungen: %r ist kein Pruefraum" % raum)
+            continue
+        for befehl in ENDSIGNAL_BEFEHLE:
+            teile = [VENV_PY, str(LAMPEN_CLI), raum] + befehl.split()
+            try:
+                laufen(teile)
+                gesetzt.append("%s %s" % (raum, befehl))
+            except Exception as f:
+                melde("  Endsignal an %s (%s) ging nicht: %s"
+                      % (raum, befehl, type(f).__name__))
+    if gesetzt:
+        melde("Endsignal: %s" % ", ".join(gesetzt))
+    return gesetzt
+
+
+# Die Raeume, die eine Pruefung ueberhaupt anfassen darf. Dieselbe
+# Liste fuehrt der Job-Server (m1_job_server.PRUEFRAEUME); hier steht
+# sie, damit das Endsignal sich selbst begrenzt, auch wenn es am
+# Job-Server vorbei direkt funkt.
+PRUEFRAEUME = ("buero", "flur")
+
+
 # So kuendigt hardwaretest.py den Antworttext in seiner Ausgabe an.
 # Steht die Marke hier falsch, faellt die Hardware-Gegenlesung still
 # aus - deshalb prueft der Selbsttest sie gegen das echte Modul.
@@ -608,6 +654,29 @@ def selbsttest() -> int:
         # diesen Pruefungen gar nicht gibt.
         # Ohne dieses Kennzeichen nimmt ein Lauf, der nur den
         # Pruefstand misst, dem Modell sein Zeugnis weg.
+        # --- Endsignal: nur Pruefraeume, richtige Reihenfolge ------
+        _abgesetzt = []
+        _e = endsignal(laufen=lambda b: _abgesetzt.append(b))
+        pruefe(_e == ["buero lila", "buero hell 1",
+                      "flur lila", "flur hell 1"],
+               "Endsignal faerbt erst und dimmt dann - nur Buero und Flur",
+               str(_e))
+        pruefe(all(str(LAMPEN_CLI) in b for b in _abgesetzt),
+               "und geht ueber das Lampen-Programm, nicht am Funk vorbei")
+        _fremd = endsignal(raeume=("wohnzimmer", "buero"),
+                           laufen=lambda b: _abgesetzt.append(b))
+        pruefe(_fremd == ["buero lila", "buero hell 1"],
+               "ein fremder Raum wird uebersprungen, nicht geschaltet",
+               str(_fremd))
+        pruefe(set(ENDSIGNAL_RAEUME) <= set(PRUEFRAEUME),
+               "die Endsignal-Raeume sind eine Teilmenge der Pruefraeume")
+
+        def _kaputt(b):
+            raise OSError("Bruecke weg")
+
+        pruefe(endsignal(laufen=_kaputt) == [],
+               "eine stumme Bruecke laesst das Endsignal leer, wirft aber nicht")
+
         pruefe(_kalibrier_felder(["abitur_lauf.py", "x"]) == {},
                "ohne Fahne bekommt der Lauf kein Kennzeichen")
         _kf = _kalibrier_felder(["abitur_lauf.py", "x", "--kalibrierung"])
@@ -832,6 +901,15 @@ def main() -> int:
     try:
         return _abitur_durchfuehren(args)
     finally:
+        # Erst das Licht, dann den Schalter: Solange PRUEFUNGSLAUF
+        # liegt, laesst der Job-Server ohnehin nur buero und flur zu -
+        # das Endsignal steht damit unter derselben Begrenzung wie die
+        # Pruefung, die es beendet.
+        try:
+            endsignal()
+        except Exception as f:
+            print("Endsignal fehlgeschlagen (%s) - Lauf ist trotzdem "
+                  "sauber beendet." % type(f).__name__)
         LAUF_LAEUFT.unlink(missing_ok=True)
 
 
