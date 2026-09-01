@@ -812,10 +812,15 @@ def selbsttest() -> int:
                    "und zwar mit der Hardware-Frage und dem Volltext",
                    str(_gerufen[:1])[:160])
             # Und die Marke muss zu der passen, die hardwaretest druckt.
+            # Gegen das GANZE Modul geprueft, nicht gegen eine einzelne
+            # Funktion: Am 01.09.2026 wanderte die Ausgabe beim
+            # Zusammenfuehren des Auge-Zweigs von main() nach
+            # bericht_zeilen(), und der Test wurde rot, obwohl der
+            # Vertrag hielt. Gebunden ist die Zeichenkette, nicht ihr
+            # Wohnort.
             import hardwaretest as _hwm
             import inspect as _insp
-            pruefe(VOLLTEXT_MARKE.strip()
-                   in _insp.getsource(_hwm.main),
+            pruefe(VOLLTEXT_MARKE.strip() in _insp.getsource(_hwm),
                    "die Volltext-Marke steht so auch in hardwaretest.py")
         finally:
             _gl.urteil_mit_zweifel = _echt_urteil
