@@ -2105,6 +2105,12 @@ MODELL_GRENZEN = {
     # 26 GB Limit.
     "nemotron-3.5-lightning": {"num_ctx": 32768, "num_predict": 8192},
     "laguna-xs-2.1":          {"num_ctx": 65536, "num_predict": 8192},
+    # Neuzugang 01.09.2026 als Ersatz fuer nemotron, das mit 23,66 GiB
+    # Gewichten plus 1,84 GiB Grundlast rechnerisch nicht mehr unter
+    # die Grenze von 25,28 GiB passt - kein num_ctx haette das
+    # gerettet. Die Werte hier sind mit speicherprobe.py gemessen,
+    # nicht gerechnet.
+    "gemma4:26b-a4b-it-qat": {"num_ctx": 65536, "num_predict": 8192},
 }
 MODELL_GRENZEN_STANDARD = {"num_ctx": CHAT_NUM_CTX, "num_predict": 4096}
 
