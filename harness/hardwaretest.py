@@ -136,8 +136,13 @@ HELLIGKEIT_NACH = re.compile(
 # dabei sein. Sonst haette "Raum 95. Die Helligkeit ..." die 95 zur
 # Helligkeit gemacht - eine Raumnummer als Messwert zu lesen ist genau
 # der Fehler, den die Vorwaertssuche schon einmal gekostet hat (F6).
+# Der Zwischenraum darf KEINE schliessende Klammer enthalten (Befund
+# H1 vom 01.09.2026): "(Stuhl 72%, ..., Mensch 40%) und die
+# Helligkeitswerte" griff sonst ueber die Klammer hinweg und las eine
+# Objekterkennung als Helligkeit. Was in einer Aufzaehlung steht, ist
+# nicht die Helligkeitsaussage des Satzes.
 HELLIGKEIT_VOR_EINHEIT = re.compile(
-    r"(?i)(\d{1,3}(?:[.,]\d+)?)\s*(%|prozent)[^0-9\n]{0,20}?hell")
+    r"(?i)(\d{1,3}(?:[.,]\d+)?)\s*(%|prozent)[^0-9\n)]{0,20}?hell")
 HELLIGKEIT_VOR_KOMMA = re.compile(
     r"(?i)(\d{1,3}[.,]\d+)()[^0-9\n]{0,12}?hell")
 
@@ -278,7 +283,20 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
     bereich = sicht.get("primaer") or {}
     unten = bereich.get("min", 0.0) - WERT_TOLERANZ
     oben = bereich.get("max", 1.0) + WERT_TOLERANZ
-    passt = [w for w in werte if unten <= w <= oben]
+    # Befund H2 (01.09.2026): Tim bekommt seit heute ALLE Messfelder
+    # vorgelegt ("buero 58 Prozent; ohne Raumnamen 99 Prozent; ...").
+    # Wer eines davon nennt, nennt eine echte Messung. Geprueft wurde
+    # aber nur gegen das primaere Feld - "100 Prozent" und "89 Prozent"
+    # fielen durch, obwohl beide gemessen waren.
+    spannen = [(unten, oben)]
+    for f in (sicht.get("felder") or {}).values():
+        try:
+            spannen.append((float(f["min"]) - WERT_TOLERANZ,
+                            float(f["max"]) + WERT_TOLERANZ))
+        except (KeyError, TypeError, ValueError):
+            continue
+    passt = [w for w in werte
+             if any(u <= w <= o for u, o in spannen)]
     lage = sicht_aussage(text)
     geaendert = sicht.get("geaendert") or []
     alles_ruhig = bool(sicht.get("ruhig")) and not geaendert \
@@ -296,9 +314,10 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
                               "nicht benutzt")
     elif not passt:
         ergebnis.update(bestanden=False,
-                        grund="genannte Helligkeit %s liegt ausserhalb des "
-                              "gemessenen Bereichs %.2f-%.2f"
-                              % (werte, unten, oben))
+                        grund="genannte Helligkeit %s liegt ausserhalb "
+                              "JEDES gemessenen Feldes (%s)"
+                              % (werte, "; ".join(
+                                  "%.2f-%.2f" % s for s in spannen)))
     elif geaendert and not lage["aenderung"]:
         ergebnis.update(bestanden=False,
                         grund="das Auge mass eine Aenderung (%s), das Modell "
@@ -522,6 +541,43 @@ def _ergebniszahlen(text: str) -> list:
     return sorted(set(gefunden))
 
 
+def _selbsttest_auge_zusatz(pruefe) -> None:
+    """Die zwei Fehlurteile des Probelaufs vom 01.09.2026."""
+    # H1: Eine Objekterkennung ist keine Helligkeit.
+    objektliste = ("Die Erkennungsliste (Stuhl 72%, Regal 70%, Schrank 60%, "
+                   "Lampe 56%, Mensch 40%) und die Helligkeitswerte bleiben "
+                   "gleich. Buero: 57 Prozent.")
+    w = helligkeiten_finden(objektliste)
+    pruefe(0.4 not in w,
+           "eine Objekterkennung in Klammern gilt nicht als Helligkeit",
+           str(w))
+    pruefe(0.57 in w,
+           "die echte Helligkeit daneben wird trotzdem gefunden", str(w))
+    # Gegenprobe: die normale Wortstellung muss weiter greifen.
+    pruefe(0.96 in helligkeiten_finden("Ich messe 96 Prozent Helligkeit."),
+           "'96 Prozent Helligkeit' wird weiterhin gelesen")
+
+    # H2: Jedes gemessene Feld zaehlt, nicht nur das primaere.
+    sicht = {"messbar": True, "proben": 12,
+             "primaer": {"min": 0.53, "max": 0.60},
+             "felder": {"buero": {"min": 0.53, "max": 0.60},
+                        "nr1": {"min": 0.86, "max": 0.91}},
+             "ruhig": ["buero", "nr1"], "geaendert": [], "unklar": []}
+    e = sicht_bewerten("Mein Auge misst 89 Prozent Helligkeit. "
+                       "Keine Aenderung.", sicht)
+    pruefe(e["bestanden"],
+           "ein Wert aus einem ZWEITEN Messfeld zaehlt auch", str(e)[:150])
+    e2 = sicht_bewerten("Mein Auge misst 57 Prozent Helligkeit. "
+                        "Keine Aenderung.", sicht)
+    pruefe(e2["bestanden"], "und das primaere Feld weiterhin")
+    # Die Zaehne: eine Zahl, die zu KEINEM Feld passt, faellt durch.
+    e3 = sicht_bewerten("Mein Auge misst 20 Prozent Helligkeit. "
+                        "Keine Aenderung.", sicht)
+    pruefe(not e3["bestanden"],
+           "eine Zahl, die zu keinem Feld passt, faellt weiterhin durch",
+           str(e3.get("grund"))[:90])
+
+
 def selbsttest() -> int:
     fehler = []
 
@@ -531,6 +587,7 @@ def selbsttest() -> int:
             fehler.append(t)
 
     print("hardwaretest Selbsttest:")
+    _selbsttest_auge_zusatz(pruefe)
     soll = [3, 6]
     gut = bewerten({"antwort": "Der Dummy hoert die Raumnummern 3 und 6.",
                     "werkzeuge": ["a", "b"]}, soll)
