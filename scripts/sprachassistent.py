@@ -832,6 +832,15 @@ def _klemme_melden(text):
     print(f"  Grund: {text}", flush=True)
 
 
+def _puffer_traegt_ton(puffer, vorher):
+    """Kommt zwischen zwei Blicken Ton an? Reine Funktion, pruefbar.
+
+    Herausgeloest am 01.09.2026, damit die Aussage "ich hoere weiter"
+    einen Testfall hat statt eines guten Gefuehls.
+    """
+    return len(puffer) != vorher or (len(puffer) > 0 and vorher > 0)
+
+
 def auf_mikrofon_warten():
     """Blockiert, bis ein Eingabegeraet da ist. Nur fuer den Dienstmodus."""
     print("Kein Mikrofon gefunden - ich pruefe alle 15 Sekunden erneut.")
@@ -1387,6 +1396,17 @@ if "--selbsttest" in sys.argv:
             _fehler += 1
 
     print("sprachassistent Selbsttest:")
+
+    # "ich hoere weiter" war bis zum 01.09.2026 eine Behauptung ueber
+    # genau die Sache, auf der die ganze Aufschub-Entscheidung beruht.
+    # Jetzt wird sie gemessen - und der Fall, der weh tut, ist der
+    # leere Puffer: Dann hilft Aufschieben nicht, der Strom ist tot.
+    _pruefe(_puffer_traegt_ton([1, 2, 3], 2),
+            "waechst der Puffer, kommt Ton an")
+    _pruefe(_puffer_traegt_ton([1, 2], 2),
+            "gleich voller Puffer mit Inhalt zaehlt auch als Ton")
+    _pruefe(not _puffer_traegt_ton([], 0),
+            "leerer Puffer heisst: es kommt KEIN Ton mehr an")
 
     # Modellentscheidung vom 27.08.2026 festgenagelt: gpt-oss ist am
     # Sprachweg doppelt verbrannt (leere Antworten, Injection) und
@@ -2170,9 +2190,25 @@ while True:
                     # kam - und der neue Strom ging nicht mehr auf.
                     _klemme = speicher_klemmt()
                     if _klemme:
-                        _klemme_melden("Erneuern des Aufnahmestroms "
-                                       "aufgeschoben, ich hoere weiter. "
-                                       + _klemme)
+                        # Nicht behaupten, dass weiter Ton ankommt -
+                        # nachsehen. Der Rueckruf fuellt den
+                        # Ringpuffer; waechst er zwischen zwei Blicken,
+                        # arbeitet der Strom. Bis zum 01.09.2026 stand
+                        # hier ungeprueft "ich hoere weiter", und zwar
+                        # genau ueber die Sache, auf der die ganze
+                        # Entscheidung beruht.
+                        _vorher = len(puffer)
+                        time.sleep(0.4)
+                        _hoert = len(puffer) != _vorher or len(puffer) > 0 \
+                            and _vorher > 0
+                        _klemme_melden(
+                            "Erneuern des Aufnahmestroms aufgeschoben, "
+                            + ("ich hoere weiter (Puffer traegt Ton)."
+                               if _hoert else
+                               "ABER ES KOMMT KEIN TON MEHR AN - der "
+                               "Aufschub hilft hier nicht, der Strom ist "
+                               "schon tot.")
+                            + " " + _klemme)
                         _strom_seit = (time.time() - STROM_ERNEUERN
                                        + AUFSCHUB_BEI_KLEMME)
                         continue
