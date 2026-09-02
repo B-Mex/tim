@@ -671,6 +671,28 @@ def auge_fuer_chat(zustand=None) -> str:
             + auge_messung_text())
 
 
+def vollzug_gesprochen(befunde: list) -> str:
+    """Ein sprechbarer Satz statt der Markdown-Fussnote (Befund U6).
+
+    Der Sprachweg reicht die Antwort unveraendert an Piper weiter. Die
+    Fussnote ging dort als 256 Zeichen Markdown mit Ueberschrift und
+    Aufzaehlung raus - gegen SPRECH_ZUSATZ ("hoechstens drei Saetze,
+    keine Listen, kein Markdown") und schlicht unhoerbar.
+
+    Verschwiegen wird sie nicht: Wer laut sagt "erledigt", muss auch
+    laut hoeren, dass es nicht stimmt.
+    """
+    schief = [b for b in befunde or [] if not b.get("gelandet")]
+    if not schief:
+        return ""
+    namen = ", ".join(str(b.get("pfad") or "?") for b in schief[:3])
+    if len(schief) == 1:
+        return (" Achtung: %s ist nicht angekommen, das habe ich "
+                "nachgemessen." % namen)
+    return (" Achtung: %d Dateien sind nicht angekommen (%s), das habe "
+            "ich nachgemessen." % (len(schief), namen))
+
+
 def antwort_mit_vollzug(text: str, fussnote: str) -> dict:
     """Die Messung unter die Antwort haengen - als eigene Funktion (AP13).
 
@@ -684,7 +706,10 @@ def antwort_mit_vollzug(text: str, fussnote: str) -> dict:
     """
     ergebnis = {"antwort": (text or "") + (fussnote or "")}
     if fussnote:
+        # Der reine Modelltext wird mitgegeben, damit der Verlauf ihn
+        # ablegen kann statt der Messung (Befund U9).
         ergebnis["vollzug_offen"] = True
+        ergebnis["modelltext"] = text or ""
     return ergebnis
 
 
@@ -3831,9 +3856,12 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
         # eine Antwort verschluckt, ist schlimmer als eine unbelegte.
         try:
             _vz = _harness_modul("vollzug")
-            _fussnote = _vz.fussnote(_vz.pruefen(vollzuege))
+            _befunde = _vz.pruefen(vollzuege)
+            # Am Sprachweg ein Satz, im Chat die Fussnote (Befund U6).
+            _fussnote = (vollzug_gesprochen(_befunde) if stil == "sprache"
+                         else _vz.fussnote(_befunde))
         except Exception:
-            _fussnote = ""
+            _befunde, _fussnote = [], ""
         if not text:
             # gpt-oss liefert gelegentlich weder Werkzeugaufruf noch Text,
             # sondern nur "thinking" - dann sah die Oberflaeche einen
@@ -4400,7 +4428,16 @@ class Handler(BaseHTTPRequestHandler):
                     zusatz["gedanken"] = antwort["gedanken"]
                 if antwort.get("werkzeuge"):
                     zusatz["werkzeuge"] = antwort["werkzeuge"]
-                verlauf_anhaengen("assistant", antwort["antwort"], modell,
+                # Befund U9 (02.09.2026): Die Vollzugs-Messung stammt von
+                # der Zentrale, nicht von Tim. Sie mit seiner Antwort
+                # abzulegen hiess, sie ihm im naechsten Turn als seine
+                # EIGENE fruehere Aussage vorzulegen - er wuerde sich an
+                # etwas "erinnern", das er nie gesagt hat. Der Verlauf
+                # bekommt seinen Text; die Messung steht daneben.
+                _reintext = antwort.get("modelltext", antwort["antwort"])
+                if antwort.get("vollzug_offen"):
+                    zusatz["vollzug_offen"] = True
+                verlauf_anhaengen("assistant", _reintext, modell,
                                   chat=chat, zusatz=zusatz)
                 verlauf_kuerzen(chat)
                 antwort["ts"] = datetime.now().isoformat(timespec="seconds")
@@ -4474,12 +4511,21 @@ def _selbsttest() -> int:
     # Die Kisten-Verwechslung vom 25.08. lief ueber das CHAT-Werkzeug;
     # der Schalter kannte es bis zum 27.08. nicht (Review-Befund 9).
     # Nur ein tmp-Doppelgaenger - die echte Datei wird nie angefasst.
-    global PRUEFUNGSSCHALTER
+    # BEIDE Schalter umhaengen, nicht nur einen (Befund 02.09.2026):
+    # pruefungsdateien() liefert PRUEFUNGSSCHALTER *und* PRUEFUNGSLAUF.
+    # Wer nur den ersten umhaengt, laesst den zweiten auf den echten
+    # Betriebspfad zeigen - und dann wird dieser Selbsttest genau dann
+    # rot, wenn irgendwo wirklich eine Pruefung laeuft. Ein Test, dessen
+    # Ergebnis von der Betriebslage abhaengt, misst die Lage, nicht die
+    # Sache.
+    global PRUEFUNGSSCHALTER, PRUEFUNGSLAUF
     import tempfile as _tf_s
     _echt_schalter = PRUEFUNGSSCHALTER
+    _echt_lauf = PRUEFUNGSLAUF
     with _tf_s.TemporaryDirectory() as _tmp_s:
         try:
             PRUEFUNGSSCHALTER = Path(_tmp_s) / "PRUEFUNGSMODUS"
+            PRUEFUNGSLAUF = Path(_tmp_s) / "PRUEFUNGSLAUF"
             _namen = {w["function"]["name"] for w in _chat_werkzeuge()}
             pruefe("werkstatt_schreiben" in _namen,
                    "ohne Schalter bietet der Chat werkstatt_schreiben an")
@@ -4515,6 +4561,7 @@ def _selbsttest() -> int:
             PRUEFUNGSSCHALTER.write_text("probe")
         finally:
             PRUEFUNGSSCHALTER = _echt_schalter
+            PRUEFUNGSLAUF = _echt_lauf
 
     # Ein Schalter, ein Pfad - Abgleich mit der Livewerkstatt, damit
     # ein Auseinanderlaufen der Definitionen rot wird statt still.
@@ -4624,13 +4671,134 @@ def _selbsttest() -> int:
     pruefe(_ohne["antwort"] == "Erledigt."
            and "vollzug_offen" not in _ohne,
            "Vollzug: ohne Befund bleibt die Antwort unberuehrt", str(_ohne))
-    # OFFEN und hier ausdruecklich benannt: Die letzte Verbindung -
-    # dass die Werkzeugschleife wirklich vollzuege.append() ruft - ist
-    # von KEINEM Test gedeckt. Nachgemessen am 02.09.2026: Loescht man
-    # diese eine Zeile, bleibt der Selbsttest gruen. Sie zu decken
-    # hiesse, die Chat-Schleife samt Ollama-Aufruf mit Attrappen zu
-    # fahren; das ist eine eigene Aufgabe. Bis dahin steht die Luecke
-    # hier, damit sie niemand fuer geschlossen haelt.
+    pruefe(_mit.get("modelltext") == "Erledigt.",
+           "Vollzug: der reine Modelltext liegt fuer den Verlauf bereit "
+           "(U9) - die Messung ist nicht Tims Wort", str(_mit)[:110])
+    pruefe("modelltext" not in _ohne,
+           "Vollzug: ohne Befund braucht es keinen Sondertext")
+    _gespr = vollzug_gesprochen([{"pfad": "a.py", "gelandet": False}])
+    pruefe("Achtung" in _gespr and "**" not in _gespr and "\n" not in _gespr,
+           "Vollzug: der Sprachweg bekommt einen sprechbaren Satz ohne "
+           "Markdown (U6)", repr(_gespr))
+    pruefe(vollzug_gesprochen([{"pfad": "a.py", "gelandet": True}]) == "",
+           "Vollzug: gelandet heisst auch am Sprachweg Schweigen")
+    # --- AP13, die letzte Verbindung: ruft die Werkzeugschleife
+    #     wirklich vollzuege.append()? ------------------------------
+    # Bis zum 02.09.2026 deckte das KEIN Test: Loeschte man die Zeile in
+    # chat_anfragen(), blieb der ganze Selbsttest gruen (325 ok, exit 0)
+    # - alle Vollzugstests oben pruefen nur das Modul, nicht die
+    # Verdrahtung. Gemessen wird deshalb hier am ERGEBNIS von
+    # chat_anfragen(): ein Ollama-Doppelgaenger verlangt ein
+    # werkstatt_schreiben, das Werkzeug selbst ist eine Attrappe (der
+    # echte Sandkasten wird nicht angefasst), und der Aufloeser zeigt in
+    # einen tmp-Ordner.
+    #
+    # Zwei Seiten, sonst waere der Test wieder aus dem falschen Grund
+    # gruen: Die fehlende Datei MUSS eine Fussnote unter die Antwort
+    # haengen, die vorhandene MUSS die Antwort unberuehrt lassen.
+    def _vollzug_turn_fahren(ordner, pfad, inhalt, stil=""):
+        """Einen ganzen Chat-Turn mit Attrappen fahren. Rueckgabe: (erg, rufe).
+
+        stil="sprache" fuehrt denselben Turn ueber den Sprachweg - dort
+        muss die Messung als sprechbarer Satz herauskommen, nicht als
+        Markdown (Befund U6, 02.09.2026).
+        """
+        global OLLAMA, werkzeug_ausfuehren, _harness_modul, auge_fuer_chat
+        global handbuch_fuer_chat
+        _vz_echt = _harness_modul("vollzug")
+
+        class _VollzugMitFixture:
+            @staticmethod
+            def pruefen(vollzuege, aufloeser=None):
+                return _vz_echt.pruefen(vollzuege, lambda s, r: ordner / r)
+            fussnote = staticmethod(_vz_echt.fussnote)
+
+        posts, rufe = [], []
+
+        class _OllamaSchreibProbe(BaseHTTPRequestHandler):
+            def do_POST(self):
+                laenge = int(self.headers.get("Content-Length", "0"))
+                koerper = json.loads(self.rfile.read(laenge) or b"{}")
+                posts.append(1)
+                if "tools" in koerper and len(posts) == 1:
+                    d = {"message": {"role": "assistant", "content": "",
+                                     "tool_calls": [{"function": {
+                                         "name": "werkstatt_schreiben",
+                                         "arguments": {"pfad": pfad,
+                                                       "inhalt": inhalt}}}]}}
+                else:
+                    # Die Antwort nennt die Datei BEWUSST nicht: Sonst
+                    # koennte der Test den Dateinamen im Modelltext
+                    # wiederfinden statt in der Fussnote.
+                    d = {"message": {"role": "assistant",
+                                     "content": "Erledigt."}}
+                roh = json.dumps(d).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(roh)))
+                self.end_headers()
+                self.wfile.write(roh)
+
+            def log_message(self, format, *args):  # noqa: A002
+                pass
+
+        def _attrappe(name, argumente, **rest):
+            rufe.append(name)
+            return "Gespeichert: %s (7 Bytes)." % argumente.get("pfad")
+
+        _alt = (OLLAMA, werkzeug_ausfuehren, _harness_modul, auge_fuer_chat,
+                handbuch_fuer_chat)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaSchreibProbe)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            _echtes_modul = _alt[2]
+            OLLAMA = "http://127.0.0.1:%d" % srv.server_address[1]
+            werkzeug_ausfuehren = _attrappe
+            _harness_modul = (lambda n: _VollzugMitFixture if n == "vollzug"
+                              else _echtes_modul(n))
+            # Kamera und Handbuch aus dem Weg: Der Test soll die
+            # Vollzugspruefung messen, nicht den Kameradienst.
+            auge_fuer_chat = lambda *a, **k: ""      # noqa: E731
+            handbuch_fuer_chat = lambda *a, **k: ""  # noqa: E731
+            erg = chat_anfragen("probe", [{"role": "user",
+                                           "content": "bau mir was"}],
+                                stil=stil)
+        finally:
+            (OLLAMA, werkzeug_ausfuehren, _harness_modul, auge_fuer_chat,
+             handbuch_fuer_chat) = _alt
+            srv.shutdown()
+        return erg, rufe
+
+    with _tf_s.TemporaryDirectory() as _tvz2:
+        _o2 = Path(_tvz2)
+        (_o2 / "da.py").write_text("print('ANTON')\n", encoding="utf-8")
+        _erg, _rufe = _vollzug_turn_fahren(_o2, "fehlt.py", "print('CAESAR')\n")
+        pruefe(_rufe == ["werkstatt_schreiben"],
+               "Vollzug/Schleife: das Werkzeug wurde ueberhaupt gerufen",
+               str(_rufe))
+        pruefe(_erg.get("vollzug_offen") is True
+               and "fehlt.py" in _erg.get("antwort", "")
+               and _erg.get("antwort", "").startswith("Erledigt."),
+               "Vollzug/Schleife: eine nicht gelandete Datei landet als "
+               "Fussnote unter der ECHTEN Chat-Antwort",
+               str(_erg.get("antwort"))[:120])
+        _erg2, _ = _vollzug_turn_fahren(_o2, "da.py", "print('ANTON')\n")
+        pruefe(_erg2.get("antwort") == "Erledigt."
+               and "vollzug_offen" not in _erg2,
+               "Vollzug/Schleife: eine gelandete Datei laesst die Antwort "
+               "unberuehrt", str(_erg2)[:120])
+        # U6: Derselbe Turn ueber den Sprachweg. Dort ging die Fussnote
+        # als 256 Zeichen Markdown mit Aufzaehlung an Piper - gegen
+        # SPRECH_ZUSATZ und schlicht unhoerbar.
+        _ergs, _ = _vollzug_turn_fahren(_o2, "fehlt.py", "print('X')\n",
+                                        stil="sprache")
+        _as = _ergs.get("antwort", "")
+        pruefe(_ergs.get("vollzug_offen") is True and "fehlt.py" in _as,
+               "Vollzug/Sprache: die Messung faellt auch am Sprachweg auf",
+               repr(_as)[:120])
+        pruefe("**" not in _as and "---" not in _as and "\n- " not in _as,
+               "Vollzug/Sprache: und zwar OHNE Markdown, Liste und "
+               "Ueberschrift", repr(_as)[:160])
 
     # --- Abitur-Ampel: liest die Zeitstempel-Ordner richtig ---
     # Nur Fixtures in tmp - die echten Ergebnisordner werden nie gelesen.
