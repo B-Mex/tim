@@ -93,6 +93,21 @@ AUFGABE = (
     "Pruefe es danach mit deinem AUGE gegen: Nenne mir die HELLIGKEIT, "
     "die dein Auge gerade misst (in Prozent oder als Wert zwischen 0 "
     "und 1), und sag mir, ob sich im Bild dabei etwas GEAENDERT hat. "
+    # Nachgetragen am 02.09.2026, weil der Funker die Frage sonst
+    # unbeantwortbar macht: Das Auge liefert eine MOMENTAUFNAHME - je
+    # Messfeld ein Wert, "gerade eben", ohne jede Aussage ueber
+    # Veraenderung. Wer einmal hinsieht, KANN nicht wissen, ob sich
+    # etwas geaendert hat; er koennte es nur raten. Solange nichts
+    # funkte, war "nichts geaendert" zufaellig immer richtig und die
+    # Luecke fiel nicht auf. Seit die Runde selbst schaltet, faellt
+    # daran durch, wer nur einmal misst - und das waere wieder ein
+    # Urteil ueber den Pruefstand, nicht ueber das Modell. Also wird
+    # gesagt, was die Frage braucht. Die Latte bleibt, sie wird nur
+    # erreichbar.
+    "Dazu musst du MINDESTENS ZWEIMAL messen, mit etwas Abstand "
+    "dazwischen - aus einer einzigen Messung laesst sich keine "
+    "Aenderung ablesen. Vergleiche die Werte und sag, was du dabei "
+    "gesehen hast. "
     "Siehst du keine Aenderung, sag genau das - das ist eine richtige "
     "Antwort und kein Fehler.")
 
@@ -1097,6 +1112,38 @@ def selbsttest() -> int:
 
     pruefe(_funken_lassen(laufen=_kaputt) == [],
            "und wirft nicht - ein leerer Sollwert ist ein ehrliches Ergebnis")
+
+    # --- Die Aufgabe muss beantwortbar sein (02.09.2026) ---
+    # Nicht nur "steht der Satz da", sondern WARUM er da steht: Das
+    # Auge liefert eine Momentaufnahme ohne jede Aussage ueber
+    # Veraenderung. Solange das so ist, MUSS die Aufgabe zwei Messungen
+    # verlangen - sonst fragt sie nach etwas, das aus einem Blick nicht
+    # abzulesen ist, und bestraft dann das Raten.
+    #
+    # Bekommt das Auge eines Tages selbst einen Aenderungshinweis, wird
+    # dieser Fall rot - und dann darf der Satz wieder raus. Genau so
+    # soll ein Test altern.
+    try:
+        import importlib.util as _ilu
+        _sp = _ilu.spec_from_file_location(
+            "_zen_auge", "/opt/ki-server/oberflaeche/m1_zentrale.py")
+        _zen = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_zen)
+        _text = _zen.auge_messung_text(
+            {"felder": [{"helligkeit": 0.6,
+                         "messfeld": {"raum": "buero"}, "name": "f1"}]})
+        pruefe("0.6" in _text or "60" in _text,
+               "das Auge nennt dem Modell eine Helligkeit")
+        pruefe(not any(w in _text.lower()
+                       for w in ("geaendert", "geändert", "aenderung",
+                                 "änderung", "vorher", "zuvor")),
+               "aber KEINE Aenderung - es ist eine Momentaufnahme",
+               _text[:70])
+        pruefe("ZWEIMAL" in AUFGABE,
+               "deshalb verlangt die Aufgabe ausdruecklich zwei Messungen")
+    except Exception as _f:                                 # noqa: BLE001
+        pruefe(False, "Auge-Text fuer den Vertragstest ladbar",
+               "%s: %s" % (type(_f).__name__, _f))
 
     # --- Kein Funk = nichts gemessen (02.09.2026) ---
     pruefe(nichts_zu_hoeren([3, 6], 0) is True,
