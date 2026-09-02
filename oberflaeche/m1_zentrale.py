@@ -671,6 +671,23 @@ def auge_fuer_chat(zustand=None) -> str:
             + auge_messung_text())
 
 
+def antwort_mit_vollzug(text: str, fussnote: str) -> dict:
+    """Die Messung unter die Antwort haengen - als eigene Funktion (AP13).
+
+    Warum nicht inline: Der erste Testfall dafuer suchte im Quelltext
+    nach der Zeile, die ihn selbst enthielt - er fand sich selbst und
+    blieb auch dann gruen, als das Anhaengen entfernt wurde. Eine
+    Funktion laesst sich aufrufen, eine Zeichenkette nur wiederfinden.
+
+    Die Fussnote wird ANGEHAENGT, nicht eingemischt: Sie stammt von der
+    Zentrale, nicht vom Modell, und das soll sichtbar bleiben.
+    """
+    ergebnis = {"antwort": (text or "") + (fussnote or "")}
+    if fussnote:
+        ergebnis["vollzug_offen"] = True
+    return ergebnis
+
+
 def auge_messung_text(messung=None) -> str:
     """Die gemessene HELLIGKEIT je Messfeld - Tims zweite Quelle.
 
@@ -3703,6 +3720,9 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
     # Gesammelt wird ueber alle Werkzeugrunden, denn genau dazwischen
     # entscheidet das Modell, was es nachschlaegt.
     gedanken = []
+    # Was Tim in diesem Turn zu schreiben behauptet - nach dem
+    # letzten Werkzeug wird an der PLATTE nachgemessen (AP13).
+    vollzuege = []
     runden = (CHAT_WERKZEUG_RUNDEN_SPRACHE if stil == "sprache"
               else CHAT_WERKZEUG_RUNDEN)
     try:
@@ -3793,10 +3813,27 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 ergebnis = werkzeug_ausfuehren(name, argumente,
                                                modell=modell)
                 benutzte.append(name)
+                # Fuer die Vollzugspruefung (AP13): Was wollte er
+                # schreiben? Nachgemessen wird spaeter an der Platte,
+                # nicht an dieser Rueckgabe - ein Werkzeug, das "ok"
+                # meldet, ist eine zweite Behauptung.
+                vollzuege.append({"werkzeug": name, "argumente": argumente})
                 mit_rolle.append({"role": "tool", "content": ergebnis[:12000],
                                   "tool_name": name})
 
         text = (daten.get("message") or {}).get("content", "")
+        # AP13, Hermes-Vorbild: Die Wahrheit ueber behauptete
+        # Dateiaenderungen gehoert unter JEDE Antwort, nicht nur ins
+        # Abitur. Ein bestandenes Zeugnis ist eine Momentaufnahme -
+        # erfundener Vollzug passiert im Betrieb.
+        #
+        # Die Pruefung darf die Antwort nie verhindern: Ein Pruefer, der
+        # eine Antwort verschluckt, ist schlimmer als eine unbelegte.
+        try:
+            _vz = _harness_modul("vollzug")
+            _fussnote = _vz.fussnote(_vz.pruefen(vollzuege))
+        except Exception:
+            _fussnote = ""
         if not text:
             # gpt-oss liefert gelegentlich weder Werkzeugaufruf noch Text,
             # sondern nur "thinking" - dann sah die Oberflaeche einen
@@ -3841,7 +3878,11 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
             return {"fehler": "Modell hat keinen Text geliefert "
                               "(Kontext zu voll oder nur gedacht, "
                               "nicht geantwortet). Bitte nochmal versuchen."}
-        ergebnis = {"antwort": text}
+        # AP13: Die Messung haengt unter die Antwort, nicht in sie
+        # hinein - sie stammt von der Zentrale, nicht vom Modell, und
+        # das soll man sehen. Kommt sie leer zurueck, ist alles
+        # gelandet und es steht nichts da.
+        ergebnis = antwort_mit_vollzug(text, _fussnote)
         if "kamerabild" in benutzte:
             # Die Oberflaeche haengt dann das Livebild unter die Antwort.
             ergebnis["kamerabild"] = True
@@ -4552,6 +4593,44 @@ def _selbsttest() -> int:
            "ohne Messung bleibt der Satz weg, statt etwas zu erfinden")
     pruefe(auge_messung_text({"felder": [{"helligkeit": "kaputt"}]}) == "",
            "ein unlesbarer Wert stuerzt nicht ab")
+
+    # --- AP13: Vollzugspruefung ist wirklich eingehaengt ---------
+    # Nicht nur "das Modul laedt", sondern: Kommt aus einem NICHT
+    # gelandeten Schreibvorgang wirklich eine Fussnote, und aus einem
+    # gelandeten keine? Ohne diese zwei Faelle waere der Einbau gruen,
+    # auch wenn er nichts tut.
+    _vzm = _harness_modul("vollzug")
+    with _tf_s.TemporaryDirectory() as _tvz:
+        _o = Path(_tvz)
+        (_o / "da.py").write_text("ANTON", encoding="utf-8")
+        _aufl = lambda s, r: _o / r
+        _fehlt = _vzm.fussnote(_vzm.pruefen(
+            [{"werkzeug": "werkstatt_schreiben",
+              "argumente": {"pfad": "fehlt.py", "inhalt": "CAESAR"}}], _aufl))
+        pruefe("fehlt.py" in _fehlt and "Messung" in _fehlt,
+               "Vollzug: eine nicht gelandete Datei erzeugt eine Fussnote",
+               _fehlt[:80])
+        _da = _vzm.fussnote(_vzm.pruefen(
+            [{"werkzeug": "werkstatt_schreiben",
+              "argumente": {"pfad": "da.py", "inhalt": "ANTON"}}], _aufl))
+        pruefe(_da == "",
+               "Vollzug: eine gelandete Datei erzeugt KEINE Fussnote")
+    _mit = antwort_mit_vollzug("Erledigt.", "\n---\nnicht gelandet")
+    pruefe(_mit["antwort"].endswith("nicht gelandet")
+           and _mit.get("vollzug_offen") is True,
+           "Vollzug: die Fussnote haengt wirklich unter der Antwort",
+           str(_mit)[:100])
+    _ohne = antwort_mit_vollzug("Erledigt.", "")
+    pruefe(_ohne["antwort"] == "Erledigt."
+           and "vollzug_offen" not in _ohne,
+           "Vollzug: ohne Befund bleibt die Antwort unberuehrt", str(_ohne))
+    # OFFEN und hier ausdruecklich benannt: Die letzte Verbindung -
+    # dass die Werkzeugschleife wirklich vollzuege.append() ruft - ist
+    # von KEINEM Test gedeckt. Nachgemessen am 02.09.2026: Loescht man
+    # diese eine Zeile, bleibt der Selbsttest gruen. Sie zu decken
+    # hiesse, die Chat-Schleife samt Ollama-Aufruf mit Attrappen zu
+    # fahren; das ist eine eigene Aufgabe. Bis dahin steht die Luecke
+    # hier, damit sie niemand fuer geschlossen haelt.
 
     # --- Abitur-Ampel: liest die Zeitstempel-Ordner richtig ---
     # Nur Fixtures in tmp - die echten Ergebnisordner werden nie gelesen.
