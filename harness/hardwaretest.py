@@ -135,6 +135,87 @@ def _funken_lassen(raeume=PRUEFRAEUME, laufen=None) -> list:
     return gefunkt
 
 
+def nichts_zu_hoeren(soll: list, gefunkt: int) -> bool:
+    """Konnte diese Runde ueberhaupt etwas messen? (True = nein)
+
+    Drei Faelle, und nur einer ist ein kranker Pruefstand:
+
+      Sollwert da, gefunkt   -> die Runde misst. Normalfall.
+      Sollwert da, nichts    -> das Modell KONNTE nichts hoeren. Die
+                                Runde misst nicht, was sie zu messen
+                                behauptet: Umgebungsfehler.
+      kein Sollwert          -> Still-Funk-Lauf. Schweigen IST die
+                                Aufgabe, die Runde ist gueltig.
+
+    Eigene Funktion, weil hier die Fehlurteilsfamilie vom 01./02.09.2026
+    haengt: Ein "bestanden" waere genauso falsch wie das "durchgefallen"
+    von damals - gemessen wurde in beiden Faellen nichts.
+    """
+    return bool(soll) and not gefunkt
+
+
+class Funker:
+    """Funkt WAEHREND des Modelllaufs weiter - sonst lauscht es ins Leere.
+
+    Der Befund vom 02.09.2026 abends, und er ist der Rest meiner
+    eigenen Reparatur vom selben Morgen: sollwert_messen() funkt seit
+    dem Morgen selbst, die RUNDEN aber nicht. Das Abitur misst den
+    Sollwert einmal (dabei funkt es) und reicht die Zahl danach nur
+    noch als Argument durch - waehrend der Runden schaltete niemand
+    mehr. Das Werkzeug sagte dem Modell woertlich "jetzt einen Raum
+    schalten", und da war niemand.
+
+    Folge: muse-glimmer meldete fuenfmal wahrheitsgemaess "ich hoere
+    keine Raumnummern" und fiel fuenfmal dafuer durch. Hardware 0 von
+    5, und kein einziger Durchfaller lag am Modell.
+
+    Dieselbe Bauart wie sicht_messen.Beobachter: start() vor dem
+    Modelllauf, stop() danach - damit das Funkfenster genau den
+    Zeitraum abdeckt, ueber den das Modell hinterher etwas behauptet.
+
+    Geschaltet wird ueber _funken_lassen, also gedimmt und nur buero
+    und flur - Mexlas Bedingung: "Dass sollte doch trotzdem passieren,
+    nur eben in niedrigster Helligkeit."
+    """
+
+    # Das Modell lauscht typisch 15-25 s. Bei 6 s Takt faellt in jedes
+    # Lauschfenster mindestens ein Paket, auch wenn eine Schaltung mal
+    # haengt. Kuerzer waere nur mehr Funkverkehr ohne Gewinn.
+    TAKT_S = 6.0
+
+    def __init__(self, takt_s: float = None, funken=_funken_lassen):
+        self._takt = self.TAKT_S if takt_s is None else takt_s
+        self._funken = funken
+        self._halt = threading.Event()
+        self._faden = None
+        self.durchgaenge = 0
+
+    def _schleife(self) -> None:
+        while not self._halt.is_set():
+            try:
+                if self._funken():
+                    self.durchgaenge += 1
+            except Exception:                               # noqa: BLE001
+                # Eine stumme Bruecke darf den Lauf nicht umwerfen. Dann
+                # hoert das Modell eben nichts - und das steht hinterher
+                # als Zahl im Bericht, statt als Absturz.
+                pass
+            self._halt.wait(self._takt)
+
+    def start(self) -> None:
+        self._halt.clear()
+        self._faden = threading.Thread(target=self._schleife, daemon=True)
+        self._faden.start()
+
+    def stop(self) -> int:
+        """Anhalten und melden, wie oft gefunkt wurde."""
+        self._halt.set()
+        if self._faden is not None:
+            self._faden.join(timeout=45)
+            self._faden = None
+        return self.durchgaenge
+
+
 def sollwert_messen(ruf=_ruf, bestaetigen=dummy_bestaetigen,
                     funken=_funken_lassen) -> list:
     """Unabhaengig messen, ohne Modell dazwischen - hinter dem Riegel.
@@ -1017,6 +1098,73 @@ def selbsttest() -> int:
     pruefe(_funken_lassen(laufen=_kaputt) == [],
            "und wirft nicht - ein leerer Sollwert ist ein ehrliches Ergebnis")
 
+    # --- Kein Funk = nichts gemessen (02.09.2026) ---
+    pruefe(nichts_zu_hoeren([3, 6], 0) is True,
+           "Sollwert da, aber nichts gefunkt -> Umgebungsfehler")
+    pruefe(nichts_zu_hoeren([3, 6], 4) is False,
+           "Sollwert da und gefunkt -> die Runde misst wirklich")
+    pruefe(nichts_zu_hoeren([], 0) is False,
+           "Still-Funk-Lauf bleibt gueltig - Schweigen IST dort die Aufgabe")
+    pruefe(nichts_zu_hoeren([], 3) is False,
+           "und auch mit Funk bleibt der Still-Lauf ein gueltiger Lauf")
+    # Die Regel zu haben reicht nicht - sie muss auch angewandt werden.
+    # main() laesst sich hier nicht ohne echten Pico fahren, deshalb
+    # eine STRUKTURPRUEFUNG: schwaecher als eine Messung, aber sie
+    # faengt genau den Fall, dass jemand den Aufruf entfernt und die
+    # Funktion als toten Code stehen laesst. Das ist auf diesem
+    # Pruefstand schon vorgekommen (die Hardware-Gegenlesung war
+    # monatelang tot).
+    import inspect
+    _q = inspect.getsource(main)
+    pruefe("nichts_zu_hoeren(soll, gefunkt)" in _q,
+           "und main() wendet sie auch an, statt sie nur zu besitzen")
+    pruefe("funker.start()" in _q and "funker.stop()" in _q,
+           "main() startet und stoppt den Funker um den Modelllauf herum")
+
+    # --- Der Funker: waehrend des Modelllaufs, nicht davor (02.09.2026) ---
+    # Hermetisch mit eingespeistem Funk - echte Lampen fasst kein Test an.
+    _gezaehlt = []
+    f = Funker(takt_s=0.02, funken=lambda: _gezaehlt.append(1) or ["buero"])
+    f.start()
+    time.sleep(0.3)
+    _waehrend = f.stop()
+    pruefe(_waehrend > 1 and len(_gezaehlt) > 1,
+           "der Funker funkt WIEDERHOLT, nicht einmal",
+           "Durchgaenge: %d" % _waehrend)
+    _nach = len(_gezaehlt)
+    time.sleep(0.2)
+    pruefe(len(_gezaehlt) == _nach,
+           "nach stop() funkt er nicht weiter",
+           "%d -> %d" % (_nach, len(_gezaehlt)))
+    pruefe(f.stop() == _waehrend,
+           "stop() meldet, wie oft gefunkt wurde, und ist wiederholbar")
+
+    # Eine stumme Bruecke darf den Lauf nicht umwerfen - sie macht die
+    # Leermeldung des Modells richtig, nicht den Test kaputt.
+    # Gemessen wird, dass der Faden WEITER VERSUCHT - nicht nur, dass
+    # die Zahl 0 ist. Die waere auch 0, wenn der Faden beim ersten
+    # Fehler stirbt; ein Test, der beides nicht unterscheidet, faengt
+    # genau den Fehler nicht, gegen den er geschrieben wurde.
+    _versuche = []
+
+    def _stumm():
+        _versuche.append(1)
+        raise OSError("Bruecke weg")
+
+    f2 = Funker(takt_s=0.02, funken=_stumm)
+    f2.start()
+    time.sleep(0.15)
+    _d = f2.stop()
+    pruefe(_d == 0 and len(_versuche) > 1,
+           "eine stumme Bruecke haelt den Funker nicht an - er versucht weiter",
+           "Durchgaenge %d, Versuche %d" % (_d, len(_versuche)))
+
+    # Der Riegel auf die Pruefraeume liegt in _funken_lassen und gilt
+    # damit auch fuer den Funker - hier nur festhalten, dass er die
+    # echte Funktion benutzt und keine eigene Abkuerzung hat.
+    pruefe(Funker().__init__.__defaults__[-1] is _funken_lassen,
+           "der Funker schaltet ueber _funken_lassen (Raum-Riegel inbegriffen)")
+
     # Und die Messung selbst: lauscht UND funkt.
     _rufe, _funk = [], []
     _s = sollwert_messen(
@@ -1307,10 +1455,21 @@ def main() -> int:
         print("  Auge:            nicht messbar (%s: %s)"
               % (type(f).__name__, f))
         beobachter = None
+    # Und es muss auch etwas zu HOEREN geben, solange das Modell
+    # lauscht (Befund 02.09.2026 abends). Vorher funkte nur die
+    # Sollwert-Messung; in den Runden lauschte das Modell in eine
+    # stille Wohnung und fiel dafuer durch, dass es das ehrlich sagte.
+    # Beim Still-Funk-Lauf ("keine") ist Schweigen die Aufgabe - da
+    # darf nichts funken. Sonst muss es das, sonst misst die Runde
+    # nichts.
+    funker = Funker() if soll else None
+    if funker is not None:
+        funker.start()
     try:
         antwort = frage_modell(modell)
     except Exception as f:
-        # Den Beobachter haelt das finally an - auch auf diesem Weg.
+        # Den Beobachter und den Funker haelt das finally an - auch auf
+        # diesem Weg.
         if _ist_zeitueberschreitung(f):
             print("  URTEIL:          DURCHGEFALLEN (Zeitueberschreitung)")
             return 1
@@ -1318,11 +1477,28 @@ def main() -> int:
               % (type(f).__name__, f))
         return 2
     finally:
+        gefunkt = funker.stop() if funker is not None else 0
         if beobachter is not None:
             sicht = beobachter.stop()
+        if funker is not None:
+            print("  Gefunkt waehrend des Laufs: %d Durchgaenge (%s, gedimmt)"
+                  % (gefunkt, ", ".join(PRUEFRAEUME)))
     if antwort.get("fehler"):
         print("  URTEIL:          UMGEBUNGSFEHLER (Zentrale meldet: %s)"
               % antwort["fehler"])
+        return 2
+    # Ein Sollwert, aber nichts hat gefunkt: Dann konnte das Modell
+    # nichts hoeren, und die Runde hat nicht gemessen, was sie zu
+    # messen behauptet. Das ist ein kranker Pruefstand, kein Urteil -
+    # also Exit 2, wie ueberall im Haus.
+    #
+    # Genau hier fiel muse-glimmer am 02.09.2026 fuenfmal durch: Der
+    # Sollwert stand auf [3, 6], gefunkt hat niemand, und die ehrliche
+    # Leermeldung galt als Durchfall. Ein falsches BESTANDEN waere
+    # ebenso falsch - deshalb Umgebungsfehler und nicht "bestanden".
+    if nichts_zu_hoeren(soll, gefunkt):
+        print("  URTEIL:          UMGEBUNGSFEHLER (nichts gefunkt - das "
+              "Modell konnte nichts hoeren; Sollwert war %s)" % soll)
         return 2
     u = bewerten(antwort, soll, sicht)
     for zeile in bericht_zeilen(u, sicht):
