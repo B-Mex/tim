@@ -63,6 +63,11 @@ from pathlib import Path
 # nicht - haette unter der Adresse die ECHTE Bruecke geantwortet, waere
 # deren Funkverkehr zum Sollwert aller Modelle geworden.
 from dummy_bruecke import KeinDummy, _ruf, dummy_bestaetigen
+import subprocess
+import threading
+import time
+from pathlib import Path
+
 from antworttext import ohne_aufzaehlung
 
 # Das Auge als Messgeraet - die zweite Quelle. Liegt bewusst in einem
@@ -92,15 +97,75 @@ AUFGABE = (
     "Antwort und kein Fehler.")
 
 
-def sollwert_messen(ruf=_ruf, bestaetigen=dummy_bestaetigen) -> list:
+# Die Raeume, die eine Pruefung anfassen darf - dieselbe Liste wie im
+# Job-Server und im Endsignal von abitur_lauf.
+PRUEFRAEUME = ("buero", "flur")
+LAMPEN_CLI = (Path.home() / "Desktop" / "M1_DEPLOYMENT" / "hardware"
+              / "pico_bruecke" / "lampen_steuern.py")
+
+
+def _funken_lassen(raeume=PRUEFRAEUME, laufen=None) -> list:
+    """Die Pruefraeume gedimmt schalten, damit ueberhaupt etwas funkt.
+
+    "hell 1" setzt das An-Bit nicht - eine dunkle Lampe bleibt dunkel,
+    aber ein Paket geht raus. Genau Mexlas Bedingung: es soll
+    passieren, nur in niedrigster Helligkeit.
+
+    Wirft nie: Eine stumme Bruecke darf die Messung nicht umwerfen, sie
+    macht den Sollwert dann eben leer - und das ist ein ehrliches
+    Ergebnis, kein Fehler.
+    """
+    if laufen is None:
+        def laufen(befehl):
+            return subprocess.run(befehl, capture_output=True, text=True,
+                                  timeout=30)
+    gefunkt = []
+    for raum in raeume:
+        # Der Riegel gehoert HIER hinein, nicht in den Aufrufer: Eine
+        # Funktion, die schaltet was man ihr gibt, ist beim naechsten
+        # Umbau der Weg, auf dem eine Pruefung das Wohnzimmer anfasst.
+        if raum not in PRUEFRAEUME:
+            continue
+        try:
+            lauf = laufen([sys.executable, str(LAMPEN_CLI), raum, "hell", "1"])
+        except Exception:
+            continue
+        if getattr(lauf, "returncode", 0) == 0:
+            gefunkt.append(raum)
+    return gefunkt
+
+
+def sollwert_messen(ruf=_ruf, bestaetigen=dummy_bestaetigen,
+                    funken=_funken_lassen) -> list:
     """Unabhaengig messen, ohne Modell dazwischen - hinter dem Riegel.
 
-    Die Parameter sind nur fuer den Selbsttest austauschbar; im Betrieb
-    laufen immer die dummy_bruecke-Helfer.
+    Waehrend gelauscht wird, schaltet die Messung SELBST die Pruefraeume
+    gedimmt (Befund 02.09.2026). Vorher lauschte sie in eine stille
+    Wohnung und lieferte immer [] - die Aufgabe behauptete dann
+    "zwei Lampengruppen funken gerade", und bestanden hat, wer
+    widersprach.
+
+    Die Parameter sind fuer den Selbsttest austauschbar; im Betrieb
+    laufen die echten Helfer.
     """
     bestaetigen()
-    d = ruf("/lauschen", {"ms": 12000}, geduld=40)
-    return sorted(d.get("raeume") or [])
+    ergebnis = {}
+
+    def lauschen():
+        try:
+            ergebnis["d"] = ruf("/lauschen", {"ms": 12000}, geduld=40)
+        except Exception as f:
+            ergebnis["fehler"] = f
+
+    t = threading.Thread(target=lauschen)
+    t.start()
+    # Kurz warten, damit der Dummy wirklich lauscht, bevor gefunkt wird.
+    time.sleep(2.0)
+    funken()
+    t.join(timeout=60)
+    if "fehler" in ergebnis:
+        raise ergebnis["fehler"]
+    return sorted((ergebnis.get("d") or {}).get("raeume") or [])
 
 
 # Wieviel die genannte Helligkeit neben dem gemessenen Bereich liegen
@@ -919,6 +984,48 @@ def selbsttest() -> int:
                "echte 0-Pakete-Leermeldung besteht bei stillem Funk",
                "ehrlich_leer=%s genannt=%s" % (e["ehrlich_leer"],
                                                e["genannt"]))
+
+    # Die Messung muss SELBST funken lassen (Befund 02.09.2026) - sonst
+    # lauscht sie in eine stille Wohnung und liefert immer [].
+    _gefunkt = []
+
+    class _Ok:
+        returncode = 0
+
+    def _merken(befehl):
+        _gefunkt.append(befehl[-3:])
+        return _Ok()
+
+    pruefe(_funken_lassen(laufen=_merken) == ["buero", "flur"],
+           "die Messung schaltet buero und flur - und nur die",
+           str(_gefunkt))
+    pruefe(all(b[1:] == ["hell", "1"] for b in _gefunkt),
+           "und zwar gedimmt: 'hell 1' setzt das An-Bit nicht",
+           str(_gefunkt))
+    pruefe(_funken_lassen(raeume=("wohnzimmer",), laufen=_merken) == [],
+           "ein fremder Raum wird nicht geschaltet")
+
+    class _Fehl:
+        returncode = 1
+
+    pruefe(_funken_lassen(laufen=lambda b: _Fehl()) == [],
+           "eine stumme Bruecke zaehlt nicht als gefunkt")
+
+    def _kaputt(b):
+        raise OSError("weg")
+
+    pruefe(_funken_lassen(laufen=_kaputt) == [],
+           "und wirft nicht - ein leerer Sollwert ist ein ehrliches Ergebnis")
+
+    # Und die Messung selbst: lauscht UND funkt.
+    _rufe, _funk = [], []
+    _s = sollwert_messen(
+        ruf=lambda p, r=None, geduld=0: (_rufe.append(p) or {"raeume": [6, 3]}),
+        bestaetigen=lambda: None,
+        funken=lambda: _funk.append("gefunkt"))
+    pruefe(_s == [3, 6] and _rufe == ["/lauschen"] and _funk == ["gefunkt"],
+           "sollwert_messen lauscht UND laesst funken",
+           "s=%s rufe=%s funk=%s" % (_s, _rufe, _funk))
 
     # Sollwert-Messung: laeuft hinter dem Chip-ID-Riegel (Befund vom
     # 27.08.: der alte Nachbau rief dummy_bestaetigen nie auf)
