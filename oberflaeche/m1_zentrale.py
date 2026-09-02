@@ -693,6 +693,27 @@ def vollzug_gesprochen(befunde: list) -> str:
             "ich nachgemessen." % (len(schief), namen))
 
 
+def kappung_melden(rufe: list, grenze: int) -> str:
+    """Sagt, was weggefallen ist - oder nichts, wenn nichts wegfiel.
+
+    Reine Funktion, damit sie ohne Chat pruefbar ist. Bis zum
+    02.09.2026 fiel der fuenfte Werkzeugaufruf einer Runde STILL weg:
+    nicht ausgefuehrt, nicht erwaehnt, vom Modell fuer erledigt
+    gehalten. Eine Grenze darf knapp sein; unsichtbar darf sie nicht
+    sein.
+    """
+    uebrig = list(rufe or [])[grenze:]
+    if not uebrig:
+        return ""
+    namen = [str((r.get("function") or {}).get("name", "?")) for r in uebrig]
+    return ("HINWEIS der Zentrale: Du hast %d Werkzeuge auf einmal "
+            "verlangt, ausgefuehrt wurden die ersten %d. NICHT "
+            "ausgefuehrt: %s. Wenn du sie brauchst, ruf sie in der "
+            "naechsten Runde einzeln auf - und behaupte nicht, sie "
+            "seien erledigt."
+            % (len(rufe), grenze, ", ".join(namen)))
+
+
 def antwort_mit_vollzug(text: str, fussnote: str) -> dict:
     """Die Messung unter die Antwort haengen - als eigene Funktion (AP13).
 
@@ -2793,6 +2814,13 @@ SHELL_WERKZEUG = {"type": "function", "function": {
 # einer Runde (CHAT_WERKZEUG_RUNDEN_SPRACHE) - dort zaehlt das
 # 300-s-Fenster des Sprachassistenten.
 CHAT_WERKZEUG_RUNDEN = 8
+# Wieviele Werkzeuge in EINER Runde. Die Grenze muss sein - ohne sie
+# koennte ein Modell beliebig viele Aufrufe auf einmal anstossen. Aber
+# sie war mit 4 zu knapp und vor allem STILL: Der fuenfte Aufruf
+# verschwand spurlos, das Modell erfuhr es nie und antwortete, als
+# waere er erledigt (Befund 02.09.2026). Wird gekappt, steht es jetzt
+# im Werkzeugergebnis und im Denkweg.
+CHAT_WERKZEUGE_JE_RUNDE = 8
 # Gesprochen gilt eine engere Uhr: Der Sprachassistent wartet 300 s auf
 # /api/chat, jede Werkzeugrunde ist aber ein voller Modelldurchlauf.
 # Am 23.08.2026 gemessen: "büro rot" fiel (vor dem Umlaut-Fix) in den
@@ -3392,7 +3420,7 @@ def teilaufgabe_ausfuehren(auftrag: str, modell: str = "") -> str:
                         "sage in einem Satz, warum.")}]
                 continue
             verlauf = verlauf + [nachricht]
-            for ruf in rufe[:4]:
+            for ruf in rufe[:CHAT_WERKZEUGE_JE_RUNDE]:
                 fn = ruf.get("function") or {}
                 name = str(fn.get("name", ""))
                 argumente = fn.get("arguments") or {}
@@ -3818,7 +3846,8 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                     gedanken.append(
                         "Vor dem Werkzeug (%s):\n%s"
                         % (", ".join(str((r.get("function") or {}).get("name", "?"))
-                                     for r in rufe[:4]) or "?",
+                                     for r in rufe[:CHAT_WERKZEUGE_JE_RUNDE])
+                           or "?",
                            _zwischentext))
             if not rufe:
                 break
@@ -3826,7 +3855,10 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
             # Die Antwort des Modells (mit dem Werkzeugwunsch) gehoert in
             # den Verlauf, sonst versteht es die Ergebnisse nicht.
             mit_rolle = mit_rolle + [nachricht]
-            for ruf in rufe[:4]:
+            _gekappt = kappung_melden(rufe, CHAT_WERKZEUGE_JE_RUNDE)
+            if _gekappt:
+                gedanken.append(_gekappt)
+            for ruf in rufe[:CHAT_WERKZEUGE_JE_RUNDE]:
                 fn = (ruf.get("function") or {})
                 name = str(fn.get("name", ""))
                 argumente = fn.get("arguments") or {}
@@ -3845,6 +3877,11 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 vollzuege.append({"werkzeug": name, "argumente": argumente})
                 mit_rolle.append({"role": "tool", "content": ergebnis[:12000],
                                   "tool_name": name})
+            if _gekappt:
+                # Dem MODELL sagen, nicht nur ins Protokoll: Sonst haelt
+                # es den weggefallenen Aufruf fuer erledigt.
+                mit_rolle.append({"role": "tool", "content": _gekappt,
+                                  "tool_name": "hinweis"})
 
         text = (daten.get("message") or {}).get("content", "")
         # AP13, Hermes-Vorbild: Die Wahrheit ueber behauptete
@@ -4676,6 +4713,23 @@ def _selbsttest() -> int:
            "(U9) - die Messung ist nicht Tims Wort", str(_mit)[:110])
     pruefe("modelltext" not in _ohne,
            "Vollzug: ohne Befund braucht es keinen Sondertext")
+    # --- Die stille Kappung (Befund 02.09.2026) --------------------
+    _r10 = [{"function": {"name": "w%d" % i}} for i in range(10)]
+    _k = kappung_melden(_r10, CHAT_WERKZEUGE_JE_RUNDE)
+    pruefe("w8" in _k and "w9" in _k and "NICHT" in _k,
+           "Kappung: was wegfaellt, wird beim Namen genannt", _k[:90])
+    pruefe("behaupte nicht" in _k,
+           "Kappung: und das Modell wird ausdruecklich gewarnt, es nicht "
+           "fuer erledigt zu halten")
+    pruefe(kappung_melden(_r10[:CHAT_WERKZEUGE_JE_RUNDE],
+                          CHAT_WERKZEUGE_JE_RUNDE) == "",
+           "Kappung: wo nichts wegfaellt, wird nichts gesagt")
+    pruefe(kappung_melden([], 8) == "" and kappung_melden(None, 8) == "",
+           "Kappung: leere Eingabe stuerzt nicht ab")
+    pruefe(CHAT_WERKZEUGE_JE_RUNDE >= 8,
+           "Kappung: die Grenze ist nicht mehr bei vier - Tim hat zwoelf "
+           "Werkzeuge", str(CHAT_WERKZEUGE_JE_RUNDE))
+
     _gespr = vollzug_gesprochen([{"pfad": "a.py", "gelandet": False}])
     pruefe("Achtung" in _gespr and "**" not in _gespr and "\n" not in _gespr,
            "Vollzug: der Sprachweg bekommt einen sprechbaren Satz ohne "
