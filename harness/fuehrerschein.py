@@ -578,7 +578,7 @@ def _gegenleser_modell() -> str:
         return "unbekannt"
 
 
-def _gegenlesen_lassen(e: dict, teil: str) -> None:
+def _gegenlesen_lassen(e: dict, teil: str, modell: str = "") -> None:
     """Bei 'durchgefallen' eine zweite Meinung einholen.
 
     Sitzt hier und nicht in bewerte_t1/t2/t3, weil es GENAU EINE Stelle
@@ -597,8 +597,16 @@ def _gegenlesen_lassen(e: dict, teil: str) -> None:
     if e.get("bestanden") or e.get("umgebungsfehler"):
         return
     try:
-        from gegenleser import urteil_mit_zweifel
-        g = urteil_mit_zweifel(False, teil, e.get("antwort") or "")
+        from gegenleser import urteil_mit_zweifel, gegenleser_fuer
+        # 02.09.2026: Hier fehlte der Riegel gegen Selbstbenotung ganz.
+        # Im Abitur wurde er am 31.08. eingebaut, im Fuehrerschein nicht
+        # - haette muse-glimmer den Fuehrerschein gemacht, haette es
+        # seine eigenen Antworten benotet, und niemand haette es
+        # gesehen. 'prueflinge' setzt den Riegel, gegenleser_fuer()
+        # sorgt dafuer, dass trotzdem jemand gegenliest.
+        g = urteil_mit_zweifel(False, teil, e.get("antwort") or "",
+                               modell=gegenleser_fuer(modell),
+                               prueflinge=modell)
     except Exception as f:
         e["gegenleser"] = {"meinung": "unklar",
                            "text": "Gegenleser nicht erreichbar: %s: %s"
@@ -637,7 +645,7 @@ def lauf(modell: str) -> dict:
             start = time.time()
             e = runde(modell, teil, n)
             e["dauer_s"] = round(time.time() - start, 1)
-            _gegenlesen_lassen(e, teil)
+            _gegenlesen_lassen(e, teil, modell)
             runden.append(e)
             melde("  Runde %d/%d: %s (%s, %.0fs)%s"
                   % (n, WIEDERHOLUNGEN,
@@ -1037,6 +1045,25 @@ def selbsttest() -> int:
                "ein Lauf ohne Kennzeichen bleibt fuer die Ampel echt")
     except Exception as _f:
         pruefe(False, "m1_zentrale fuer den Vertragstest ladbar",
+               "%s: %s" % (type(_f).__name__, _f))
+
+    # --- Der Gegenleser prueft sich nicht selbst (02.09.2026) ---
+    # Hier fehlte der Riegel ganz: _gegenlesen_lassen gab gar keinen
+    # Prueflinge mit. Haette muse-glimmer den Fuehrerschein gemacht,
+    # haette es seine eigenen Antworten benotet - unsichtbar. Der Test
+    # ist hermetisch: Der Riegel greift VOR dem Modellaufruf.
+    try:
+        import gegenleser as _g
+        _e = {"bestanden": False, "antwort": "irgendeine Antwort"}
+        _gegenlesen_lassen(_e, "t3", _g.GEGENLESER_MODELL)
+        pruefe(_e.get("unbeantwortet") is True and not _e.get("strittig"),
+               "prueft der Gegenleser selbst, wird das vermerkt statt benotet",
+               str((_e.get("gegenleser") or {}).get("text", ""))[:60])
+        pruefe("dasselbe Modell" in
+               str((_e.get("gegenleser") or {}).get("text", "")),
+               "und der Grund steht im Klartext im Ergebnis")
+    except Exception as _f:
+        pruefe(False, "Gegenleser-Riegel im Fuehrerschein pruefbar",
                "%s: %s" % (type(_f).__name__, _f))
 
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler

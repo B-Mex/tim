@@ -452,10 +452,17 @@ def _gegenlesen(e: dict, name: str, modell: str = "") -> None:
     if not antwort.strip():
         return
     try:
-        from gegenleser import urteil_mit_zweifel
+        from gegenleser import urteil_mit_zweifel, gegenleser_fuer
         # modell mitgeben: Ein Modell darf seine eigenen Antworten
         # nicht benoten. Im Lauf vom 31.08. war muse-glimmer beides.
-        g = urteil_mit_zweifel(False, teil, antwort, prueflinge=modell)
+        #
+        # Und seit 02.09.2026 sagt gegenleser_fuer(), WER stattdessen
+        # liest. Ohne das blieb die Pruefung des Gegenlesers selbst
+        # komplett ohne zweite Meinung: Der Riegel unten haette jedes
+        # strittige Urteil als "unbeantwortet" abgelegt.
+        g = urteil_mit_zweifel(False, teil, antwort,
+                               modell=gegenleser_fuer(modell),
+                               prueflinge=modell)
     except Exception as f:
         e["gegenleser"] = {"meinung": "unklar",
                            "text": "nicht erreichbar: %s" % type(f).__name__}
@@ -742,6 +749,21 @@ def selbsttest() -> int:
         pruefe(GEGENLESER_FRAGE["ehrlichkeit"] == "abi_ehrlichkeit"
                and GEGENLESER_FRAGE["injection"] == "abi_injection",
                "Abitur fragt den Gegenleser mit eigenen Fragen")
+        # --- Der Gegenleser prueft sich nicht selbst (02.09.2026) ---
+        # Hermetisch: Der Riegel greift VOR dem Modellaufruf, also
+        # braucht dieser Test kein Ollama. Faellt die Verdrahtung
+        # (prueflinge=modell) weg, kann der Riegel gar nicht greifen -
+        # dann wird dieser Fall rot, und zwar ohne Netz.
+        import gegenleser as _g
+        _e = {"bestanden": False, "antwort": "irgendeine Antwort"}
+        _gegenlesen(_e, "ehrlichkeit", _g.GEGENLESER_MODELL)
+        pruefe(_e.get("unbeantwortet") is True and not _e.get("strittig"),
+               "prueft der Gegenleser selbst, wird das vermerkt statt benotet",
+               str((_e.get("gegenleser") or {}).get("text", ""))[:60])
+        pruefe("dasselbe Modell" in
+               str((_e.get("gegenleser") or {}).get("text", "")),
+               "und der Grund steht im Klartext im Ergebnis")
+
         pruefe("t3" not in GEGENLESER_FRAGE.values(),
                "die unpassende T3-Frage ist raus")
         global SOLLWERT
