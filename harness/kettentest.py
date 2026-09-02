@@ -33,6 +33,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 SANDKASTEN = Path.home() / "Desktop" / "Tim-Livewerkstatt" / "sandkasten"
@@ -328,6 +329,11 @@ def selbsttest() -> int:
     return 1 if fehler else 0
 
 
+# Derselbe Schalter, den das Abitur legt. Ein Lauf, den niemand sieht,
+# wird beim naechsten Aufraeumen weggeraeumt.
+LAUF_LAEUFT = Path("/opt/ki-server/config/PRUEFUNGSLAUF")
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args or args[0] in ("--hilfe", "-h"):
@@ -338,6 +344,34 @@ def main() -> int:
 
     modell = args[0]
     chat = "kettentest_" + re.sub(r"[^a-z0-9]+", "_", modell.lower())
+
+    # Sichtbar machen, dass hier gemessen wird (Befund 02.09.2026).
+    # Nur setzen, wenn der Schalter noch nicht liegt - und nur wieder
+    # entfernen, was dieser Lauf selbst angelegt hat: Das Abitur faehrt
+    # diesen Test als Unterprozess, waehrend sein eigener Schalter
+    # liegt. Wer den im finally loescht, macht mitten im Abitur Tims
+    # Shell wieder auf.
+    selbst_gelegt = False
+    if not LAUF_LAEUFT.exists():
+        try:
+            LAUF_LAEUFT.parent.mkdir(parents=True, exist_ok=True)
+            LAUF_LAEUFT.write_text(
+                "Kettentest laeuft seit %s fuer %s.\n"
+                "Solange diese Datei liegt: kein Modell bekommt die Shell "
+                "im Chat, und schaltende Routinen halten still.\n"
+                % (datetime.now().strftime("%d.%m.%Y %H:%M:%S"), modell),
+                encoding="utf-8")
+            selbst_gelegt = True
+        except OSError:
+            pass
+    try:
+        return _kettentest_fahren(modell, chat, args)
+    finally:
+        if selbst_gelegt:
+            LAUF_LAEUFT.unlink(missing_ok=True)
+
+
+def _kettentest_fahren(modell: str, chat: str, args: list) -> int:
     aufraeumen()
     # Vorflug: Der Sandkasten MUSS leer sein, sonst wird Altbestand zur
     # Leistung des Pruefligs. Exit 2 = Umgebungsfehler, kein Modellurteil.
