@@ -1121,21 +1121,22 @@ def main() -> int:
     # deshalb nicht teilen: PRUEFUNGSSCHALTER versteckt die
     # werkstatt_-Familie (damit die Pruefung die livewerkstatt nutzt),
     # LAUF_LAEUFT sperrt allein die Shell.
-    LAUF_LAEUFT.parent.mkdir(parents=True, exist_ok=True)
-    LAUF_LAEUFT.write_text(
-        "Fuehrerschein laeuft seit %s fuer %s.\n"
-        "Solange diese Datei liegt, bekommt KEIN Modell die Shell im "
-        "Chat - auch keines mit bestandener Treppe.\n"
-        "Bleibt sie nach einem Absturz liegen, kann sie von Hand "
-        "geloescht werden.\n"
-        % (datetime.now().strftime("%d.%m.%Y %H:%M:%S"), modell),
-        encoding="utf-8")
+    # Besitzerliste statt Schalter (02.09.2026): Genau HIER entstand
+    # der Schaden. Dieser Lauf wurde neben einem Abitur gestartet und
+    # abgebrochen; sein Aufraeumen unten loeschte die Flagge, obwohl
+    # das Abitur noch lief. Jetzt traegt sich jeder Lauf ein und
+    # streicht am Ende nur die eigene Zeile.
+    from pruefungsflagge import anmelden, abmelden
+    anmelden("Fuehrerschein seit %s fuer %s"
+             % (datetime.now().strftime("%d.%m.%Y %H:%M:%S"), modell))
     try:
         return _lauf_durchfuehren(modell)
     finally:
         # Auch bei Absturz und Strg-C: Ein liegengebliebener Schalter
         # naehme Tim die Shell dauerhaft weg, und niemand wuesste warum.
-        LAUF_LAEUFT.unlink(missing_ok=True)
+        # abmelden() streicht nur die eigene Zeile - laeuft daneben ein
+        # anderer Lauf, bleibt dessen Riegel stehen.
+        abmelden()
 
 
 def _lauf_durchfuehren(modell: str) -> int:

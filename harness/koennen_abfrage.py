@@ -111,6 +111,21 @@ def abfragen(modell: str) -> int:
               "eingeschraenkte Sitzung.")
         return 2
 
+    # Zweiter Riegel, aus dem Fehlschlag vom 02.09.2026 abends: Die
+    # Abfrage lief mitten im Abiturlauf und meldete brav "Shell: nein
+    # (Ein Pruefungslauf laeuft)". Tim sagte nein, der Code sagte nein,
+    # alles "PASST" - und Mexlas Frage war trotzdem unbeantwortet. Was
+    # gemessen wurde, war der Pruefungsmodus, nicht Tims Rechte.
+    #
+    # Ein Test, der waehrend einer Ausnahme laeuft, misst die Ausnahme.
+    from pruefungsflagge import laeuft as pruefung_laeuft
+    if pruefung_laeuft():
+        print("ABBRUCH: Es laeuft gerade ein Pruefungslauf.")
+        print("Dann ist die Shell absichtlich zu, und die Abfrage "
+              "wuerde den Pruefungsmodus messen statt Tims Rechte.")
+        print("Nach dem Lauf noch einmal starten.")
+        return 2
+
     werkzeuge = [w["function"]["name"] for w in z._chat_werkzeuge(modell)]
     shell_frei, shell_grund = z.shell_werkzeug_frei(modell)
 
@@ -210,6 +225,14 @@ def selbsttest() -> int:
                ", ".join(unbekannt))
     except Exception as f:
         pruefe(False, "m1_zentrale ladbar", "%s: %s" % (type(f).__name__, f))
+
+    # Der zweite Riegel muss im Code stehen UND vor der Messung greifen.
+    import inspect
+    quelle = inspect.getsource(abfragen)
+    pruefe("pruefung_laeuft()" in quelle
+           and quelle.index("pruefung_laeuft()")
+           < quelle.index("_chat_werkzeuge"),
+           "die Pruefungssperre greift VOR der Messung, nicht danach")
 
     pruefe(all("JA oder NEIN" in VORSPANN for _ in [0])
            and "kein Werkzeug" in VORSPANN,

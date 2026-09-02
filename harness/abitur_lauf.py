@@ -992,14 +992,16 @@ def main() -> int:
               "dann neu starten." % PRUEFUNGSSCHALTER)
         return 2
 
-    LAUF_LAEUFT.parent.mkdir(parents=True, exist_ok=True)
-    LAUF_LAEUFT.write_text(
-        "Abiturlauf seit %s.\nSolange diese Datei liegt: kein Modell "
-        "bekommt die Shell im Chat, und schaltende Routinen halten "
-        "still.\nBleibt sie nach einem Absturz liegen, kann sie von "
-        "Hand geloescht werden.\n"
-        % datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-        encoding="utf-8")
+    # Seit 02.09.2026 eine Besitzerliste statt eines Schalters: Am
+    # selben Tag liefen Abitur und Fuehrerschein gleichzeitig, der
+    # Fuehrerschein wurde abgebrochen - und sein finally-Block nahm die
+    # Flagge des noch laufenden Abiturs mit. Danach lief eine Pruefung
+    # ohne Riegel. Jetzt streicht jeder Lauf nur sich selbst.
+    from pruefungsflagge import anmelden, abmelden
+    anmelden("Abiturlauf seit %s fuer %s"
+             % (datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+                ", ".join(a for a in args if not a.startswith("-"))
+                or "alle"))
     try:
         return _abitur_durchfuehren(args)
     finally:
@@ -1018,7 +1020,7 @@ def main() -> int:
         except Exception as f:
             print("Endsignal fehlgeschlagen (%s) - Lauf ist trotzdem "
                   "sauber beendet." % type(f).__name__)
-        LAUF_LAEUFT.unlink(missing_ok=True)
+        abmelden()
 
 
 def _abitur_durchfuehren(args: list) -> int:

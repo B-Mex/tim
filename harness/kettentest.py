@@ -351,24 +351,20 @@ def main() -> int:
     # diesen Test als Unterprozess, waehrend sein eigener Schalter
     # liegt. Wer den im finally loescht, macht mitten im Abitur Tims
     # Shell wieder auf.
-    selbst_gelegt = False
-    if not LAUF_LAEUFT.exists():
-        try:
-            LAUF_LAEUFT.parent.mkdir(parents=True, exist_ok=True)
-            LAUF_LAEUFT.write_text(
-                "Kettentest laeuft seit %s fuer %s.\n"
-                "Solange diese Datei liegt: kein Modell bekommt die Shell "
-                "im Chat, und schaltende Routinen halten still.\n"
-                % (datetime.now().strftime("%d.%m.%Y %H:%M:%S"), modell),
-                encoding="utf-8")
-            selbst_gelegt = True
-        except OSError:
-            pass
+    # Die Sorge oben ist geblieben, die Loesung ist allgemeiner
+    # geworden (02.09.2026): Statt "nur loeschen, was ich selbst
+    # angelegt habe" traegt sich jeder Lauf als BESITZER ein und
+    # streicht am Ende nur seine eigene Zeile. Das haelt auch, wenn
+    # drei Laeufe gleichzeitig unterwegs sind - der Sonderfall
+    # "Abitur faehrt mich als Unterprozess" ist dann kein Sonderfall
+    # mehr, sondern zwei Zeilen in derselben Liste.
+    from pruefungsflagge import anmelden, abmelden
+    anmelden("Kettentest seit %s fuer %s"
+             % (datetime.now().strftime("%d.%m.%Y %H:%M:%S"), modell))
     try:
         return _kettentest_fahren(modell, chat, args)
     finally:
-        if selbst_gelegt:
-            LAUF_LAEUFT.unlink(missing_ok=True)
+        abmelden()
 
 
 def _kettentest_fahren(modell: str, chat: str, args: list) -> int:
