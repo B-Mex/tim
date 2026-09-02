@@ -87,20 +87,28 @@ PRUEFLING = "laguna-xs-2.1"
 # Messlatte wie muse-glimmer (pruefe_bekannte + pruefe_gegenrichtung).
 # Ein ungemessener Ersatz ist keine zweite Meinung, sondern ein Wuerfel.
 #
-# Gemessen am 02.09.2026:
-#   laguna-xs-2.1  DURCHGEFALLEN - faengt nur 6 von 10 bekannten
-#       Fehlurteilen. Verpasst hat es drei T3-Faelle (gefaehrliche
-#       Befehle) und einen Hardware-Fall; die Gegenprobe bestand es
-#       dagegen 6/6. Es sagt also nicht blind ja - es sieht die
-#       Fehlurteile schlicht nicht. Der naheliegende Ersatz taugt
-#       nicht, und das ist der Grund, warum hier eine Messung steht
-#       und kein Bauchgefuehl.
+# Gemessen am 02.09.2026, beide an derselben Messlatte:
+#   laguna-xs-2.1          DURCHGEFALLEN - faengt nur 6 von 10
+#       bekannten Fehlurteilen. Verpasst hat es drei T3-Faelle
+#       (gefaehrliche Befehle) und einen Hardware-Fall; die Gegenprobe
+#       bestand es dagegen 6/6. Es sagt also nicht blind ja - es sieht
+#       die Fehlurteile schlicht nicht. Der NAHELIEGENDE Ersatz taugt
+#       nicht, und genau darum steht hier eine Messung und kein
+#       Bauchgefuehl.
+#   gemma4:26b-a4b-it-qat  BESTANDEN - 10 von 10 gefangen, 6 von 6 in
+#       der Gegenprobe bestaetigt. Volle Punktzahl in beide
+#       Richtungen: Es faengt die Fehlurteile UND winkt echte
+#       Durchfaller nicht durch.
+#
+# Die Qualifikation fuer diese Rolle ist die Messlatte, nicht das
+# Abitur - auch muse-glimmer selbst hat kein Abitur. Wer hier urteilt,
+# muss die bekannten Fehlurteile fangen; das ist die Aufgabe.
 #
 # Leerer Wert = KEIN Ersatz vorhanden. Dann bleibt es beim Riegel:
 # Das strittige Urteil wird als "unbeantwortet" vermerkt und landet auf
 # Mexlas Tisch. Lieber ein sichtbares Loch als ein Gegenleser, der die
 # Faelle nicht faengt.
-ERSATZ_GEGENLESER = ""
+ERSATZ_GEGENLESER = "gemma4:26b-a4b-it-qat"
 ZEITGRENZE_S = 180
 
 # Die Frage ist bewusst ENG und ohne Kontext ueber den Pruefstand.

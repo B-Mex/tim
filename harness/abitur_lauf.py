@@ -750,19 +750,40 @@ def selbsttest() -> int:
                and GEGENLESER_FRAGE["injection"] == "abi_injection",
                "Abitur fragt den Gegenleser mit eigenen Fragen")
         # --- Der Gegenleser prueft sich nicht selbst (02.09.2026) ---
-        # Hermetisch: Der Riegel greift VOR dem Modellaufruf, also
-        # braucht dieser Test kein Ollama. Faellt die Verdrahtung
-        # (prueflinge=modell) weg, kann der Riegel gar nicht greifen -
-        # dann wird dieser Fall rot, und zwar ohne Netz.
+        # Gemessen wird die VERDRAHTUNG, mit einem Spion statt eines
+        # Modells: Welches Modell wird gefragt, und wer ist als
+        # Prueflinge vermerkt? Ein Test, der stattdessen das Ergebnis
+        # abfragt, haengt am Tageswert von ERSATZ_GEGENLESER - steht
+        # dort ein Ersatz, ruft er ein echtes Modell und misst nichts
+        # mehr. (Genau das ist mir beim ersten Anlauf passiert.)
         import gegenleser as _g
-        _e = {"bestanden": False, "antwort": "irgendeine Antwort"}
-        _gegenlesen(_e, "ehrlichkeit", _g.GEGENLESER_MODELL)
-        pruefe(_e.get("unbeantwortet") is True and not _e.get("strittig"),
-               "prueft der Gegenleser selbst, wird das vermerkt statt benotet",
-               str((_e.get("gegenleser") or {}).get("text", ""))[:60])
-        pruefe("dasselbe Modell" in
-               str((_e.get("gegenleser") or {}).get("text", "")),
-               "und der Grund steht im Klartext im Ergebnis")
+        _gesehen = {}
+
+        def _spion(bestanden, teil, antwort, modell=None, **rest):
+            _gesehen["modell"] = modell
+            _gesehen["prueflinge"] = rest.get("prueflinge")
+            return {"bestanden": False, "strittig": False,
+                    "unbeantwortet": False, "gegenleser": None}
+
+        _echt = _g.urteil_mit_zweifel
+        try:
+            _g.urteil_mit_zweifel = _spion
+            _e = {"bestanden": False, "antwort": "irgendeine Antwort"}
+            _gegenlesen(_e, "ehrlichkeit", _g.GEGENLESER_MODELL)
+        finally:
+            _g.urteil_mit_zweifel = _echt
+        pruefe(_gesehen.get("prueflinge") == _g.GEGENLESER_MODELL,
+               "der Prueflinge wird mitgegeben (sonst greift kein Riegel)",
+               repr(_gesehen.get("prueflinge")))
+        pruefe(_gesehen.get("modell")
+               == _g.gegenleser_fuer(_g.GEGENLESER_MODELL),
+               "und gegenleser_fuer() bestimmt, WER liest",
+               repr(_gesehen.get("modell")))
+        pruefe(not _g._gleiches_modell(_gesehen.get("modell"),
+                                       _gesehen.get("prueflinge")),
+               "niemand benotet am Ende sich selbst",
+               "%r liest %r" % (_gesehen.get("modell"),
+                                _gesehen.get("prueflinge")))
 
         pruefe("t3" not in GEGENLESER_FRAGE.values(),
                "die unpassende T3-Frage ist raus")
