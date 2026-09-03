@@ -3050,6 +3050,18 @@ def _projektpfad(eingabe: str) -> str:
         ziel = b / eingabe
         if ziel.exists():
             return str(ziel)
+        # "M1_DEPLOYMENT/hardware/kamera/objekterkennung.py" - der Name
+        # des Projektordners VORNEWEG. So nennt das Modell eine Datei,
+        # wenn man ihm sagt, in welchem Projekt sie liegt, und so steht
+        # der Ordner auch in der Projektliste. Bis 03.09.2026 fiel diese
+        # Form durch (nur "Ordnername" allein oder "Unterpfad" ohne
+        # Ordnername gingen): Tims erstes Projekt scheiterte in Runde 1
+        # an "Zugriff verweigert" fuer eine freigegebene Datei - er
+        # hatte alles richtig gemacht.
+        if eingabe.startswith(b.name + "/"):
+            ziel = b / eingabe[len(b.name) + 1:]
+            if ziel.exists():
+                return str(ziel)
 
     # Nur ein Dateiname, ohne Pfad? Dann suchen. Das Modell nennt Dateien
     # so, wie es sie im Gespraech gehoert hat ("RECHERCHE_AUTOMATISCH.md")
@@ -4721,6 +4733,33 @@ def _selbsttest() -> int:
            "ohne Messung bleibt der Satz weg, statt etwas zu erfinden")
     pruefe(auge_messung_text({"felder": [{"helligkeit": "kaputt"}]}) == "",
            "ein unlesbarer Wert stuerzt nicht ab")
+
+    # --- _projektpfad: Projektname voran (03.09.2026) ---
+    # Hermetisch: eigener Projektordner in einem Temp-Verzeichnis, damit
+    # der Test nicht an Mexlas Desktop haengt.
+    import tempfile as _tf
+    global CHAT_PROJEKTORDNER
+    _echt_po = CHAT_PROJEKTORDNER
+    with _tf.TemporaryDirectory() as _o:
+        _root = Path(_o) / "M1_TEST"
+        (_root / "hardware" / "kamera").mkdir(parents=True)
+        (_root / "hardware" / "kamera" / "objekterkennung.py").write_text("# x\n", encoding="utf-8")
+        CHAT_PROJEKTORDNER = [str(_root)]
+        try:
+            pruefe(_projektpfad("M1_TEST/hardware/kamera/objekterkennung.py")
+                   == str(_root / "hardware" / "kamera" / "objekterkennung.py"),
+                   "Projektname voran wird zum vollen Pfad aufgeloest",
+                   _projektpfad("M1_TEST/hardware/kamera/objekterkennung.py"))
+            pruefe(_projektpfad("hardware/kamera/objekterkennung.py")
+                   == str(_root / "hardware" / "kamera" / "objekterkennung.py"),
+                   "Unterpfad ohne Projektname geht weiter")
+            pruefe(_projektpfad("M1_TEST") == str(_root),
+                   "der nackte Projektname geht weiter")
+            pruefe(_projektpfad("M1_TEST/gibt/es/nicht.py")
+                   == "M1_TEST/gibt/es/nicht.py",
+                   "eine Datei, die es nicht gibt, wird NICHT erfunden - der Leser lehnt sie dann ab")
+        finally:
+            CHAT_PROJEKTORDNER = _echt_po
 
     # --- AP13: Vollzugspruefung ist wirklich eingehaengt ---------
     # Nicht nur "das Modul laedt", sondern: Kommt aus einem NICHT
