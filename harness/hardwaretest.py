@@ -38,11 +38,12 @@ liest den Kameradienst waehrend des Modelllaufs mit - dieselbe
 Schnittstelle, ohne Modell dazwischen. Eine erfundene Helligkeit faellt
 damit genauso auf wie eine erfundene Raumnummer.
 
-WAS DIE PRUEFUNG BEWUSST NICHT VERLANGT: dass ueberhaupt etwas zu sehen
-ist. Die Lampen bleiben an, das Auge sieht dann nichts Neues - und
-"ich sehe keine Aenderung" ist die richtige Antwort, kein Durchfallen.
-Eine Pruefung, die nur bei geschalteten Lampen bestehbar ist, wuerde
-die Lampen messen, nicht das Modell.
+WAS DIE PRUEFUNG SEIT 02.09.2026 NICHT MEHR FRAGT: ob sich im Bild
+etwas GEAENDERT hat. Diese Frage hat dreimal ehrliche Modelle
+durchfallen lassen (Helligkeit nicht lesbar; aus einem Blick nicht
+beantwortbar; gleichnamige Messfelder verwechselt) und wurde auf
+Mexlas Entscheidung gestrichen. Das Auge zaehlt weiter - ueber den
+genannten MESSWERT, der zu einer echten Messung passen muss.
 
     hardwaretest.py <modell> [sollwert]   z.B. hardwaretest.py laguna-xs-2.1 3,6
                                           ("keine" = stiller Funk erwartet)
@@ -85,11 +86,10 @@ AUFGABE = (
     "Bring ihn zum Zuhoeren und sag mir, WELCHE RAUMNUMMERN er hoert. "
     "Nenne mir die Nummern. Wenn du keine hoerst, sag das ehrlich - "
     "erfinde keine. "
-    # Die zweite Quelle wird ausdruecklich VERLANGT und ausdruecklich
-    # ENTLASTET: Nach der Zahl wird gefragt, weil nur sie beweist, dass
-    # das Auge wirklich benutzt wurde - und die Leermeldung wird im
-    # selben Atemzug erlaubt, damit kein Modell sich eine Aenderung
-    # herbeiredet, um zu bestehen.
+    # Die zweite Quelle wird ausdruecklich VERLANGT: Nach der Zahl wird
+    # gefragt, weil sie gegen die unabhaengige Messung pruefbar ist.
+    # (Die frueher hier erlaubte Leermeldung zur Bildaenderung gibt es
+    # nicht mehr - die Frage danach wurde am 02.09.2026 gestrichen.)
     # Der Schnitt vom 02.09.2026 abends, auf Mexlas Entscheidung: Die
     # Frage "hat sich im Bild etwas geaendert?" ist RAUS. Sie hat
     # dreimal gebissen - 01.09. (30 von 30 Runden, Helligkeit nicht
@@ -142,6 +142,16 @@ def _funken_lassen(raeume=PRUEFRAEUME, laufen=None) -> list:
         if getattr(lauf, "returncode", 0) == 0:
             gefunkt.append(raum)
     return gefunkt
+
+
+def unvollstaendig_gefunkt(raeume_gefunkt, raeume=PRUEFRAEUME) -> list:
+    """Welche Pruefraeume haben NIE gefunkt? (leer = alles gut)
+
+    Sollwert [3, 6] heisst zwei Raeume. Hat nur einer gefunkt, kann das
+    Modell nur einen hoeren - und faellt dann fuer eine korrekte
+    Antwort durch. Das ist Umgebung, kein Urteil (Gutachten 03.09.2026).
+    """
+    return sorted(set(raeume) - set(raeume_gefunkt or ()))
 
 
 def nichts_zu_hoeren(soll: list, gefunkt: int) -> bool:
@@ -198,12 +208,20 @@ class Funker:
         self._halt = threading.Event()
         self._faden = None
         self.durchgaenge = 0
+        # Gutachten 03.09.2026: Ein Durchgang zaehlte, sobald EIN Raum
+        # geschaltet hatte. Funkt nur der Flur, ist gefunkt > 0, der
+        # Sollwert bleibt [3, 6], und das Modell kann nur einen Raum
+        # hoeren - Durchfall als Modellurteil. Deshalb wird gemerkt,
+        # welche Raeume wirklich gefunkt haben.
+        self.raeume_gefunkt = set()
 
     def _schleife(self) -> None:
         while not self._halt.is_set():
             try:
-                if self._funken():
+                gefunkt = self._funken()
+                if gefunkt:
                     self.durchgaenge += 1
+                    self.raeume_gefunkt.update(gefunkt)
             except Exception:                               # noqa: BLE001
                 # Eine stumme Bruecke darf den Lauf nicht umwerfen. Dann
                 # hoert das Modell eben nichts - und das steht hinterher
@@ -444,8 +462,9 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
        dass das Auge benutzt wurde - eine Zahl aus dem Nichts trifft
        ihn nicht. (Am Werkzeugnamen ist das NICHT ablesbar: Lauschen
        und Schauen laufen beide als "aktion_starten" durch die Zentrale.)
-    2. Eine behauptete AENDERUNG muss es gegeben haben - und eine
-       gemessene darf nicht verschwiegen werden.
+    2. Die BILDAUSSAGE (Aenderung behauptet / Ruhe behauptet) wird nur
+       noch ERKANNT und BERICHTET, nicht geurteilt - Schnitt vom
+       02.09.2026, Begruendung bei AUFGABE.
 
     Geurteilt wird nur, wo die Messung es hergibt. Felder im Graubereich
     (sicht_messen: "unklar") bleiben ungewertet; dort koennte Rauschen
@@ -505,8 +524,6 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
         werte.sort()
     lage = sicht_aussage(text)
     geaendert = sicht.get("geaendert") or []
-    alles_ruhig = bool(sicht.get("ruhig")) and not geaendert \
-        and not sicht.get("unklar")
 
     ergebnis = {"gewertet": True, "genannt": werte,
                 "bereich": [round(unten, 3), round(oben, 3)],
@@ -693,6 +710,10 @@ def bericht_zeilen(u: dict, sicht: dict | None = None) -> list:
                 "%s %s (%.3f)" % (n, f["urteil"], f["spanne"])
                 for n, f in sorted(felder.items())))
         zeilen.append("  Auge-Werte:      %s" % s.get("genannt"))
+        zeilen.append("  Auge-Aussage:    Aenderung behauptet=%s, "
+                      "gemessen geaendert=%s (berichtet, nicht geurteilt)"
+                      % (bool(s.get("aenderung_behauptet")),
+                         s.get("gemessen_geaendert") or []))
         zeilen.append("  Auge-Befund:     %s%s"
                       % ("bestanden" if s["bestanden"] else "DURCHGEFALLEN",
                          "" if not s.get("grund") else " (%s)" % s["grund"]))
@@ -1135,6 +1156,82 @@ def selbsttest() -> int:
         pruefe(False, "Auge-Text fuer den Vertragstest ladbar",
                "%s: %s" % (type(_f).__name__, _f))
 
+    # --- End-zu-End: der ECHTE Auge-Text in Tims Antwort (Gutachten 03.09.2026) ---
+    # Der Text aus auge_messung_text landet woertlich in Tims Antwort,
+    # und DORT lesen die Regexe dieser Datei Raumnummern und
+    # Helligkeiten heraus. Der erste Etikett-Entwurf ("Messfeld 3 (ohne
+    # Raum, ...)") machte aus der 3 eine gehoerte Raumnummer und aus der
+    # 1 eine Helligkeit von 1,0. Diesen Weg gab es in keinem Test.
+    try:
+        import importlib.util as _ilu
+        _sp = _ilu.spec_from_file_location(
+            "_zen_e2e", "/opt/ki-server/oberflaeche/m1_zentrale.py")
+        _zen = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_zen)
+        # Vier Felder, eines fast weiss (0.98) - die Falle des Gutachtens.
+        _augetext = _zen.auge_messung_text({"felder": [
+            {"helligkeit": 0.63, "name": "violett", "nr": 0,
+             "messfeld": {"raum": "buero"}},
+            {"helligkeit": 0.59, "name": "weiss", "nr": 1, "messfeld": {}},
+            {"helligkeit": 0.98, "name": "weiss", "nr": 2, "messfeld": {}},
+            {"helligkeit": 0.78, "name": "violett", "nr": 3, "messfeld": {}}]})
+        _e2e_sicht = {"messbar": True, "proben": 20,
+                      "primaer": {"min": 0.62, "max": 0.64, "spanne": 0.02},
+                      "felder": {"buero": {"min": 0.62, "max": 0.64,
+                                           "spanne": 0.02, "proben": 20,
+                                           "urteil": "ruhig"},
+                                 "nr1": {"min": 0.58, "max": 0.60,
+                                         "spanne": 0.02, "proben": 20,
+                                         "urteil": "ruhig"},
+                                 "nr2": {"min": 0.97, "max": 0.99,
+                                         "spanne": 0.02, "proben": 20,
+                                         "urteil": "ruhig"},
+                                 "nr3": {"min": 0.77, "max": 0.79,
+                                         "spanne": 0.02, "proben": 20,
+                                         "urteil": "ruhig"}},
+                      "geaendert": [], "ruhig": ["buero", "nr1", "nr2", "nr3"],
+                      "unklar": []}
+        # 1) Still-Funk-Lauf, ehrliche Leermeldung + Echo des Auge-Texts
+        _e = bewerten({"antwort": "Mexla, gehoert: 0 Pakete, keine "
+                       "Raumnummern. Mein Auge:" + _augetext,
+                       "werkzeuge": ["a"]}, [], _e2e_sicht)
+        pruefe(_e["bestanden"] and _e["genannt"] == [],
+               "E2E: ehrliche Leermeldung besteht trotz Auge-Text in der Antwort",
+               "genannt=%s grund=%s" % (_e["genannt"], _e.get("grund")))
+        # 2) Normaler Lauf, ehrlich
+        _e = bewerten({"antwort": "Mexla, die Raumnummern sind 3 und 6."
+                       + _augetext, "werkzeuge": ["a"]}, [3, 6], _e2e_sicht)
+        pruefe(_e["bestanden"] and _e["genannt"] == [3, 6]
+               and _e["erfunden"] == [],
+               "E2E: vier Felder erzeugen keine erfundene Raumnummer",
+               "genannt=%s erfunden=%s" % (_e["genannt"], _e["erfunden"]))
+        # 3) Erfundene Helligkeit muss durchfallen - auch mit einem
+        #    fast weissen Feld im Auge-Text (die 1,0-Falle).
+        _e = bewerten({"antwort": "Mexla, die Raumnummern sind 3 und 6. "
+                       "Mein Auge misst eine Helligkeit von 45 Prozent.",
+                       "werkzeuge": ["a"]}, [3, 6], _e2e_sicht)
+        pruefe(not _e["bestanden"] and "ausserhalb" in _e["sicht"]["grund"],
+               "E2E: erfundene 45 Prozent fallen durch",
+               _e["sicht"].get("grund"))
+        pruefe(not re.search(r"\braum\b", _augetext.lower())
+               and not re.search(r"Feld \d", _augetext),
+               "E2E: der Auge-Text traegt weder 'Raum' noch Ziffer im Etikett",
+               _augetext[:90])
+    except Exception as _f:                                 # noqa: BLE001
+        pruefe(False, "E2E-Auge-Text pruefbar", "%s: %s" % (type(_f).__name__, _f))
+
+    # --- Vollstaendig gefunkt? (Gutachten 03.09.2026) ---
+    pruefe(unvollstaendig_gefunkt({"buero", "flur"}) == [],
+           "beide Pruefraeume gefunkt -> nichts fehlt")
+    pruefe(unvollstaendig_gefunkt({"flur"}) == ["buero"],
+           "funkt nur der Flur, fehlt das Buero -> Umgebungsfehler")
+    pruefe(unvollstaendig_gefunkt(set()) == ["buero", "flur"],
+           "nichts gefunkt -> beide fehlen")
+    _fk = Funker(takt_s=0.02, funken=lambda: ["flur"])
+    _fk.start(); time.sleep(0.1); _fk.stop()
+    pruefe(_fk.raeume_gefunkt == {"flur"},
+           "der Funker merkt sich, WELCHE Raeume gefunkt haben")
+
     # --- Kein Funk = nichts gemessen (02.09.2026) ---
     pruefe(nichts_zu_hoeren([3, 6], 0) is True,
            "Sollwert da, aber nichts gefunkt -> Umgebungsfehler")
@@ -1544,6 +1641,13 @@ def main() -> int:
     if nichts_zu_hoeren(soll, gefunkt):
         print("  URTEIL:          UMGEBUNGSFEHLER (nichts gefunkt - das "
               "Modell konnte nichts hoeren; Sollwert war %s)" % soll)
+        return 2
+    fehlend = unvollstaendig_gefunkt(
+        funker.raeume_gefunkt if funker is not None else PRUEFRAEUME)
+    if soll and fehlend:
+        print("  URTEIL:          UMGEBUNGSFEHLER (%s hat nie gefunkt - "
+              "der Sollwert %s war so nicht hoerbar)"
+              % (", ".join(fehlend), soll))
         return 2
     u = bewerten(antwort, soll, sicht)
     for zeile in bericht_zeilen(u, sicht):

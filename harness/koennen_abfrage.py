@@ -76,6 +76,17 @@ def wahrheit(schluessel: str, werkzeuge: list, shell_frei: bool) -> bool:
     return schluessel in werkzeuge
 
 
+def _nennt(text: str, name: str) -> bool:
+    """Steht der Werkzeugname als GANZES Wort im Text?
+
+    Gutachten 03.09.2026: "livewerkstatt_schreiben" enthielt
+    "werkstatt_schreiben" als Teilstring - das zaehlte als genannt,
+    obwohl es ein anderes Werkzeug ist.
+    """
+    return re.search(r"(?<![a-z_])%s(?![a-z_])" % re.escape(name),
+                     (text or "").lower()) is not None
+
+
 def moegliche_erfindungen(text: str, echte: list) -> list:
     """Namen, die wie Werkzeuge aussehen, aber keine sind.
 
@@ -118,7 +129,12 @@ def abfragen(modell: str) -> int:
     # gemessen wurde, war der Pruefungsmodus, nicht Tims Rechte.
     #
     # Ein Test, der waehrend einer Ausnahme laeuft, misst die Ausnahme.
-    from pruefungsflagge import laeuft as pruefung_laeuft
+    # Gutachten 03.09.2026: Nicht nur die Lauf-Flagge, auch der
+    # Pruefungsmodus-Schalter aendert Tims Werkzeuge (werkstatt_schreiben
+    # verschwindet) und schliesst die Shell. _pruefung_laeuft() der
+    # Zentrale kennt beide - dieselbe Quelle wie im Betrieb.
+    def pruefung_laeuft():
+        return z._pruefung_laeuft()
     if pruefung_laeuft():
         print("ABBRUCH: Es laeuft gerade ein Pruefungslauf.")
         print("Dann ist die Shell absichtlich zu, und die Abfrage "
@@ -152,9 +168,13 @@ def abfragen(modell: str) -> int:
     antwort = z.chat_anfragen(
         modell, [{"role": "user", "content": OFFENE_FRAGE}])
     text = str(antwort.get("antwort") or antwort.get("text") or "")
-    genannt = [w for w in werkzeuge if w in text.lower()]
-    fehlend = [w for w in werkzeuge if w not in text.lower()]
-    erfunden = moegliche_erfindungen(text, werkzeuge)
+    genannt = [w for w in werkzeuge if _nennt(text, w)]
+    fehlend = [w for w in werkzeuge if not _nennt(text, w)]
+    # Echte Namen sind ALLE Werkzeuge der Zentrale plus die Shell -
+    # nicht nur die gerade angebotenen. Sonst gilt "shell_befehl" bei
+    # geschlossener Tuer als Erfindung (Gutachten 03.09.2026).
+    alle_echten = [w["function"]["name"] for w in z.CHAT_WERKZEUGE] + ["shell_befehl"]
+    erfunden = moegliche_erfindungen(text, alle_echten)
 
     print("\nOffene Frage - welche Werkzeuge nennt er selbst?")
     print("  richtig genannt: %d von %d" % (len(genannt), len(werkzeuge)))
@@ -212,6 +232,13 @@ def selbsttest() -> int:
            "die echten Namen gelten nicht als Erfindung")
     pruefe(moegliche_erfindungen("ich kann suchen und lesen", echte) == [],
            "gewoehnliche Woerter ohne Unterstrich sind keine Kandidaten")
+    pruefe(not _nennt("livewerkstatt_schreiben", "werkstatt_schreiben"),
+           "ein Teilstring zaehlt nicht als genannt (Gutachten 03.09.)")
+    pruefe(_nennt("ich habe werkstatt_schreiben und mehr", "werkstatt_schreiben")
+           and _nennt("werkstatt_schreiben\nshell_befehl", "shell_befehl"),
+           "der ganze Name zaehlt, auch am Zeilenende")
+    pruefe(moegliche_erfindungen("shell_befehl", echte + ["shell_befehl"]) == [],
+           "shell_befehl ist ein echtes Werkzeug, keine Erfindung")
 
     # Die Fragen muessen zu echten Werkzeugen passen - sonst misst die
     # Abfrage Namen, die es gar nicht gibt.

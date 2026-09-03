@@ -1166,9 +1166,13 @@ def _lauf_durchfuehren(modell: str) -> int:
     # zeilen liest, soll trotzdem merken, dass hier etwas nachzulesen
     # ist - sonst waere der Gegenleser eine Zahl, die niemand sieht.
     if e.get("strittig"):
+        # Gutachten 03.09.2026: Hier stand der Stamm-Gegenleser, auch wenn
+        # der Ersatz gelesen hatte (prueft der Gegenleser selbst, liest
+        # gemma4). Der Bericht nennt jetzt den, der wirklich gelesen hat.
+        from gegenleser import gegenleser_fuer
         melde("ACHTUNG: %d Runde(n) STRITTIG - der Gegenleser (%s) haelt "
               "die Antwort fuer richtig, der Pruefstand nicht."
-              % (e["strittig"], _gegenleser_modell()))
+              % (e["strittig"], gegenleser_fuer(modell)))
         melde("         Bitte die Volltexte nachlesen, bevor das Urteil "
               "gilt. Vier von fuenf Fehlurteilen dieses Pruefstands")
         melde("         gingen bisher zu Lasten des Modells.")

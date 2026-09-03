@@ -760,27 +760,34 @@ def auge_messung_text(messung=None) -> str:
     teile = []
     for lauf, f in enumerate(felder, 1):
         mf = f.get("messfeld") or {}
-        raum = mf.get("raum") or "ohne Raum"
+        raum = mf.get("raum") or ""
         try:
             h = float(f.get("helligkeit"))
         except (TypeError, ValueError):
             continue
         # Jedes Feld bekommt einen EINDEUTIGEN, STABILEN Namen
         # (02.09.2026). Vorher hiess der Eintrag "ohne Raumnamen 60
-        # Prozent (weiss)" - und das in Klammern war die Lampenfarbe,
-        # kein Feldname. Zwei Felder hiessen "ohne Raumnamen", zwei
-        # "violett". gemma4 verglich in einer Pruefung zwei
-        # gleichnamige Felder miteinander, las daraus eine Aenderung
-        # und fiel durch. Wer Werte vergleichen soll, braucht Namen,
-        # die man wiederfindet: "Messfeld 2" ist beim naechsten Blick
-        # wieder "Messfeld 2". Die Nummer kommt aus der Messung selbst
-        # (f["nr"]), sonst aus der Reihenfolge.
+        # Prozent (weiss)" - das in Klammern war die Lampenfarbe, kein
+        # Feldname; zwei Felder hiessen gleich, gemma4 verwechselte sie
+        # in einer Pruefung und fiel durch.
+        #
+        # Und der Name ist ein BUCHSTABE, kein Wort "Raum", keine
+        # Ziffer (Gutachten 03.09.2026): Dieser Text landet in Tims
+        # Antwort, und dort lesen Regexe Raumnummern und Helligkeiten
+        # heraus. "Messfeld 3 (ohne Raum, ...)" machte aus der 3 eine
+        # gehoerte Raumnummer und aus der 1 in "Messfeld 1" eine
+        # Helligkeit von 1,0 - eine ehrliche Leermeldung fiel durch,
+        # eine erfundene 45 Prozent bestand. "Feld C (violett)" traegt
+        # keine Zahl und kein Zauberwort. Der Buchstabe kommt aus
+        # f["nr"], sonst aus der Reihenfolge.
         try:
-            nummer = int(f.get("nr")) + 1
+            stelle = int(f.get("nr"))
         except (TypeError, ValueError):
-            nummer = lauf
-        teile.append("Messfeld %d (%s, %s) %.0f Prozent"
-                     % (nummer, raum, f.get("name") or "?", h * 100))
+            stelle = lauf - 1
+        kennung = chr(ord("A") + stelle) if 0 <= stelle < 26 else "?"
+        wo = ("%s, %s" % (raum, f.get("name") or "?")) if mf.get("raum") \
+            else (f.get("name") or "?")
+        teile.append("Feld %s (%s) %.0f Prozent" % (kennung, wo, h * 100))
     if not teile:
         return ""
     return (" DEINE GEMESSENE HELLIGKEIT je Messfeld, gerade eben: "
@@ -4693,13 +4700,21 @@ def _selbsttest() -> int:
     _zwei = auge_messung_text({"felder": [
         {"helligkeit": 0.60, "name": "weiss", "nr": 1, "messfeld": {}},
         {"helligkeit": 0.80, "name": "weiss", "nr": 2, "messfeld": {}}]})
-    pruefe("Messfeld 2" in _zwei and "Messfeld 3" in _zwei,
+    pruefe("Feld B" in _zwei and "Feld C" in _zwei,
            "zwei namenlose Felder bekommen verschiedene, stabile Namen",
+           _zwei[:120])
+    # Gutachten 03.09.2026: kein Wort "Raum" und keine nackte Ziffer im
+    # Etikett - beides liest der Pruefstand aus Tims Antwort als
+    # Raumnummer bzw. Helligkeit. Der Buchstabe traegt nichts davon.
+    import re as _re
+    pruefe("raum" not in _zwei.lower()
+           and not _re.search(r"Feld \d", _zwei),
+           "das Etikett enthaelt weder 'Raum' noch eine Ziffer",
            _zwei[:120])
     _ohne_nr = auge_messung_text({"felder": [
         {"helligkeit": 0.60, "name": "weiss", "messfeld": {}},
         {"helligkeit": 0.80, "name": "weiss", "messfeld": {}}]})
-    pruefe("Messfeld 1" in _ohne_nr and "Messfeld 2" in _ohne_nr,
+    pruefe("Feld A" in _ohne_nr and "Feld B" in _ohne_nr,
            "auch ohne nr-Feld sind die Namen eindeutig (Reihenfolge)",
            _ohne_nr[:120])
     pruefe(auge_messung_text({}) == "",

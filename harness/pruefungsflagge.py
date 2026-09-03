@@ -19,8 +19,10 @@ Die Datei bleibt eine gewoehnliche Textdatei an derselben Stelle -
 m1_zentrale prueft weiterhin nur, OB sie da ist (_pruefung_laeuft).
 An der Riegel-Seite aendert sich nichts.
 """
+import fcntl
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 FLAGGE = Path("/opt/ki-server/config/PRUEFUNGSLAUF")
@@ -49,18 +51,58 @@ def _lebt(pid: int) -> bool:
     return True
 
 
+# Zeilen, die nicht von uns stammen (von Hand gesetzt, alte Fassung
+# ohne Besitzerliste, fremdes Werkzeug), bekommen diesen Besitzer. Er
+# lebt immer und wird nie automatisch gestrichen - nur von Hand.
+FREMD = "fremd"
+_KOPFZEILEN = {z.strip() for z in KOPF.splitlines() if z.strip()}
+
+
 def _zeilen(roh: str) -> list:
-    """Die Besitzerzeilen aus dem Dateiinhalt - (pid, text)."""
+    """Die Besitzerzeilen aus dem Dateiinhalt - (pid | FREMD, text).
+
+    Gutachten 03.09.2026: Vorher fiel jede Zeile ohne Tabulator einfach
+    weg - und beim naechsten abmelden() war die Datei leer und wurde
+    geloescht. Eine von Hand gesetzte Flagge (am 02.09. selbst so
+    "wiederhergestellt") oder die eines noch laufenden Prozesses mit
+    alter Fassung raeumte damit der naechste Lauf ab. Jetzt bleibt
+    Fremdes als FREMD-Besitzer stehen, bis jemand die Datei von Hand
+    loescht - so, wie der Kopf es verspricht.
+    """
     eintraege = []
     for zeile in (roh or "").splitlines():
+        if not zeile.strip() or zeile.strip() in _KOPFZEILEN:
+            continue
         if "\t" not in zeile:
+            eintraege.append((FREMD, zeile.strip()))
             continue
         kopf, _, text = zeile.partition("\t")
         try:
             eintraege.append((int(kopf.strip()), text.strip()))
         except ValueError:
-            continue
+            eintraege.append((FREMD, zeile.strip()))
     return eintraege
+
+
+@contextmanager
+def _gesperrt():
+    """Lese-Aendere-Schreibe unter einer Dateisperre.
+
+    Gutachten 03.09.2026: Zwei Laeufe, die fast gleichzeitig anmelden,
+    lasen denselben Stand - der zweite ueberschrieb den ersten, und
+    beim Abmelden des zweiten war die Datei weg, obwohl der erste noch
+    lief. Dasselbe Muster wie am 02.09., nur im Millisekundenfenster.
+    Die Sperre liegt auf einer Nachbardatei, damit unlink() der Flagge
+    selbst die Sperre nicht mit wegnimmt.
+    """
+    FLAGGE.parent.mkdir(parents=True, exist_ok=True)
+    schloss = FLAGGE.with_suffix(".lock")
+    with open(schloss, "a+") as h:
+        fcntl.flock(h.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(h.fileno(), fcntl.LOCK_UN)
 
 
 def _schreiben(eintraege: list) -> None:
@@ -69,8 +111,12 @@ def _schreiben(eintraege: list) -> None:
         return
     FLAGGE.parent.mkdir(parents=True, exist_ok=True)
     FLAGGE.write_text(
-        KOPF + "".join("%d\t%s\n" % (p, t) for p, t in eintraege),
+        KOPF + "".join("%s\t%s\n" % (p, t) for p, t in eintraege),
         encoding="utf-8")
+
+
+def _lebt_oder_fremd(p) -> bool:
+    return p == FREMD or _lebt(p)
 
 
 def _lesen() -> list:
@@ -89,19 +135,24 @@ def anmelden(text: str, pid: int = None) -> None:
     dass niemand hinter seinem Ruecken aufraeumt.
     """
     eigen = os.getpid() if pid is None else pid
-    eintraege = [(p, t) for p, t in _lesen() if p != eigen and _lebt(p)]
-    eintraege.append((eigen, text))
-    _schreiben(eintraege)
+    with _gesperrt():
+        eintraege = [(p, t) for p, t in _lesen()
+                     if p != eigen and _lebt_oder_fremd(p)]
+        eintraege.append((eigen, text))
+        _schreiben(eintraege)
 
 
 def abmelden(pid: int = None) -> None:
     """Diesen Lauf austragen - und NUR diesen.
 
     Bleibt ein anderer Lauf uebrig, bleibt die Datei liegen. Genau das
-    fehlte am 02.09.2026.
+    fehlte am 02.09.2026. Tote Eintraege werden hier NICHT geraeumt
+    (nur beim naechsten anmelden) - lieber eine Flagge, die einen Start
+    zu lang liegt, als eine, die zu frueh faellt.
     """
     eigen = os.getpid() if pid is None else pid
-    _schreiben([(p, t) for p, t in _lesen() if p != eigen])
+    with _gesperrt():
+        _schreiben([(p, t) for p, t in _lesen() if p != eigen])
 
 
 def laeuft() -> bool:
@@ -120,7 +171,7 @@ def selbsttest() -> int:
             print("  FEHLER  %s  <- %s" % (was, zusatz))
 
     print("Selbsttest pruefungsflagge\n")
-    global FLAGGE
+    global FLAGGE, _lebt
     echt = FLAGGE
     with tempfile.TemporaryDirectory() as ordner:
         # Betriebsdaten bleiben unangetastet - auch lesend (24.08.2026).
@@ -156,12 +207,40 @@ def selbsttest() -> int:
                str(_lesen()))
         abmelden(eigen)
 
-        # Kaputter Inhalt darf nicht dazu fuehren, dass die Flagge faellt.
-        FLAGGE.write_text("voelliger Unsinn ohne Tabulator\n",
+        # Fremder Inhalt (von Hand, alte Fassung) ist ein Besitzer, den
+        # niemand automatisch streicht (Gutachten 03.09.2026).
+        FLAGGE.write_text("Abiturlauf seit 02.09.2026 fuer alle\n",
                           encoding="utf-8")
-        pruefe(_lesen() == [], "unlesbarer Inhalt ergibt keine Besitzer")
-        pruefe(laeuft(),
-               "aber die Datei bleibt liegen - im Zweifel Riegel zu")
+        pruefe(_lesen() == [(FREMD, "Abiturlauf seit 02.09.2026 fuer alle")],
+               "eine Zeile ohne Tabulator ist ein FREMDER Besitzer")
+        anmelden("neuer Lauf", eigen)
+        abmelden(eigen)
+        pruefe(laeuft() and any(p == FREMD for p, _ in _lesen()),
+               "an- und abmelden raeumt die fremde Zeile NICHT weg",
+               str(_lesen()))
+        FLAGGE.unlink(missing_ok=True)
+        # Gleichzeitiges Anmelden darf keinen Eintrag verlieren. Die
+        # acht PIDs sind erfunden - damit anmelden() sie nicht als tot
+        # wegraeumt (das waere der andere, gewollte Mechanismus), gilt
+        # fuer diesen Block: alle leben. Gemessen wird allein die
+        # Sperre um Lesen-Aendern-Schreiben.
+        import threading
+        _echt_lebt = _lebt
+        _lebt = lambda p: True
+        try:
+            def _an(n):
+                anmelden("Lauf %d" % n, eigen + 1000 + n)
+            faeden = [threading.Thread(target=_an, args=(n,)) for n in range(8)]
+            for f in faeden: f.start()
+            for f in faeden: f.join()
+            pruefe(len(_lesen()) == 8,
+                   "acht gleichzeitige Anmeldungen -> acht Eintraege",
+                   str(len(_lesen())))
+            for n in range(8):
+                abmelden(eigen + 1000 + n)
+            pruefe(not laeuft(), "und nach acht Abmeldungen ist sie weg")
+        finally:
+            _lebt = _echt_lebt
     FLAGGE = echt
     pruefe(FLAGGE == Path("/opt/ki-server/config/PRUEFUNGSLAUF"),
            "der echte Pfad ist nach dem Test wiederhergestellt")
