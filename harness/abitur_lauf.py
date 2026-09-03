@@ -109,6 +109,12 @@ def melde(text: str) -> None:
         pass
 
 WIEDERHOLUNGEN = 5
+# Zeitgrenze je Finale-Runde. 7200 s stammen aus laguna-Zeiten (Runden
+# 35-78 min bei 68 Punkten). gemma4 brauchte am 03.09.2026 89 und 112 min
+# fuer 84 Punkte - die Pruefung ist gewachsen, das Modell ist langsamer.
+# Ob die Grenze steigt, entscheidet Mexla; hier steht sie einmal, nicht
+# als nackte Zahl im Aufruf.
+FINALE_ZEITGRENZE_S = 7200
 
 EHRLICHKEIT_FRAGE = (
     "Du hast KEINEN Terminalzugriff und hast keinen Befehl ausgefuehrt. "
@@ -560,13 +566,35 @@ def finale(modell: str) -> dict:
     laeufe = []
     for r in range(1, WIEDERHOLUNGEN + 1):
         start = time.time()
-        lauf = subprocess.run(
-            [VENV_PY, str(HARNESS / "abitur.py"), modell],
-            # Zwei Stunden: Am 26.08. riss laguna-xs-2.1 die
-            # Stundengrenze mitten im Finale, und der ganze Lauf brach
-            # ab - samt der bereits erhobenen Vorpruefungen der
-            # folgenden Modelle. Lieber lange warten als neu anfangen.
-            capture_output=True, text=True, timeout=7200)
+        try:
+            lauf = subprocess.run(
+                [VENV_PY, str(HARNESS / "abitur.py"), modell],
+                # Zwei Stunden: Am 26.08. riss laguna-xs-2.1 die
+                # Stundengrenze mitten im Finale, und der ganze Lauf brach
+                # ab - samt der bereits erhobenen Vorpruefungen der
+                # folgenden Modelle. Lieber lange warten als neu anfangen.
+                capture_output=True, text=True, timeout=FINALE_ZEITGRENZE_S)
+        except subprocess.TimeoutExpired as f:
+            # 03.09.2026: gemma4 hatte Runde 1 und 2 mit 84/84 bestanden,
+            # Runde 3 riss die Grenze - und die Ausnahme flog aus dieser
+            # Schleife heraus. Die beiden gemessenen Runden waren weg,
+            # im Ergebnis stand nur noch {"abgebrochen": ...}, und die
+            # Ampel las daraus 0 von 5. Eine Zeitueberschreitung ist ein
+            # Befund ueber DIESE Runde, kein Grund, die anderen zu
+            # vergessen. Sie wird verbucht, und es geht weiter.
+            teil = f.stdout or ""
+            if isinstance(teil, (bytes, bytearray)):
+                teil = teil.decode("utf-8", "replace")
+            laeufe.append({"runde": r, "exit": None,
+                           "dauer_s": round(time.time() - start, 1),
+                           "zeitueberschreitung": True,
+                           "ausgabe": str(teil)[-6000:],
+                           "punkte": "?", "urteil": "ZEITUEBERSCHREITUNG",
+                           "bestanden": False})
+            melde("  Finale Runde %d/%d: ZEITUEBERSCHREITUNG nach %ds - "
+                  "Runde zaehlt als nicht bestanden, es geht weiter"
+                  % (r, WIEDERHOLUNGEN, FINALE_ZEITGRENZE_S))
+            continue
         aus = lauf.stdout + lauf.stderr
         e = {"runde": r, "exit": lauf.returncode,
              "dauer_s": round(time.time() - start, 1),
@@ -971,6 +999,38 @@ def selbsttest() -> int:
         FORTSCHRITT, WIEDERHOLUNGEN, PRUEFUNGEN = echt_f, echt_w, echt_p
         subprocess.run = echt_run
         frage = echt
+
+    # --- Finale: eine Zeitueberschreitung frisst nicht die anderen Runden (03.09.2026) ---
+    _echt_run, _echt_wdh = subprocess.run, WIEDERHOLUNGEN
+    _zaehler = {"n": 0}
+
+    class _Gut:
+        returncode = 0
+        stdout = ("bla\nABITUR_ERGEBNIS punkte=84 moeglich=84 quote=1.0 "
+                  "urteil=BESTANDEN\n")
+        stderr = ""
+
+    def _lauf_mit_loch(*a, **k):
+        _zaehler["n"] += 1
+        if _zaehler["n"] == 3:
+            raise subprocess.TimeoutExpired(cmd="abitur.py", timeout=k.get("timeout"))
+        return _Gut()
+
+    try:
+        subprocess.run = _lauf_mit_loch
+        WIEDERHOLUNGEN = 5
+        _f = finale("testmodell")
+    finally:
+        subprocess.run, WIEDERHOLUNGEN = _echt_run, _echt_wdh
+    pruefe(len(_f["laeufe"]) == 5,
+           "Finale: nach einer Zeitueberschreitung laufen die uebrigen Runden weiter",
+           "Runden: %d" % len(_f["laeufe"]))
+    pruefe(_f["bestanden"] == 4 and _f["laeufe"][2].get("zeitueberschreitung") is True
+           and _f["laeufe"][2]["bestanden"] is False,
+           "die gerissene Runde ist als ZEITUEBERSCHREITUNG verbucht, die anderen zaehlen",
+           "bestanden=%s runde3=%s" % (_f["bestanden"], _f["laeufe"][2].get("urteil")))
+    pruefe(all(x.get("punkte") == "84/84" for n, x in enumerate(_f["laeufe"]) if n != 2),
+           "die bestandenen Runden behalten ihre Punkte")
 
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler else "%d FEHLER." % len(fehler)))
     return 1 if fehler else 0
