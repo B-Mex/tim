@@ -758,15 +758,29 @@ def auge_messung_text(messung=None) -> str:
             return ""
     felder = messung.get("felder") or ([messung] if messung.get("name") else [])
     teile = []
-    for f in felder:
+    for lauf, f in enumerate(felder, 1):
         mf = f.get("messfeld") or {}
-        raum = mf.get("raum") or "ohne Raumnamen"
+        raum = mf.get("raum") or "ohne Raum"
         try:
             h = float(f.get("helligkeit"))
         except (TypeError, ValueError):
             continue
-        teile.append("%s %.0f Prozent (%s)"
-                     % (raum, h * 100, f.get("name") or "?"))
+        # Jedes Feld bekommt einen EINDEUTIGEN, STABILEN Namen
+        # (02.09.2026). Vorher hiess der Eintrag "ohne Raumnamen 60
+        # Prozent (weiss)" - und das in Klammern war die Lampenfarbe,
+        # kein Feldname. Zwei Felder hiessen "ohne Raumnamen", zwei
+        # "violett". gemma4 verglich in einer Pruefung zwei
+        # gleichnamige Felder miteinander, las daraus eine Aenderung
+        # und fiel durch. Wer Werte vergleichen soll, braucht Namen,
+        # die man wiederfindet: "Messfeld 2" ist beim naechsten Blick
+        # wieder "Messfeld 2". Die Nummer kommt aus der Messung selbst
+        # (f["nr"]), sonst aus der Reihenfolge.
+        try:
+            nummer = int(f.get("nr")) + 1
+        except (TypeError, ValueError):
+            nummer = lauf
+        teile.append("Messfeld %d (%s, %s) %.0f Prozent"
+                     % (nummer, raum, f.get("name") or "?", h * 100))
     if not teile:
         return ""
     return (" DEINE GEMESSENE HELLIGKEIT je Messfeld, gerade eben: "
@@ -4673,6 +4687,21 @@ def _selbsttest() -> int:
            "Tim bekommt die gemessene Helligkeit je Raum vorgelegt", _txt[:120])
     pruefe("Prozent" in _txt,
            "und zwar in der Einheit, nach der die Pruefung fragt")
+    # 02.09.2026: Zwei Felder ohne Raumnamen muessen UNTERSCHEIDBAR
+    # heissen - sonst vergleicht ein Modell beim zweiten Blick das
+    # falsche Feld mit dem ersten (so fiel gemma4 im Abitur durch).
+    _zwei = auge_messung_text({"felder": [
+        {"helligkeit": 0.60, "name": "weiss", "nr": 1, "messfeld": {}},
+        {"helligkeit": 0.80, "name": "weiss", "nr": 2, "messfeld": {}}]})
+    pruefe("Messfeld 2" in _zwei and "Messfeld 3" in _zwei,
+           "zwei namenlose Felder bekommen verschiedene, stabile Namen",
+           _zwei[:120])
+    _ohne_nr = auge_messung_text({"felder": [
+        {"helligkeit": 0.60, "name": "weiss", "messfeld": {}},
+        {"helligkeit": 0.80, "name": "weiss", "messfeld": {}}]})
+    pruefe("Messfeld 1" in _ohne_nr and "Messfeld 2" in _ohne_nr,
+           "auch ohne nr-Feld sind die Namen eindeutig (Reihenfolge)",
+           _ohne_nr[:120])
     pruefe(auge_messung_text({}) == "",
            "ohne Messung bleibt der Satz weg, statt etwas zu erfinden")
     pruefe(auge_messung_text({"felder": [{"helligkeit": "kaputt"}]}) == "",

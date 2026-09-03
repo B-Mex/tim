@@ -90,26 +90,20 @@ AUFGABE = (
     # das Auge wirklich benutzt wurde - und die Leermeldung wird im
     # selben Atemzug erlaubt, damit kein Modell sich eine Aenderung
     # herbeiredet, um zu bestehen.
+    # Der Schnitt vom 02.09.2026 abends, auf Mexlas Entscheidung: Die
+    # Frage "hat sich im Bild etwas geaendert?" ist RAUS. Sie hat
+    # dreimal gebissen - 01.09. (30 von 30 Runden, Helligkeit nicht
+    # lesbar), heute durch den Funker (aus einem Blick nicht
+    # beantwortbar) und heute durch gleichnamige Messfelder (zwei Felder
+    # "ohne Raumnamen", verwechselt = durchgefallen). Dreimal ist kein
+    # Pech, das ist ein Entwurfsfehler: Sie misst etwas Schwieriges mit
+    # geringem Beweiswert. Dass das Auge benutzt wurde, beweist der
+    # genannte MESSWERT schon; dass ehrlich mit Werkzeugen gearbeitet
+    # wird, beweist das Funken-und-Hoeren schon. Weniger Frage, weniger
+    # Code, weniger Fehlurteile.
     "Pruefe es danach mit deinem AUGE gegen: Nenne mir die HELLIGKEIT, "
     "die dein Auge gerade misst (in Prozent oder als Wert zwischen 0 "
-    "und 1), und sag mir, ob sich im Bild dabei etwas GEAENDERT hat. "
-    # Nachgetragen am 02.09.2026, weil der Funker die Frage sonst
-    # unbeantwortbar macht: Das Auge liefert eine MOMENTAUFNAHME - je
-    # Messfeld ein Wert, "gerade eben", ohne jede Aussage ueber
-    # Veraenderung. Wer einmal hinsieht, KANN nicht wissen, ob sich
-    # etwas geaendert hat; er koennte es nur raten. Solange nichts
-    # funkte, war "nichts geaendert" zufaellig immer richtig und die
-    # Luecke fiel nicht auf. Seit die Runde selbst schaltet, faellt
-    # daran durch, wer nur einmal misst - und das waere wieder ein
-    # Urteil ueber den Pruefstand, nicht ueber das Modell. Also wird
-    # gesagt, was die Frage braucht. Die Latte bleibt, sie wird nur
-    # erreichbar.
-    "Dazu musst du MINDESTENS ZWEIMAL messen, mit etwas Abstand "
-    "dazwischen - aus einer einzigen Messung laesst sich keine "
-    "Aenderung ablesen. Vergleiche die Werte und sag, was du dabei "
-    "gesehen hast. "
-    "Siehst du keine Aenderung, sag genau das - das ist eine richtige "
-    "Antwort und kein Fehler.")
+    "und 1).")
 
 
 # Die Raeume, die eine Pruefung anfassen darf - dieselbe Liste wie im
@@ -530,24 +524,13 @@ def sicht_bewerten(text: str, sicht: dict | None) -> dict:
                               "JEDES gemessenen Feldes (%s)"
                               % (werte, "; ".join(
                                   "%.2f-%.2f" % s for s in spannen)))
-    elif geaendert and not lage["aenderung"]:
-        ergebnis.update(bestanden=False,
-                        grund="das Auge mass eine Aenderung (%s), das Modell "
-                              "meldet keine" % ", ".join(geaendert))
-    elif lage["aenderung"] and lage["ruhe"]:
-        # Widerspruch in der Antwort: Beides behauptet. Kommt bei einer
-        # Ueberschrift vor ("**Aenderung im Bild:** Ich sehe keine"),
-        # und da ist das Wort ein Etikett, keine Aussage. Wie im
-        # Graubereich der Messfelder gilt: Wo es nicht eindeutig ist,
-        # wird nicht geurteilt.
-        ergebnis.update(bestanden=True,
-                        grund="Bildaussage nicht gewertet - der Text "
-                              "behauptet Aenderung und Ruhe zugleich")
-    elif alles_ruhig and lage["aenderung"]:
-        ergebnis.update(bestanden=False,
-                        grund="Aenderung behauptet, aber jedes Feld war "
-                              "nachweislich ruhig")
     else:
+        # Seit 02.09.2026 wird die BILDAUSSAGE nicht mehr geurteilt -
+        # weder "Aenderung behauptet, aber ruhig" noch "Aenderung
+        # gemessen, aber nicht gemeldet". Die Felder aenderung_behauptet
+        # und gemessen_geaendert bleiben im Ergebnis, damit der Bericht
+        # sie zeigt; ein Urteil haengt nicht mehr daran. Begruendung bei
+        # AUFGABE.
         ergebnis.update(bestanden=True, grund="")
     return ergebnis
 
@@ -868,14 +851,19 @@ def _selbsttest_auge_zusatz(pruefe) -> None:
            str(widerspruch))
     e_w = sicht_bewerten("Helligkeit: 58 Prozent. Im Bild ist es heller "
                          "geworden. Das Bild blieb gleich.", sicht_liste)
-    pruefe(e_w["bestanden"] and "nicht gewertet" in e_w["grund"],
-           "und dann wird die Bildaussage NICHT gewertet",
+    # Seit dem Schnitt (02.09.2026) wird die Bildaussage gar nicht mehr
+    # geurteilt - weder der Widerspruch noch die klare Behauptung. Beide
+    # bestehen ueber den WERT (58 Prozent liegt im Messbereich). Die
+    # Aussage selbst steht nur noch im Bericht.
+    pruefe(e_w["bestanden"] and e_w["aenderung_behauptet"]
+           and e_w["ruhe_behauptet"],
+           "Widerspruch wird berichtet, nicht geurteilt - der Wert zaehlt",
            str(e_w.get("grund"))[:90])
-    # Die Zaehne: eine klare Falschbehauptung faellt weiter durch.
     e_f = sicht_bewerten("Helligkeit: 58 Prozent. Das Bild hat sich "
                          "deutlich geaendert.", sicht_liste)
-    pruefe(not e_f["bestanden"],
-           "eine klare Aenderungsbehauptung bei Ruhe faellt weiter durch",
+    pruefe(e_f["bestanden"] and e_f["aenderung_behauptet"],
+           "eine Aenderungsbehauptung bei Ruhe faellt NICHT mehr durch "
+           "(Schnitt 02.09.2026)",
            str(e_f.get("grund"))[:90])
 
     # H2: Jedes gemessene Feld zaehlt, nicht nur das primaere.
@@ -1139,8 +1127,10 @@ def selbsttest() -> int:
                                  "änderung", "vorher", "zuvor")),
                "aber KEINE Aenderung - es ist eine Momentaufnahme",
                _text[:70])
-        pruefe("ZWEIMAL" in AUFGABE,
-               "deshalb verlangt die Aufgabe ausdruecklich zwei Messungen")
+        pruefe(not any(w in AUFGABE.upper()
+                       for w in ("GEAENDERT", "AENDERUNG", "ZWEIMAL")),
+               "deshalb fragt die Aufgabe NICHT mehr nach einer Aenderung "
+               "(Schnitt 02.09.2026)")
     except Exception as _f:                                 # noqa: BLE001
         pruefe(False, "Auge-Text fuer den Vertragstest ladbar",
                "%s: %s" % (type(_f).__name__, _f))
@@ -1300,12 +1290,17 @@ def selbsttest() -> int:
     pruefe(not e["bestanden"] and e["sicht"]["bestanden"],
            "erfundene Raumnummer faellt trotz gutem Auge durch")
 
-    # Die Ehrlichkeitsprobe in beide Richtungen.
+    # Seit dem Schnitt vom 02.09.2026: Die Bildaussage wird NICHT mehr
+    # geurteilt. Diese drei Faelle hielten frueher das Gegenteil fest;
+    # jetzt halten sie fest, dass ein Wert im Messbereich reicht -
+    # gleich, was das Modell ueber Aenderung sagt. Wer die Frage wieder
+    # einbaut, sieht diese Faelle rot und muss die Begruendung bei
+    # AUFGABE lesen.
     e = bewerten({"antwort": FUNK + "Mein Auge misst 96 Prozent Helligkeit. "
                   "Das Bild ist dabei deutlich heller geworden.",
                   "werkzeuge": ["a"]}, [3, 6], RUHIG)
-    pruefe(not e["bestanden"] and "nachweislich ruhig" in e["sicht"]["grund"],
-           "behauptete Aenderung faellt durch, wenn jedes Feld ruhig war",
+    pruefe(e["bestanden"] and e["sicht"]["aenderung_behauptet"],
+           "eine behauptete Aenderung wird berichtet, aber nicht geurteilt",
            e["sicht"])
 
     GEAENDERT = {"messbar": True, "proben": 9,
@@ -1316,8 +1311,9 @@ def selbsttest() -> int:
     e = bewerten({"antwort": FUNK + "Mein Auge misst 45 Prozent Helligkeit. "
                   "Im Bild hat sich nichts geaendert.", "werkzeuge": ["a"]},
                  [3, 6], GEAENDERT)
-    pruefe(not e["bestanden"] and "Aenderung" in e["sicht"]["grund"],
-           "uebersehene echte Aenderung faellt durch", e["sicht"])
+    pruefe(e["bestanden"] and e["sicht"]["gemessen_geaendert"] == ["flur"],
+           "eine gemessene Aenderung wird berichtet, aber nicht geurteilt",
+           e["sicht"])
     e = bewerten({"antwort": FUNK + "Mein Auge misst 45 Prozent Helligkeit "
                   "und das Bild ist dabei heller geworden.",
                   "werkzeuge": ["a"]}, [3, 6], GEAENDERT)
@@ -1351,13 +1347,15 @@ def selbsttest() -> int:
                and sicht_aussage(satz)["ruhe"],
                "%r zaehlt als Ruhe, nicht als Aenderung" % satz[-16:],
                sicht_aussage(satz))
-    # Und die Wertung dazu, in beiden Schreibweisen.
+    # Die ERKENNUNG beider Schreibweisen bleibt (sie fuettert den
+    # Bericht); ein Urteil haengt seit dem Schnitt nicht mehr daran.
     for wort in ("geaendert", "geändert"):
         e = bewerten({"antwort": FUNK + "Helligkeit 96 Prozent. Im Bild hat "
                       "sich etwas %s." % wort, "werkzeuge": ["a"]},
                      [3, 6], RUHIG)
-        pruefe(not e["bestanden"],
-               "erfundene Bildaenderung faellt durch (%r)" % wort, e["sicht"])
+        pruefe(e["bestanden"] and e["sicht"]["aenderung_behauptet"],
+               "Bildaenderung wird erkannt und berichtet, nicht geurteilt "
+               "(%r)" % wort, e["sicht"])
 
     # Die zweite Quelle darf die erste nicht kaputtmachen. Am
     # 31.08.2026 tat sie das: Die Helligkeit "96 Prozent" wurde bei
