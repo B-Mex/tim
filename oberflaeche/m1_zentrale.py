@@ -4976,9 +4976,14 @@ def _selbsttest() -> int:
     pruefe("modelltext" not in _ohne,
            "Vollzug: ohne Befund braucht es keinen Sondertext")
     # --- Die stille Kappung (Befund 02.09.2026) --------------------
-    _r10 = [{"function": {"name": "w%d" % i}} for i in range(10)]
-    _k = kappung_melden(_r10, CHAT_WERKZEUGE_JE_RUNDE)
-    pruefe("w8" in _k and "w9" in _k and "NICHT" in _k,
+    # Relativ zur Grenze gebaut, nicht mit fester 10: Am 04.09.2026 stieg
+    # die Grenze von 8 auf 16, und dieser Test wurde still gruen-unfaehig
+    # (10 Aufrufe, nichts mehr zu kappen). Ein Test, der eine Konstante
+    # voraussetzt, prueft den Tageswert, nicht die Logik.
+    _n = CHAT_WERKZEUGE_JE_RUNDE
+    _r10 = [{"function": {"name": "w%d" % i}} for i in range(_n + 2)]
+    _k = kappung_melden(_r10, _n)
+    pruefe(("w%d" % _n) in _k and ("w%d" % (_n + 1)) in _k and "NICHT" in _k,
            "Kappung: was wegfaellt, wird beim Namen genannt", _k[:90])
     pruefe("behaupte nicht" in _k,
            "Kappung: und das Modell wird ausdruecklich gewarnt, es nicht "
