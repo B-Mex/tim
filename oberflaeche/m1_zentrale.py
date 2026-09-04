@@ -2236,6 +2236,72 @@ MODELL_ZEITGRENZE_S = {
 MODELL_ZEITGRENZE_STANDARD = 600
 
 
+WERKZEUGERGEBNIS_GRENZE = 12000
+
+
+def projektdatei_ausschnitt(ergebnis: str, voll: str, ab=None, bis=None) -> str:
+    """Zeilen ab..bis einer bereits FREIGEGEBENEN Datei liefern.
+
+    Die Freigabe entscheidet allein das Lese-Werkzeug (ergebnis). Kam
+    dort eine Ablehnung ("Zugriff verweigert", "Nicht gefunden",
+    "Lesefehler"), wird sie unveraendert durchgereicht - hier wird
+    nichts ueber einen Umweg lesbar, was vorne verweigert wurde. Erst
+    wenn Inhalt kam, wird fuer den Ausschnitt die ganze Datei gelesen,
+    denn das Werkzeug selbst kappt bei 20 000 Zeichen und die gesuchte
+    Stelle liegt oft dahinter (04.09.2026: Zeile 258-314 in einer
+    615-Zeilen-Datei).
+    """
+    # Ein fehlendes Argument kommt aus _wert() als "" an, nicht als None
+    # - am 04.09.2026 durch die Live-Probe aufgeflogen: Ohne Bereich kam
+    # "ab_zeile muss eine ganze Zahl sein", weil "" in int() lief. Der
+    # Selbsttest hatte die Funktion direkt mit None gerufen, nicht ueber
+    # den Werkzeugweg. Jetzt gilt: None, "" und Leerraum = nicht gesetzt.
+    def _leer(x):
+        return x is None or str(x).strip() == ""
+    ab = None if _leer(ab) else ab
+    bis = None if _leer(bis) else bis
+    if ab is None and bis is None:
+        return ergebnis
+    text = str(ergebnis or "")
+    if text.startswith(("Zugriff verweigert", "Nicht gefunden", "Lesefehler",
+                        "Ungueltiger Pfad")):
+        return text
+    try:
+        zeilen = Path(voll).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as f:
+        return "Lesefehler: %s" % f
+    try:
+        a = max(1, int(ab)) if ab is not None else 1
+        b = min(len(zeilen), int(bis)) if bis is not None else len(zeilen)
+    except (TypeError, ValueError):
+        return "Fehler: ab_zeile/bis_zeile muessen ganze Zahlen sein."
+    if a > b:
+        return "Leer: ab_zeile %d liegt hinter bis_zeile %d (Datei hat %d Zeilen)." % (a, b, len(zeilen))
+    return ("[Zeilen %d-%d von %d aus %s]\n" % (a, b, len(zeilen), Path(voll).name)
+            + "\n".join("%d: %s" % (n, z) for n, z in enumerate(zeilen[a - 1:b], a)))
+
+
+def werkzeugergebnis_kappen(text: str, grenze: int = WERKZEUGERGEBNIS_GRENZE) -> str:
+    """Ein Werkzeugergebnis auf die Grenze kuerzen - und es SAGEN.
+
+    04.09.2026: gemma4 las in Tims Projekt siebenmal dieselbe Datei.
+    Jedes Mal endete der Text stumm bei 12 000 Zeichen, mitten in der
+    Klasse, um die es ging - und nichts unterschied den Schnitt vom
+    Dateiende. Das Modell meldete korrekt "bricht mitten in aufnehmen
+    ab" und hatte keinen Weg weiter. Ein Schnitt, der sich nicht
+    ankuendigt, ist eine Falle; einer, der sagt, wie es weitergeht,
+    ist ein Hinweis.
+    """
+    text = str(text or "")
+    if len(text) <= grenze:
+        return text
+    kopf = text[:grenze]
+    zeile = kopf.count("\n") + 1
+    return (kopf + "\n[GEKUERZT: %d von %d Zeichen gezeigt, Schnitt in Zeile %d. "
+            "Der Rest fehlt - bei Dateien lies weiter mit ab_zeile=%d.]"
+            % (grenze, len(text), zeile, zeile))
+
+
 def modell_zeitgrenze(modell: str) -> int:
     """Sekunden, die ein einzelner Chat-Aufruf dieses Modells bekommt."""
     name = modell or ""
@@ -2760,10 +2826,16 @@ CHAT_WERKZEUGE = [
                         "Dateiname genuegt (z.B. 'README.md' oder "
                         "'RECHERCHE_AUTOMATISCH.md') - sie wird gesucht. "
                         "Benutze das, sobald du einen Dateinamen kennst; "
-                        "liste nicht weiter auf."),
+                        "liste nicht weiter auf. Lange Dateien werden "
+                        "gekuerzt und sagen das am Ende; dann lies den "
+                        "Rest in Abschnitten mit ab_zeile und bis_zeile."),
         "parameters": {"type": "object", "properties": {
             "pfad": {"type": "string",
-                     "description": "Dateiname oder Pfad, z.B. 'README.md'"}},
+                     "description": "Dateiname oder Pfad, z.B. 'README.md'"},
+            "ab_zeile": {"type": "integer",
+                         "description": "Erste Zeile (1-basiert), optional"},
+            "bis_zeile": {"type": "integer",
+                          "description": "Letzte Zeile einschliesslich, optional"}},
             "required": ["pfad"]}}},
     # Langzeitgedaechtnis. Nur lesend - es wird gesucht, nie geschrieben.
     # Geschrieben wird ausschliesslich beim Abschluss eines Ablaufs, und
@@ -3494,7 +3566,7 @@ def teilaufgabe_ausfuehren(auftrag: str, modell: str = "") -> str:
                 ergebnis = werkzeug_ausfuehren(
                     name, argumente, erlaubt=TEILAUFGABE_WERKZEUGE)
                 benutzte.append(name)
-                verlauf.append({"role": "tool", "content": ergebnis[:12000],
+                verlauf.append({"role": "tool", "content": werkzeugergebnis_kappen(ergebnis),
                                 "tool_name": name})
     except (urllib.error.URLError, OSError, ValueError) as fehler:
         return f"Die Teilaufgabe ist fehlgeschlagen: {fehler}"
@@ -3747,7 +3819,11 @@ def werkzeug_ausfuehren(name: str, argumente: dict,
                 return ("Fehler: kein Pfad angegeben. Nutze zuerst "
                         "'projekte_auflisten', um Dateinamen zu sehen.")
             _, lesen = _harness_werkzeug("_dateien_werkzeuge")(projektordner())
-            return lesen.run(pfad=_projektpfad(pfad))
+            voll = _projektpfad(pfad)
+            ergebnis = lesen.run(pfad=voll)
+            return projektdatei_ausschnitt(
+                ergebnis, voll, _wert(argumente, "ab_zeile", "von_zeile", "start"),
+                _wert(argumente, "bis_zeile", "zu_zeile", "ende"))
 
         if name == "berichte_lesen":
             gewuenscht = str(argumente.get("name", "")).strip()
@@ -3935,7 +4011,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 # nicht an dieser Rueckgabe - ein Werkzeug, das "ok"
                 # meldet, ist eine zweite Behauptung.
                 vollzuege.append({"werkzeug": name, "argumente": argumente})
-                mit_rolle.append({"role": "tool", "content": ergebnis[:12000],
+                mit_rolle.append({"role": "tool", "content": werkzeugergebnis_kappen(ergebnis),
                                   "tool_name": name})
             if _gekappt:
                 # Dem MODELL sagen, nicht nur ins Protokoll: Sonst haelt
@@ -4580,6 +4656,7 @@ def _selbsttest() -> int:
     geprueft, damit ein abgeschalteter Nachbardienst keinen Fehlalarm
     ausloest.
     """
+    global CHAT_PROJEKTORDNER  # wird in zwei Testbloecken zeitweise ersetzt
     fehler = 0
 
     def pruefe(bedingung, text, zusatz=""):
@@ -4599,6 +4676,61 @@ def _selbsttest() -> int:
            "Modellgrenzen greifen mit :latest-Anhang")
     pruefe(modell_grenzen("nemotron-3.5-lightning")["num_ctx"] == 32768,
            "Modellgrenzen greifen ohne Anhang")
+    # --- Werkzeugergebnisse: Kappung sagt Bescheid; Dateien in Abschnitten (04.09.2026) ---
+    _lang = "\n".join("Zeile %d" % i for i in range(1, 3001))
+    _k = werkzeugergebnis_kappen(_lang, grenze=200)
+    pruefe(_k.startswith(_lang[:200]) and "GEKUERZT" in _k and "ab_zeile=" in _k,
+           "ein gekapptes Werkzeugergebnis kuendigt den Schnitt an und nennt die Fortsetzung",
+           _k[-90:])
+    pruefe(werkzeugergebnis_kappen("kurz", grenze=200) == "kurz",
+           "ein kurzes Ergebnis bleibt unangetastet")
+    import re as _re2
+    _z = int(_re2.search(r"ab_zeile=(\d+)", _k).group(1))
+    pruefe(_z == _lang[:200].count("\n") + 1,
+           "die genannte Fortsetzungszeile ist die Schnittzeile", str(_z))
+    import tempfile as _tf2
+    with _tf2.TemporaryDirectory() as _o2:
+        _f = Path(_o2) / "gross.py"
+        _f.write_text("\n".join("z%d" % i for i in range(1, 1001)), encoding="utf-8")
+        _aus = projektdatei_ausschnitt("irgendein Inhalt", str(_f), 258, 260)
+        pruefe(_aus.splitlines()[1:] == ["258: z258", "259: z259", "260: z260"],
+               "ab_zeile/bis_zeile liefern genau diese Zeilen, 1-basiert, einschliesslich",
+               _aus[:80])
+        pruefe(projektdatei_ausschnitt("Zugriff verweigert: x", str(_f), 1, 5)
+               == "Zugriff verweigert: x",
+               "eine Ablehnung des Lese-Werkzeugs wird NICHT umgangen")
+        pruefe("Leer:" in projektdatei_ausschnitt("ok", str(_f), 50, 10),
+               "ab hinter bis ergibt eine klare Meldung statt Unsinn")
+    pruefe(projektdatei_ausschnitt("voll", "/nirgends", None, None) == "voll",
+           "ohne Bereichsangabe bleibt alles wie bisher")
+    # Durch den echten Werkzeugweg, wie das Modell ihn nimmt - dort kommen
+    # fehlende Argumente als "" an. (global CHAT_PROJEKTORDNER steht schon
+    # weiter oben in diesem Selbsttest.)
+    _echt_po2 = CHAT_PROJEKTORDNER
+    with _tf2.TemporaryDirectory() as _o3:
+        _root3 = Path(_o3) / "P_TEST"; _root3.mkdir()
+        (_root3 / "gross.py").write_text("\n".join("z%d" % i for i in range(1, 401)), encoding="utf-8")
+        CHAT_PROJEKTORDNER = [str(_root3)]
+        try:
+            _ganz = werkzeug_ausfuehren("projektdatei_lesen", {"pfad": "P_TEST/gross.py"})
+            pruefe(_ganz.startswith("z1\n") and "muessen ganze Zahlen" not in _ganz,
+                   "ohne ab_zeile/bis_zeile liefert der Werkzeugweg die Datei wie bisher",
+                   _ganz[:60])
+            _teil = werkzeug_ausfuehren("projektdatei_lesen",
+                                        {"pfad": "P_TEST/gross.py", "ab_zeile": 100, "bis_zeile": 102})
+            pruefe(_teil.splitlines()[1:] == ["100: z100", "101: z101", "102: z102"],
+                   "mit ab_zeile/bis_zeile liefert der Werkzeugweg den Ausschnitt",
+                   _teil[:80])
+            _leer2 = werkzeug_ausfuehren("projektdatei_lesen",
+                                         {"pfad": "P_TEST/gross.py", "ab_zeile": "", "bis_zeile": ""})
+            pruefe(_leer2.startswith("z1\n"),
+                   "leere Strings zaehlen als 'nicht gesetzt'")
+        finally:
+            CHAT_PROJEKTORDNER = _echt_po2
+    _schema = next(w for w in CHAT_WERKZEUGE if w["function"]["name"] == "projektdatei_lesen")
+    pruefe({"ab_zeile", "bis_zeile"} <= set(_schema["function"]["parameters"]["properties"]),
+           "das Werkzeugschema bietet ab_zeile und bis_zeile an")
+
     # --- Zeitgrenze je Modellaufruf (04.09.2026) ---
     pruefe(modell_zeitgrenze("gemma4:26b-a4b-it-qat") == 1800
            and modell_zeitgrenze("gemma4:26b-a4b-it-qat:latest") == 1800,
@@ -4778,7 +4910,6 @@ def _selbsttest() -> int:
     # Hermetisch: eigener Projektordner in einem Temp-Verzeichnis, damit
     # der Test nicht an Mexlas Desktop haengt.
     import tempfile as _tf
-    global CHAT_PROJEKTORDNER
     _echt_po = CHAT_PROJEKTORDNER
     with _tf.TemporaryDirectory() as _o:
         _root = Path(_o) / "M1_TEST"
