@@ -241,16 +241,21 @@ def schleife(aufgabe: str, datei: str, modell: str = MODELL_STANDARD,
 
     for k in range(1, runden + 1):
         nachricht = rundennachricht(aufgabe_text, aufgabe, datei, k, runden, stand, antwort)
-        antwort = eine_runde(chat, modell, chat_id, nachricht)
-        text = str(antwort.get("antwort") or "")
+        # 'erg', nicht 'antwort': Der Parameter 'antwort' ist Mexlas Antwort
+        # auf ein DECIDE. Bis 04.09.2026 21:12 ueberschrieb der Rundenwert
+        # denselben Namen - eine Gegenprobe flog mit "'dict' object has no
+        # attribute 'strip'" auf, statt sauber rot zu werden. Latent, aber
+        # echt: Ein Name, zwei Bedeutungen, ist ein Fehler auf Vorrat.
+        erg = eine_runde(chat, modell, chat_id, nachricht)
+        text = str(erg.get("antwort") or "")
         status, grund = status_lesen(text)
         # Nach der Runde: Stand neu erheben. Der Richter entscheidet.
         stand = stand_datei(datei, aufgabe)
         stand["selbsttest"] = selbsttest_fahren(datei, laufen) if stand["datei_da"] else None
         stand["abnahme"] = abnahme(aufgabe, datei)
-        runde = {"runde": k, "dauer_s": antwort.get("dauer_s"),
-                 "werkzeuge": antwort.get("werkzeuge") or [],
-                 "fehler": antwort.get("fehler"),
+        runde = {"runde": k, "dauer_s": erg.get("dauer_s"),
+                 "werkzeuge": erg.get("werkzeuge") or [],
+                 "fehler": erg.get("fehler"),
                  "status": status, "status_grund": grund,
                  "selbsttest_ok": bool((stand.get("selbsttest") or {}).get("ok")),
                  "abnahme_ok": bool(stand["abnahme"].get("bestanden")),
@@ -274,8 +279,8 @@ def schleife(aufgabe: str, datei: str, modell: str = MODELL_STANDARD,
             ergebnis["ausgang"] = "FERTIG nach %d Runde(n) - die Abnahme besteht" % k; break
         if status in ("BLOCKED", "DECIDE"):
             ergebnis["ausgang"] = "%s nach Runde %d: %s" % (status, k, grund or "(kein Grund genannt)"); break
-        if antwort.get("fehler") and k == runden:
-            ergebnis["ausgang"] = "UMGEBUNGSFEHLER in letzter Runde: %s" % antwort["fehler"]; break
+        if erg.get("fehler") and k == runden:
+            ergebnis["ausgang"] = "UMGEBUNGSFEHLER in letzter Runde: %s" % erg["fehler"]; break
     else:
         ergebnis["ausgang"] = "BUDGET ERSCHOEPFT nach %d Runden - Abnahme besteht nicht" % runden
     ergebnis["beendet"] = datetime.now().isoformat(timespec="seconds")
