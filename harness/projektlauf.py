@@ -140,6 +140,17 @@ def rundennachricht(aufgabe_text: str, aufgabe: str, datei: str, runde: int,
                      % (datei, stand.get("zeilen", 0)))
     else:
         teile.append("- %s gibt es noch nicht." % datei)
+    if stand.get("dateien"):
+        teile.append("- Alle Dateien in deinem Sandkasten: "
+                     + "; ".join(stand["dateien"]))
+    notizen = (stand.get("notizen") or "").strip()
+    notizdatei = NOTIZEN_MUSTER % aufgabe
+    if notizen:
+        teile.append("")
+        teile.append("DEINE NOTIZEN AUS DER VORIGEN RUNDE (%s):" % notizdatei)
+        teile.append(notizen)
+    else:
+        teile.append("- Notizen von dir gibt es noch nicht (%s)." % notizdatei)
     st = stand.get("selbsttest")
     if st is not None:
         teile.append("- Dein Selbsttest (werkstatt_testen): %s"
@@ -164,6 +175,12 @@ def rundennachricht(aufgabe_text: str, aufgabe: str, datei: str, runde: int,
         "lesen was der Test sagt, nachbessern. Du hast 8 Werkzeugaufrufe.",
         "- Behaupte nichts, was du nicht getan hast. Was du nicht geschafft "
         "hast, sagst du so - die naechste Runde kommt sowieso.",
+        "- BEVOR dein Budget aufgebraucht ist, schreib mit werkstatt_schreiben "
+        "deine Notizen nach %s: was du verstanden hast, was du entschieden "
+        "hast, was der NAECHSTE konkrete Schritt ist. Die naechste Runde "
+        "beginnt mit genau diesen Notizen - ohne sie faengst du wieder bei "
+        "null an. Verstehen, was schon in den Notizen steht, kostet kein "
+        "Budget mehr." % notizdatei,
         "- Beende deine Antwort mit GENAU EINER Zeile:",
         "  STATUS: WEITER          (du machst naechste Runde weiter)",
         "  STATUS: FERTIG          (du glaubst, die Abnahme besteht jetzt)",
@@ -198,7 +215,7 @@ def schleife(aufgabe: str, datei: str, modell: str = MODELL_STANDARD,
     melde("=== PROJEKT %s | %s | bis zu %d Runden | Chat %s ===" % (aufgabe, modell, runden, chat_id))
 
     # Stand VOR Runde 1: Was liegt da, und was sagt der Richter?
-    stand = stand_datei(datei)
+    stand = stand_datei(datei, aufgabe)
     stand["abnahme"] = abnahme(aufgabe, datei)
     if stand["abnahme"].get("umgebungsfehler"):
         ergebnis["ausgang"] = "UMGEBUNGSFEHLER: " + stand["abnahme"]["ausgabe"]
@@ -215,7 +232,7 @@ def schleife(aufgabe: str, datei: str, modell: str = MODELL_STANDARD,
         text = str(antwort.get("antwort") or "")
         status, grund = status_lesen(text)
         # Nach der Runde: Stand neu erheben. Der Richter entscheidet.
-        stand = stand_datei(datei)
+        stand = stand_datei(datei, aufgabe)
         stand["selbsttest"] = selbsttest_fahren(datei, laufen) if stand["datei_da"] else None
         stand["abnahme"] = abnahme(aufgabe, datei)
         runde = {"runde": k, "dauer_s": antwort.get("dauer_s"),
@@ -266,15 +283,59 @@ def _werkstatt(*args) -> dict:
         return {"ok": False, "fehler": (lauf.stdout + lauf.stderr)[-500:]}
 
 
-def _stand_datei(datei: str) -> dict:
+NOTIZEN_MUSTER = "NOTIZEN_%s.md"
+NOTIZEN_GRENZE = 2500
+
+
+def _stand_datei(datei: str, aufgabe: str = "") -> dict:
+    """Was liegt im Sandkasten - und was hat Tim sich selbst notiert?
+
+    Beobachtung aus dem ersten Lauf (04.09.2026, laguna, 5 Runden): Mit
+    frischem Kontext fing jede Runde bei null an - Datei lesen, Test
+    fahren, Klasse "genauer verstehen" - und das Budget war aufgebraucht,
+    bevor es ans Schreiben ging. In Runde 4 lag der richtige rote Test
+    schon als Nebendatei da; die Runden 5 ff. wussten es nicht. Frischer
+    Kontext braucht ein Gedaechtnis AUF DER PLATTE: die Liste aller
+    Dateien und Tims eigene Notizen (Plan, Entscheidung, naechster
+    Schritt), die er am Rundenende schreibt und am Rundenanfang liest.
+    """
     ziel = SANDKASTEN / datei
-    if not ziel.is_file():
-        return {"datei_da": False, "zeilen": 0}
+    stand = {"datei_da": ziel.is_file(), "zeilen": 0, "dateien": [], "notizen": ""}
+    if stand["datei_da"]:
+        try:
+            stand["zeilen"] = ziel.read_text(encoding="utf-8", errors="replace").count("\n") + 1
+        except OSError:
+            pass
+    # Nur, was zu DIESER Aufgabe gehoert: Dateien mit dem Stamm der
+    # Zieldatei und die Notizen. Der Sandkasten haelt auch die Uebungen
+    # der Abiturlaeufe (auswertung.py, doppel.py, ...) - die haben hier
+    # nichts verloren und wuerden nur ablenken. Ihre Zahl wird genannt,
+    # damit nichts verschwiegen ist.
+    stamm = Path(datei).stem
+    fremde = 0
     try:
-        return {"datei_da": True,
-                "zeilen": ziel.read_text(encoding="utf-8", errors="replace").count("\n") + 1}
+        for f in sorted(SANDKASTEN.iterdir()):
+            if not f.is_file() or f.name.startswith(".") or f.suffix == ".pyc":
+                continue
+            if f.name.startswith(stamm) or (aufgabe and f.name == NOTIZEN_MUSTER % aufgabe):
+                st = f.stat()
+                stand["dateien"].append("%s (%d Zeilen, %s)" % (
+                    f.name, f.read_text(encoding="utf-8", errors="replace").count("\n") + 1,
+                    datetime.fromtimestamp(st.st_mtime).strftime("%H:%M")))
+            else:
+                fremde += 1
     except OSError:
-        return {"datei_da": True, "zeilen": 0}
+        pass
+    if fremde:
+        stand["dateien"].append("(dazu %d Dateien anderer Uebungen, nicht diese Aufgabe)" % fremde)
+    if aufgabe:
+        n = SANDKASTEN / (NOTIZEN_MUSTER % aufgabe)
+        if n.is_file():
+            try:
+                stand["notizen"] = n.read_text(encoding="utf-8", errors="replace")[-NOTIZEN_GRENZE:]
+            except OSError:
+                pass
+    return stand
 
 
 def _chat_zentrale(modell: str, chat_id: str, nachricht: str) -> dict:
@@ -332,7 +393,9 @@ def selbsttest() -> int:
             protokoll_ids.append((chat_id, nachricht))
             return {"antwort": antworten.pop(0), "werkzeuge": ["werkstatt_schreiben"]}
         return chat
-    stand_da = lambda d: {"datei_da": True, "zeilen": 42}
+    stand_da = lambda d, a="": {"datei_da": True, "zeilen": 42,
+                                "dateien": ["x.py (42 Zeilen, 20:00)", "x_test.py (30 Zeilen, 20:05)"],
+                                "notizen": "PLAN: Schluessel aus Name+Kasten. NAECHSTER SCHRITT: aufnehmen umbauen."}
 
     # 1) FERTIG ohne gruene Abnahme zaehlt nicht - es geht weiter.
     ab_immer_rot = lambda a, d: {"bestanden": False, "ausgabe": "(a) 1 statt 2"}
@@ -369,6 +432,10 @@ def selbsttest() -> int:
            "jede Runde bekommt Aufgabe + Stand, nie die vorige Antwort")
     pruefe("1 statt 2" in n2, "die letzte Testausgabe steht in der naechsten Nachricht")
     pruefe(len({c for c, _ in protokoll_ids}) == 1, "ein Chat je Lauf (fuer Mexlas Mitlesen)")
+    pruefe("x_test.py (30 Zeilen" in n2, "alle Sandkasten-Dateien stehen in der Nachricht - auch Nebendateien")
+    pruefe("PLAN: Schluessel aus Name+Kasten" in n2 and "NOTIZEN_x.md" in n2,
+           "Tims Notizen der vorigen Runde stehen in der naechsten Nachricht")
+    pruefe("BEVOR dein Budget aufgebraucht ist" in n2, "die Regel verlangt die Notizen vor Budgetende")
 
     # 5) Abnahme schon vor Runde 1 gruen -> keine Runde.
     e = schleife("x", "x.py", runden=3, chat=mach_chat(["STATUS: WEITER"]), laufen=laufen_stub,
@@ -382,6 +449,30 @@ def selbsttest() -> int:
                  melde=lambda *_: None, stand_datei=stand_da)
     pruefe(e["ausgang"].startswith("UMGEBUNGSFEHLER") and not e["runden"],
            "ohne Richter wird nicht gespielt")
+
+    # Der echte Stand-Leser an einem Wegwerf-Sandkasten: nur Dateien der
+    # Aufgabe werden gelistet, Fremdes nur gezaehlt, Notizen kommen mit.
+    import tempfile
+    global SANDKASTEN
+    _echt_sk = SANDKASTEN
+    with tempfile.TemporaryDirectory() as _o:
+        SANDKASTEN = Path(_o)
+        for name, inhalt in (("gedaechtnis.py", "a\nb\n"), ("gedaechtnis_test.py", "t\n"),
+                             ("auswertung.py", "x\n"), ("doppel.py", "y\n"),
+                             ("NOTIZEN_ball.md", "PLAN: so.\n")):
+            (SANDKASTEN / name).write_text(inhalt, encoding="utf-8")
+        try:
+            st = _stand_datei("gedaechtnis.py", "ball")
+        finally:
+            SANDKASTEN = _echt_sk
+    pruefe(st["datei_da"] and st["zeilen"] == 3, "Stand: Zieldatei erkannt, Zeilen gezaehlt", str(st))
+    pruefe(any(d.startswith("gedaechtnis_test.py") for d in st["dateien"])
+           and any(d.startswith("NOTIZEN_ball.md") for d in st["dateien"])
+           and not any(d.startswith("auswertung") for d in st["dateien"]),
+           "Stand: nur Dateien dieser Aufgabe werden gelistet", str(st["dateien"]))
+    pruefe(any("2 Dateien anderer Uebungen" in d for d in st["dateien"]),
+           "Stand: Fremdes wird gezaehlt, nicht verschwiegen")
+    pruefe(st["notizen"].startswith("PLAN: so."), "Stand: Notizen werden gelesen")
 
     print("\n%s" % ("Alle Pruefungen bestanden." if not fehler else "%d FEHLER." % len(fehler)))
     return 1 if fehler else 0
