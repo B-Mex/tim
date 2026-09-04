@@ -2940,7 +2940,15 @@ CHAT_WERKZEUG_RUNDEN = 8
 # verschwand spurlos, das Modell erfuhr es nie und antwortete, als
 # waere er erledigt (Befund 02.09.2026). Wird gekappt, steht es jetzt
 # im Werkzeugergebnis und im Denkweg.
-CHAT_WERKZEUGE_JE_RUNDE = 8
+# 04.09.2026: von 8 auf 16. Gemessen in Tims erstem Projekt (laguna,
+# Ball-Fehler, drei Laeufe): sieben von sieben Runden endeten mit
+# aufgebrauchtem Budget mitten im Plan - "Lassen Sie mich jetzt die
+# Klasse umbauen:" und dann war Schluss. Der Stil des Modells (Datei
+# zweimal lesen, Test zweimal fahren, dann erst schreiben) braucht mehr
+# als acht Schritte fuer eine echte Arbeitsrunde. Seit 828adc5 ist die
+# Kappung angekuendigt (kappung_melden), ein groesseres Budget ist also
+# kein stummes Risiko mehr; der Sprachweg hat seine eigenen Grenzen.
+CHAT_WERKZEUGE_JE_RUNDE = 16
 # Gesprochen gilt eine engere Uhr: Der Sprachassistent wartet 300 s auf
 # /api/chat, jede Werkzeugrunde ist aber ein voller Modelldurchlauf.
 # Am 23.08.2026 gemessen: "büro rot" fiel (vor dem Umlaut-Fix) in den

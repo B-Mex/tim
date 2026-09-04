@@ -65,6 +65,16 @@ AUSGABE_ABNAHME = 1200
 STATUS_WOERTER = ("WEITER", "FERTIG", "BLOCKED", "DECIDE")
 
 
+def werkzeugbudget() -> int:
+    """Wie viele Werkzeugaufrufe hat Tim je Runde? Aus der Zentrale, nicht geraten."""
+    try:
+        sys.path.insert(0, "/opt/ki-server/oberflaeche")
+        from m1_zentrale import CHAT_WERKZEUGE_JE_RUNDE
+        return int(CHAT_WERKZEUGE_JE_RUNDE)
+    except Exception:                                       # noqa: BLE001
+        return 8
+
+
 # ----------------------------------------------------------------------
 # Bausteine - alle einspeisbar, damit der Selbsttest ohne Zentrale,
 # Ollama und Sandkasten auskommt (Tests fassen keine Betriebsdaten an).
@@ -181,16 +191,18 @@ def rundennachricht(aufgabe_text: str, aufgabe: str, datei: str, runde: int,
         "- Fertig ist, wenn die ABNAHME besteht - nicht, wenn du es sagst. "
         "Ein Selbsttest, der gruen ist, ohne die Aufgabe zu pruefen, "
         "zaehlt nicht.",
-        "- Arbeite in kleinen, pruefbaren Schritten: schreiben, testen, "
-        "lesen was der Test sagt, nachbessern. Du hast 8 Werkzeugaufrufe.",
+        "- Du hast %d Werkzeugaufrufe in dieser Runde. Sieben von sieben "
+        "Runden bisher endeten mit aufgebrauchtem Budget mitten im Plan "
+        "('Lassen Sie mich jetzt ...'). Deshalb: ERSTER Aufruf der Runde = "
+        "werkstatt_schreiben %s mit deinem Plan (was du weisst, was du "
+        "tust, naechster Schritt). DANN arbeiten: schreiben, testen, lesen "
+        "was der Test sagt, nachbessern. Lies nicht dreimal dieselbe Datei."
+        % (werkzeugbudget(), notizdatei),
         "- Behaupte nichts, was du nicht getan hast. Was du nicht geschafft "
         "hast, sagst du so - die naechste Runde kommt sowieso.",
-        "- BEVOR dein Budget aufgebraucht ist, schreib mit werkstatt_schreiben "
-        "deine Notizen nach %s: was du verstanden hast, was du entschieden "
-        "hast, was der NAECHSTE konkrete Schritt ist. Die naechste Runde "
-        "beginnt mit genau diesen Notizen - ohne sie faengst du wieder bei "
-        "null an. Verstehen, was schon in den Notizen steht, kostet kein "
-        "Budget mehr." % notizdatei,
+        "- Die naechste Runde beginnt mit genau deinen Notizen aus %s - ohne "
+        "sie faengst du wieder bei null an. Verstehen, was schon in den "
+        "Notizen steht, kostet kein Budget mehr." % notizdatei,
         "- Beende deine Antwort mit GENAU EINER Zeile:",
         "  STATUS: WEITER          (du machst naechste Runde weiter)",
         "  STATUS: FERTIG          (du glaubst, die Abnahme besteht jetzt)",
@@ -453,7 +465,10 @@ def selbsttest() -> int:
     pruefe("x_test.py (30 Zeilen" in n2, "alle Sandkasten-Dateien stehen in der Nachricht - auch Nebendateien")
     pruefe("PLAN: Schluessel aus Name+Kasten" in n2 and "NOTIZEN_x.md" in n2,
            "Tims Notizen der vorigen Runde stehen in der naechsten Nachricht")
-    pruefe("BEVOR dein Budget aufgebraucht ist" in n2, "die Regel verlangt die Notizen vor Budgetende")
+    pruefe("ERSTER Aufruf der Runde = werkstatt_schreiben NOTIZEN_x.md" in n2,
+           "die Regel verlangt die Notizen als ERSTEN Aufruf der Runde")
+    pruefe(("Du hast %d Werkzeugaufrufe" % werkzeugbudget()) in n2,
+           "das Budget kommt aus der Zentrale, nicht aus einer geratenen Zahl")
     protokoll_ids.clear()
     schleife("x", "x.py", runden=2, chat=mach_chat(["A\nSTATUS: WEITER", "B\nSTATUS: WEITER"]),
              laufen=laufen_stub, abnahme=ab_immer_rot, melde=lambda *_: None, stand_datei=stand_da,
