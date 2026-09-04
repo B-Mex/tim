@@ -121,9 +121,19 @@ def status_lesen(text: str) -> tuple:
 
 
 def rundennachricht(aufgabe_text: str, aufgabe: str, datei: str, runde: int,
-                    runden: int, stand: dict) -> str:
-    """Alles, was Tim in DIESER Runde wissen muss - und nichts von frueher."""
-    teile = [
+                    runden: int, stand: dict, antwort: str = "") -> str:
+    """Alles, was Tim in DIESER Runde wissen muss - und nichts von frueher.
+
+    'antwort' ist Mexlas (oder Claudes) Antwort auf ein DECIDE/BLOCKED,
+    mit dem der vorige Lauf endete - sie steht nur in Runde 1 des neuen
+    Laufs ganz oben. So wird DECIDE zu einem echten Kanal in beide
+    Richtungen statt zu einer Sackgasse.
+    """
+    teile = []
+    if antwort and runde == 1:
+        teile += ["ANTWORT AUF DEIN DECIDE/BLOCKED AUS DEM VORIGEN LAUF:",
+                  antwort.strip(), ""]
+    teile += [
         "PROJEKT %s - Runde %d von %d. Du arbeitest allein in deiner "
         "Werkstatt; Claude schaut nur zu, Mexla entscheidet am Ende."
         % (aufgabe, runde, runden),
@@ -186,6 +196,9 @@ def rundennachricht(aufgabe_text: str, aufgabe: str, datei: str, runde: int,
         "  STATUS: FERTIG          (du glaubst, die Abnahme besteht jetzt)",
         "  STATUS: BLOCKED: <warum> (du kommst ohne Hilfe nicht weiter)",
         "  STATUS: DECIDE: <frage>  (Mexla muss etwas entscheiden)",
+        "- DECIDE ist NUR fuer Fragen, die die Aufgabe nicht beantwortet. "
+        "'Soll ich weitermachen?' ist keine - die Aufgabe sagt ja. Das WIE "
+        "entscheidest du, das OB die Abnahme.",
     ]
     return "\n".join(teile)
 
@@ -202,7 +215,7 @@ def eine_runde(chat, modell: str, chat_id: str, nachricht: str) -> dict:
 def schleife(aufgabe: str, datei: str, modell: str = MODELL_STANDARD,
              runden: int = RUNDEN_STANDARD, chat=None, laufen=None,
              abnahme=None, melde=print, protokoll: Path = None,
-             stand_datei=None) -> dict:
+             stand_datei=None, antwort: str = "") -> dict:
     """Die eigentliche Schleife. Liefert das Gesamtergebnis als dict."""
     chat = chat or _chat_zentrale
     abnahme = abnahme or abnahme_fahren
@@ -227,7 +240,7 @@ def schleife(aufgabe: str, datei: str, modell: str = MODELL_STANDARD,
         stand["selbsttest"] = selbsttest_fahren(datei, laufen)
 
     for k in range(1, runden + 1):
-        nachricht = rundennachricht(aufgabe_text, aufgabe, datei, k, runden, stand)
+        nachricht = rundennachricht(aufgabe_text, aufgabe, datei, k, runden, stand, antwort)
         antwort = eine_runde(chat, modell, chat_id, nachricht)
         text = str(antwort.get("antwort") or "")
         status, grund = status_lesen(text)
@@ -436,6 +449,15 @@ def selbsttest() -> int:
     pruefe("PLAN: Schluessel aus Name+Kasten" in n2 and "NOTIZEN_x.md" in n2,
            "Tims Notizen der vorigen Runde stehen in der naechsten Nachricht")
     pruefe("BEVOR dein Budget aufgebraucht ist" in n2, "die Regel verlangt die Notizen vor Budgetende")
+    protokoll_ids.clear()
+    schleife("x", "x.py", runden=2, chat=mach_chat(["A\nSTATUS: WEITER", "B\nSTATUS: WEITER"]),
+             laufen=laufen_stub, abnahme=ab_immer_rot, melde=lambda *_: None, stand_datei=stand_da,
+             antwort="Ja, weitermachen - das Wie ist deins.")
+    a1, a2 = protokoll_ids[0][1], protokoll_ids[1][1]
+    pruefe(a1.startswith("ANTWORT AUF DEIN DECIDE") and "das Wie ist deins" in a1,
+           "eine Antwort auf ein DECIDE steht ganz oben in Runde 1")
+    pruefe("das Wie ist deins" not in a2, "und nur dort - Runde 2 ist wieder frisch")
+    pruefe("DECIDE ist NUR fuer Fragen" in a2, "die Regel grenzt DECIDE ein")
 
     # 5) Abnahme schon vor Runde 1 gruen -> keine Runde.
     e = schleife("x", "x.py", runden=3, chat=mach_chat(["STATUS: WEITER"]), laufen=laufen_stub,
@@ -484,12 +506,13 @@ def main(argumente: list) -> int:
     if not argumente or argumente[0].startswith("-"):
         print(__doc__); return 0
     aufgabe = argumente[0]
-    modell = MODELL_STANDARD; runden = RUNDEN_STANDARD; datei = None
+    modell = MODELL_STANDARD; runden = RUNDEN_STANDARD; datei = None; antwort = ""
     it = iter(argumente[1:])
     for a in it:
         if a == "--modell": modell = next(it)
         elif a == "--runden": runden = int(next(it))
         elif a == "--datei": datei = next(it)
+        elif a == "--antwort": antwort = next(it)
     # Ohne --datei: <aufgabe>.py. Die Aufgabe ball_zuordnung verlangt
     # gedaechtnis.py - also dort immer --datei mitgeben.
     datei = datei or (aufgabe + ".py")
@@ -506,7 +529,8 @@ def main(argumente: list) -> int:
         with open(fortschritt, "a", encoding="utf-8") as h:
             h.write(z + "\n")
 
-    e = schleife(aufgabe, datei, modell=modell, runden=runden, melde=melde, protokoll=ordner)
+    e = schleife(aufgabe, datei, modell=modell, runden=runden, melde=melde, protokoll=ordner,
+                 antwort=antwort)
     (ordner / "gesamt.json").write_text(json.dumps(e, ensure_ascii=False, indent=1), encoding="utf-8")
     melde("Protokoll: %s" % ordner)
     return 0 if str(e["ausgang"]).startswith("FERTIG") else 1
