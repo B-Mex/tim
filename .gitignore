@@ -50,3 +50,6 @@ oberflaeche/zentrale_neu.html
 
 # --- Berichte sind Laufzeitdaten: bleiben lokal (26.08.2026) ---
 berichte/
+
+# Sperrdatei der Pruefungsflagge (pruefungsflagge.py, 03.09.2026) - Betrieb, kein Code
+config/PRUEFUNGSLAUF.lock
