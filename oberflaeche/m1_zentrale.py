@@ -2933,21 +2933,30 @@ SHELL_WERKZEUG = {"type": "function", "function": {
 # kannte und nur nicht mehr ausfuehren durfte. Gesprochen bleibt es bei
 # einer Runde (CHAT_WERKZEUG_RUNDEN_SPRACHE) - dort zaehlt das
 # 300-s-Fenster des Sprachassistenten.
-CHAT_WERKZEUG_RUNDEN = 8
+#
+# 04.09.2026 von 8 auf 16: DAS ist die Grenze, die in Tims erstem Projekt
+# acht von acht Runden mitten im Plan beendete. laguna setzt je
+# Modellrunde genau EINEN Werkzeugaufruf ab - acht Runden sind also acht
+# Aufrufe, egal wie hoch CHAT_WERKZEUGE_JE_RUNDE steht (das hatte ich
+# zuerst angehoben, ohne Wirkung: "8 Werkzeuge" in jeder Runde). Der
+# Arbeitsstil (Notizen, Datei lesen, Test fahren, schreiben, testen,
+# nachbessern, testen) braucht mehr als acht Schritte; die Kappung ist
+# seit 828adc5 angekuendigt, jede Runde ist ein voller Modelldurchlauf,
+# also kostet 16 Zeit, aber keine Wahrheit.
+CHAT_WERKZEUG_RUNDEN = 16
 # Wieviele Werkzeuge in EINER Runde. Die Grenze muss sein - ohne sie
 # koennte ein Modell beliebig viele Aufrufe auf einmal anstossen. Aber
 # sie war mit 4 zu knapp und vor allem STILL: Der fuenfte Aufruf
 # verschwand spurlos, das Modell erfuhr es nie und antwortete, als
 # waere er erledigt (Befund 02.09.2026). Wird gekappt, steht es jetzt
 # im Werkzeugergebnis und im Denkweg.
-# 04.09.2026: von 8 auf 16. Gemessen in Tims erstem Projekt (laguna,
-# Ball-Fehler, drei Laeufe): sieben von sieben Runden endeten mit
-# aufgebrauchtem Budget mitten im Plan - "Lassen Sie mich jetzt die
-# Klasse umbauen:" und dann war Schluss. Der Stil des Modells (Datei
-# zweimal lesen, Test zweimal fahren, dann erst schreiben) braucht mehr
-# als acht Schritte fuer eine echte Arbeitsrunde. Seit 828adc5 ist die
-# Kappung angekuendigt (kappung_melden), ein groesseres Budget ist also
-# kein stummes Risiko mehr; der Sprachweg hat seine eigenen Grenzen.
+# 04.09.2026: von 8 auf 16 - Aufrufe je EINZELNER Modellantwort (ein
+# Modell, das drei Werkzeuge auf einmal anfordert). Berichtigung vom
+# selben Abend: Das war NICHT die Grenze, an der Tims Projektrunden
+# starben - laguna fordert je Antwort genau ein Werkzeug an, die
+# Rundenzahl (CHAT_WERKZEUG_RUNDEN) war der Engpass. 16 bleibt trotzdem:
+# Die Kappung ist seit 828adc5 angekuendigt, ein groesseres Budget hier
+# ist kein stummes Risiko; der Sprachweg hat seine eigenen Grenzen.
 CHAT_WERKZEUGE_JE_RUNDE = 16
 # Gesprochen gilt eine engere Uhr: Der Sprachassistent wartet 300 s auf
 # /api/chat, jede Werkzeugrunde ist aber ein voller Modelldurchlauf.
