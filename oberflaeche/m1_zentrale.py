@@ -2215,6 +2215,33 @@ def modell_grenzen(modell: str) -> dict:
     treffer = (MODELL_GRENZEN.get(name)
                or MODELL_GRENZEN.get(name.removesuffix(":latest")))
     return dict(treffer or MODELL_GRENZEN_STANDARD)
+
+
+# Zeitgrenze je EINZELNEM Modellaufruf im Chat (Sekunden). Getrennt von
+# MODELL_GRENZEN, weil jenes Woerterbuch 1:1 als Ollama-"options" geht -
+# ein fremder Schluessel dort waere ein stiller Fehler.
+#
+# 04.09.2026, Tims Projekt mit gemma4: In drei Versuchen arbeitete es
+# jeweils 4-6 Werkzeugaufrufe lang sauber (20-100 s je Aufruf), las
+# Aufgabe und Datei - und kam dann in EINEN Aufruf bei ~22 000 Token
+# Kontext, in dem es ~3900-4200 Token bei 7,2 Tok/s generierte: rund
+# 600 s. Genau die alte Grenze. Die Zentrale warf die ganze Runde weg,
+# Ollama rechnete weiter ([GIN] 500 | 10m0s). Die 600 s waren auf
+# laguna kalibriert (14 Tok/s, kurze Antworten). gemma4 bekommt, was
+# num_predict 8192 bei seinem Tempo braucht: 8192 / 7 Tok/s ~ 1170 s,
+# plus Prompt - 1800 s. Alle anderen behalten 600.
+MODELL_ZEITGRENZE_S = {
+    "gemma4:26b-a4b-it-qat": 1800,
+}
+MODELL_ZEITGRENZE_STANDARD = 600
+
+
+def modell_zeitgrenze(modell: str) -> int:
+    """Sekunden, die ein einzelner Chat-Aufruf dieses Modells bekommt."""
+    name = modell or ""
+    return int(MODELL_ZEITGRENZE_S.get(name)
+               or MODELL_ZEITGRENZE_S.get(name.removesuffix(":latest"))
+               or MODELL_ZEITGRENZE_STANDARD)
 # Notnagel gegen Ausreisser. Seit dem 24.08.2026 ist das NICHT mehr der
 # eigentliche Schutz - der heisst verlauf_verdichten und misst die
 # Tokenlast, statt Nachrichten zu zaehlen. Die Zahl steht trotzdem noch
@@ -3427,7 +3454,7 @@ def teilaufgabe_ausfuehren(auftrag: str, modell: str = "") -> str:
                 OLLAMA + "/api/chat",
                 data=json.dumps(koerper).encode("utf-8"), method="POST")
             anfrage.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(anfrage, timeout=600) as antwort:
+            with urllib.request.urlopen(anfrage, timeout=modell_zeitgrenze(modell)) as antwort:
                 daten = json.loads(antwort.read().decode("utf-8"))
             nachricht = daten.get("message") or {}
             rufe = nachricht.get("tool_calls") or []
@@ -3846,7 +3873,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                 OLLAMA + "/api/chat",
                 data=json.dumps(koerper).encode("utf-8"), method="POST")
             anfrage.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(anfrage, timeout=600) as antwort:
+            with urllib.request.urlopen(anfrage, timeout=modell_zeitgrenze(modell)) as antwort:
                 daten = json.loads(antwort.read().decode("utf-8"))
 
             nachricht = daten.get("message") or {}
@@ -3954,7 +3981,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                                     **modell_grenzen(modell)},
                     }).encode("utf-8"), method="POST")
                 a2.add_header("Content-Type", "application/json")
-                with urllib.request.urlopen(a2, timeout=600) as r2:
+                with urllib.request.urlopen(a2, timeout=modell_zeitgrenze(modell)) as r2:
                     d2 = json.loads(r2.read().decode("utf-8"))
                 text = (d2.get("message") or {}).get("content", "")
                 _g2 = str((d2.get("message") or {}).get("thinking") or "").strip()
@@ -4572,6 +4599,19 @@ def _selbsttest() -> int:
            "Modellgrenzen greifen mit :latest-Anhang")
     pruefe(modell_grenzen("nemotron-3.5-lightning")["num_ctx"] == 32768,
            "Modellgrenzen greifen ohne Anhang")
+    # --- Zeitgrenze je Modellaufruf (04.09.2026) ---
+    pruefe(modell_zeitgrenze("gemma4:26b-a4b-it-qat") == 1800
+           and modell_zeitgrenze("gemma4:26b-a4b-it-qat:latest") == 1800,
+           "gemma4 bekommt 1800 s je Aufruf, auch mit ':latest'")
+    pruefe(modell_zeitgrenze("laguna-xs-2.1") == 600
+           and modell_zeitgrenze("voellig-unbekannt:7b") == 600
+           and modell_zeitgrenze("") == 600,
+           "alle anderen behalten 600 s")
+    pruefe("zeitgrenze" not in " ".join(modell_grenzen("gemma4:26b-a4b-it-qat")),
+           "die Zeitgrenze sickert NICHT in die Ollama-options")
+    import inspect as _insp
+    pruefe("timeout=600)" not in _insp.getsource(chat_anfragen),
+           "chat_anfragen hat keine feste 600-s-Grenze mehr")
     pruefe(modell_grenzen("voellig-unbekannt:7b") == MODELL_GRENZEN_STANDARD,
            "unbekannte Modelle bekommen den vorsichtigen Standard")
     pruefe(STANDARD_MODELL in MODELL_GRENZEN,
