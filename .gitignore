@@ -53,3 +53,6 @@ berichte/
 
 # Sperrdatei der Pruefungsflagge (pruefungsflagge.py, 03.09.2026) - Betrieb, kein Code
 config/PRUEFUNGSLAUF.lock
+
+# Lokale Anweisungen fuer Claude Code im Terminal - privat, nie ins oeffentliche Repo
+CLAUDE.local.md
