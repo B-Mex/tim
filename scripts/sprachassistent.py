@@ -64,7 +64,24 @@ RUECKFALL_NUM_PREDICT = 4096
 # Der gesprochene Weg geht ueber Tims eigenen Chat - so kann er dieselben
 # Werkzeuge (Websuche, Seite lesen) und bekommt kuenftige von selbst mit.
 ZENTRALE_URL = "http://127.0.0.1:8770"
-PIPER_BIN = "/opt/ki-server/piper/piper"
+# Piper aus dem EIGENEN venv (05.09.2026, Mexlas Entscheid "nimm thorsten").
+#
+# Bis heute stand hier "/opt/ki-server/piper/piper" - das ist ein
+# VERZEICHNIS, die Binaerdatei liegt eine Ebene tiefer. Und selbst mit
+# richtigem Pfad ginge es nicht: Die mitgelieferte Datei ist x86_64
+# (Rosetta ist zwar installiert), und die Bibliotheken fehlen ganz -
+# weder libespeak-ng.1.dylib noch libonnxruntime.dylib, nur ein
+# .dSYM-Ordner. Der Download vom 20.08.2026 war unvollstaendig.
+#
+# Drei Fehler uebereinander, und gemerkt hat es 16 Tage lang niemand,
+# weil _piper_nutzbar() still auf `say` zurueckfiel: 46 Startzeilen im
+# Log, die keiner liest. Siehe Gedaechtnis m1-stille-rueckfaelle.
+#
+# Jetzt: piper-tts 1.8.0, arm64-nativ, in einem eigenen venv. Bewusst
+# NICHT im Betriebs-venv, weil sein onnxruntime mit torch/ultralytics
+# kollidieren und damit Tims Auge treffen wuerde. Das kaputte Buendel
+# von August bleibt liegen und wird nicht mehr angefasst.
+PIPER_BIN = "/opt/ki-server/venv-piper/bin/piper"
 PIPER_VOICE = "/opt/ki-server/piper/voices/de_DE-thorsten-high.onnx"
 # Eingebaute macOS-Stimme als Rueckfallebene. Auswahl aller deutschen
 # Stimmen mit:  say -v "?" | grep de_DE   (Anna, Eddy, Flo, Reed, ...)
@@ -589,16 +606,29 @@ def _piper_nutzbar():
 
 
 PIPER_OK = _piper_nutzbar()
-if not PIPER_OK:
-    print(f"Sprachausgabe: macOS-Stimme '{MAC_STIMME}' (Piper nicht nutzbar)")
+# Beide Faelle melden, nicht nur den schlechten. Die alte Fassung schrieb
+# nur beim Scheitern eine Zeile - und weil nie jemand ins Log sieht, lag
+# Piper 16 Tage tot, ohne dass es auffiel. Wer die gute Meldung nie sieht,
+# kann ihr Fehlen auch nicht bemerken.
+if PIPER_OK:
+    print(f"Sprachausgabe: Piper mit {os.path.basename(PIPER_VOICE)}", flush=True)
+else:
+    _grund = ("Datei fehlt oder nicht ausfuehrbar" if not os.path.isfile(PIPER_BIN)
+              else "Stimme fehlt" if not os.path.isfile(PIPER_VOICE)
+              else "startet nicht (--help scheiterte)")
+    print(f"WARNUNG Sprachausgabe: RUECKFALL auf macOS-Stimme "
+          f"'{MAC_STIMME}' - Piper {_grund}: {PIPER_BIN}", flush=True)
 
 
 def sprechen(text):
     """Liest Text ueber das Standard-Ausgabegeraet vor.
 
-    Bevorzugt die eingebauten macOS-Stimmen: nativ auf Apple Silicon, sechs
-    deutsche Stimmen, keine Zusatzinstallation. Piper wird genutzt, wenn es
-    lauffaehig ist - etwa nach dem Ablegen einer ARM-Fassung.
+    Seit dem 05.09.2026 spricht Piper mit der deutschen Thorsten-Stimme
+    (Mexlas Entscheid). Die eingebaute macOS-Stimme ist nur noch die
+    Rueckfallebene - sie klingt schlechter, ist aber immer da und braucht
+    keine Zusatzinstallation. Welcher Weg genommen wurde, steht beim
+    Start im Log; ein stiller Rueckfall hat Piper schon einmal 16 Tage
+    lang unbemerkt totliegen lassen.
     """
     text = (text or "").strip()
     if not text:

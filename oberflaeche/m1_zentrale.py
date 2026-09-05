@@ -1939,6 +1939,160 @@ def hoeren(wav: bytes) -> dict:
 
 
 # ----------------------------------------------------------------------
+# Sprechen - Text zu Ton, die Gegenrichtung zu hoeren() (05.09.2026)
+# ----------------------------------------------------------------------
+# Warum es das braucht: Bis heute konnte Tim nur auf dem Mac SELBST
+# sprechen - der Sprachassistent ruft `say`, und der Ton kommt aus dem
+# Lautsprecher, der am Mac haengt. Zuhoeren aus der Ferne geht seit
+# langem (/api/hoeren, das Handy nutzt es taeglich), die Antwort kam aber
+# nie zurueck. Fuer einen Sprach-Satelliten in einem anderen Raum ist ein
+# Assistent, der hoert aber nicht antwortet, nutzlos - es fehlte genau
+# diese Haelfte.
+#
+# Bewusst `say` und nicht Piper: `say` laeuft nativ auf Apple Silicon und
+# ist nachgemessen unempfindlich gegen die Speicherklemme (05.09.2026:
+# Exit 0 bei nur 0,81 GiB frei und einem 20-GB-Modell auf der GPU, kein
+# PortAudio -9986). Piper liegt zwar im Haus, ist aber eine
+# x86_64-Binaerdatei und liefe nur unter Rosetta - das ist eine eigene
+# Baustelle und hat in diesem Endpunkt nichts verloren.
+#
+# Der Text geht als DATEI an say, nicht als Argument: Ein Text, der mit
+# "-" beginnt, wuerde sonst als Option gelesen. Am 05.09.2026 gegengeprobt
+# ("-v Boris gefaehrlich" wird als Text vorgelesen, nicht als Stimme).
+SPRECHEN_GRENZE = 2000            # Zeichen je Anfrage
+SPRECHEN_STANDARDSTIMME = "Anna"  # macOS-Stimme, nur noch Rueckfall
+SPRECHEN_ZEITGRENZE = 60          # Sekunden fuer den say-Aufruf
+
+# Piper: die eigentliche Stimme (05.09.2026).
+#
+# Warum Piper und nicht `say`: Piper ist der Baustein, den auch Home
+# Assistant ueber Wyoming fuer Sprachausgabe nimmt - ein Sprach-Satellit
+# erwartet spaeter genau das. Und die deutsche Thorsten-Stimme klingt
+# deutlich besser als eine Systemstimme.
+#
+# Die Vorgeschichte gehoert hierher, weil sie eine Lehre enthaelt: Piper
+# lag seit dem 20.08.2026 im Haus und lief nie. DREI Fehler uebereinander
+# - PIPER_BIN zeigte auf ein VERZEICHNIS statt auf die Datei, die Datei
+# war x86_64 (Rosetta noetig), und die Bibliotheken fehlten ganz
+# (libespeak-ng/libonnxruntime nie mitgeliefert, nur ein .dSYM-Ordner).
+# Gemerkt hat es niemand, weil `_piper_nutzbar()` im Sprachassistenten
+# STILL auf `say` zurueckfiel: 46 Startzeilen "Piper nicht nutzbar" im
+# Log, die keiner liest, und ein Docstring, der zwei der drei Ursachen
+# schon korrekt benannte. Ein Notausgang, der nie schreit, versteckt den
+# Defekt dauerhaft - die Umkehrung der Schreihals-Regel.
+#
+# Deshalb ist der Rueckfall hier LAUT: Er steht als Kopfzeile
+# X-Sprachausgabe in jeder Antwort und im Fehlerfeld. Wer `say` bekommt,
+# statt Piper, sieht es sofort.
+#
+# Das kaputte Buendel von August bleibt unangetastet; piper-tts 1.8.0
+# liegt arm64-nativ in einem EIGENEN venv, damit sein onnxruntime nicht
+# mit torch/ultralytics im Betriebs-venv kollidiert (Tims Auge).
+PIPER_BIN = Path("/opt/ki-server/venv-piper/bin/piper")
+PIPER_STIMME = Path("/opt/ki-server/piper/voices/de_DE-thorsten-high.onnx")
+PIPER_ZEITGRENZE = 120
+# Der Stimmenname geht als eigenes Argument an say (kein Shell-Aufruf),
+# eine Einschleusung ist also ohnehin nicht moeglich. Geprueft wird er
+# trotzdem, damit ein Tippfehler eine klare Meldung ergibt statt einer
+# kryptischen say-Ausgabe.
+SPRECHEN_STIMME_MUSTER = re.compile(r"^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' -]{0,31}$")
+
+
+def piper_bereit() -> bool:
+    """Laeuft Piper hier wirklich? Datei UND Stimme muessen da sein."""
+    return (PIPER_BIN.is_file() and os.access(PIPER_BIN, os.X_OK)
+            and PIPER_STIMME.is_file())
+
+
+def _piper_rendern(text: str) -> tuple:
+    """Text zu WAV-Bytes mit Piper. Gibt (bytes, fehler)."""
+    with tempfile.TemporaryDirectory() as ordner:
+        ziel = Path(ordner) / "ton.wav"
+        try:
+            fertig = subprocess.run(
+                [str(PIPER_BIN), "--model", str(PIPER_STIMME),
+                 "--output_file", str(ziel)],
+                input=text.encode("utf-8"), capture_output=True,
+                timeout=PIPER_ZEITGRENZE)
+        except subprocess.TimeoutExpired:
+            return b"", "Piper hat zu lange gebraucht"
+        except (OSError, subprocess.SubprocessError) as fehler:
+            return b"", f"{type(fehler).__name__}: {fehler}"
+        if fertig.returncode != 0:
+            meldung = fertig.stderr.decode("utf-8", "replace").strip()
+            return b"", (meldung[-300:] or "Piper meldet Fehler %d" % fertig.returncode)
+        if not ziel.is_file() or ziel.stat().st_size == 0:
+            return b"", "Piper hat keine Tondatei erzeugt"
+        return ziel.read_bytes(), ""
+
+
+def sprache_rendern(text: str, stimme: str = "") -> tuple:
+    """Text zu WAV-Bytes. Gibt (bytes, fehler, motor).
+
+    `stimme` leer  -> Piper mit der Thorsten-Stimme (der Normalfall).
+    `stimme` gesetzt -> ausdruecklich die macOS-Stimme dieses Namens.
+
+    `motor` sagt, WER gesprochen hat: "piper", "say" (ausdruecklich
+    gewuenscht) oder "say-rueckfall" (Piper konnte nicht). Der dritte
+    Wert ist der ganze Sinn der Uebung: Ein Rueckfall, den niemand
+    sieht, versteckt einen Defekt monatelang - genau so lag Piper seit
+    dem 20.08.2026 brach.
+    """
+    text = (text or "").strip()
+    if not text:
+        return b"", "kein Text angegeben", ""
+    if len(text) > SPRECHEN_GRENZE:
+        return b"", ("Text zu lang (%d Zeichen, erlaubt sind %d)"
+                     % (len(text), SPRECHEN_GRENZE)), ""
+
+    # Normalfall: Piper. Nur wenn ausdruecklich eine macOS-Stimme
+    # verlangt wurde, wird sie auch genommen.
+    if not (stimme or "").strip():
+        if piper_bereit():
+            ton, fehler = _piper_rendern(text)
+            if not fehler:
+                return ton, "", "piper"
+            piper_grund = fehler
+        else:
+            piper_grund = ("Piper nicht bereit (%s bzw. Stimme fehlt)"
+                           % PIPER_BIN)
+        # Laut zurueckfallen: Der Grund wandert mit nach oben.
+        ton, fehler = _say_rendern(text, SPRECHEN_STANDARDSTIMME)
+        if fehler:
+            return b"", f"Piper: {piper_grund} | say: {fehler}", ""
+        return ton, "", "say-rueckfall: " + piper_grund[:120]
+
+    ton, fehler = _say_rendern(text, stimme)
+    return (ton, fehler, "" if fehler else "say")
+
+
+def _say_rendern(text: str, stimme: str) -> tuple:
+    """Text zu WAV-Bytes mit der macOS-Stimme. Gibt (bytes, fehler)."""
+    stimme = (stimme or SPRECHEN_STANDARDSTIMME).strip()
+    if not SPRECHEN_STIMME_MUSTER.match(stimme):
+        return b"", "unzulaessiger Stimmenname"
+    with tempfile.TemporaryDirectory() as ordner:
+        quelle = Path(ordner) / "text.txt"
+        ziel = Path(ordner) / "ton.wav"
+        try:
+            quelle.write_text(text, encoding="utf-8")
+            fertig = subprocess.run(
+                ["say", "-v", stimme, "-f", str(quelle), "-o", str(ziel),
+                 "--data-format=LEI16@22050"],
+                capture_output=True, timeout=SPRECHEN_ZEITGRENZE)
+        except subprocess.TimeoutExpired:
+            return b"", "Sprachausgabe hat zu lange gebraucht"
+        except (OSError, subprocess.SubprocessError) as fehler:
+            return b"", f"{type(fehler).__name__}: {fehler}"
+        if fertig.returncode != 0:
+            meldung = fertig.stderr.decode("utf-8", "replace").strip()
+            return b"", (meldung or "say meldet Fehler %d" % fertig.returncode)
+        if not ziel.is_file() or ziel.stat().st_size == 0:
+            return b"", "say hat keine Tondatei erzeugt"
+        return ziel.read_bytes(), ""
+
+
+# ----------------------------------------------------------------------
 # Chat - spricht nur mit Ollama, kann nichts ausfuehren
 # ----------------------------------------------------------------------
 # Ohne Rollenanweisung erfindet sich ein Modell seine Rolle selbst. Am
@@ -2402,6 +2556,37 @@ MODELL_ZEITGRENZE_S = {
 }
 MODELL_ZEITGRENZE_STANDARD = 600
 
+# Denkweg je Modell (05.09.2026, gemessen - nicht geraten).
+#
+# Kein Eintrag = gar kein think-Feld im Koerper, das Modell entscheidet
+# selbst. Genau so war es bisher, und fuer laguna bleibt es dabei: Bei
+# ihm aendert das Flag nichts, weil der lange Systemprompt und jede
+# Werkzeugliste sein Denken ohnehin auf 0 schalten (AP1b, siehe
+# chat_koerper).
+#
+# gemma4 ist der Gegenfall: Es denkt bei JEDER Kontextgroesse rund 6900
+# Zeichen, und das ist die gesamte Bremse. Gemessen bei Tims echtem
+# Systemprompt (9644 Prompt-Token) und mit Verlauf (19 324):
+#
+#     mit Denken:    212 s  /  311 s   (bei langem Verlauf 946 s)
+#     think=False:    29 s  /   38 s
+#     laguna:         45 s  /   57 s
+#
+# Mit abgeschaltetem Denken ist gemma4 also SCHNELLER als laguna - und
+# dabei ehrlich: keine erfundene Terminalausgabe (laguna: 1 von 2, mit
+# frei erfundener /dev/sda1-Tabelle), kein falscher Vollzug nach einem
+# Werkzeugfehler.
+#
+# WARNUNG fuer den, der hier weiterbaut: Ein zusaetzliches "antworte
+# knapp und direkt" im Systemprompt macht gemma4 zwar noch schneller,
+# laesst es aber Vollzug MELDEN, den es nicht gibt ("erledigt", nachdem
+# das Werkzeug einen Fehler zurueckgab). Die Luege haengt am
+# Kuerze-Befehl, nicht am Denken. Also: Tempo hier holen, nicht im
+# Prompt.
+MODELL_DENKEN = {
+    "gemma4:26b-a4b-it-qat": False,
+}
+
 
 WERKZEUGERGEBNIS_GRENZE = 12000
 
@@ -2475,6 +2660,20 @@ def modell_zeitgrenze(modell: str) -> int:
     return int(MODELL_ZEITGRENZE_S.get(name)
                or MODELL_ZEITGRENZE_S.get(name.removesuffix(":latest"))
                or MODELL_ZEITGRENZE_STANDARD)
+
+
+def modell_denken(modell: str):
+    """Soll dieses Modell denken? None = kein think-Feld, Modell entscheidet.
+
+    Bewusst mit None als drittem Zustand: `False` heisst "Denken aus",
+    `None` heisst "wir mischen uns nicht ein". Ein blosses `get(...)` mit
+    Standardwert False wuerde allen Modellen das Denken abschalten - auch
+    denen, bei denen es nie gemessen wurde.
+    """
+    name = modell or ""
+    if name in MODELL_DENKEN:
+        return MODELL_DENKEN[name]
+    return MODELL_DENKEN.get(name.removesuffix(":latest"))
 # Notnagel gegen Ausreisser. Seit dem 24.08.2026 ist das NICHT mehr der
 # eigentliche Schutz - der heisst verlauf_verdichten und misst die
 # Tokenlast, statt Nachrichten zu zaehlen. Die Zahl steht trotzdem noch
@@ -4060,13 +4259,25 @@ def chat_koerper(modell: str, nachrichten: list, stil: str = "text") -> dict:
     Weniger Zufall in der Wortwahl (temperature 0.3): das senkt die
     Neigung, Ergebnisse und Links zu erfinden. Der Sprachweg (stil
     'sprache') bekommt denselben Koerper.
+
+    NACHTRAG 05.09.2026: Der Rueckbau oben gilt weiter fuer think=True -
+    das Flag kann ein abgeschaltetes Denken nicht erzwingen. Die
+    Gegenrichtung wirkt aber sehr wohl: think=False bringt gemma4 von
+    212 s auf 29 s je Antwort (bei Tims echtem Systemprompt). Deshalb
+    steht das Denken jetzt in MODELL_DENKEN - modellweise und nur dort,
+    wo es gemessen ist. Modelle ohne Eintrag bekommen wie bisher gar
+    kein think-Feld.
     """
-    return {
+    koerper = {
         "model": modell,
         "messages": nachrichten,
         "stream": False,
         "options": dict(modell_grenzen(modell), temperature=0.3),
     }
+    denken = modell_denken(modell)
+    if denken is not None:
+        koerper["think"] = denken
+    return koerper
 
 
 def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
@@ -4753,6 +4964,31 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, hoeren(self.rfile.read(laenge)))
             return
 
+        if pfad == "/api/sprechen":
+            # Rohe WAV-Bytes zurueck, kein base64 - dieselbe Ueberlegung
+            # wie bei /api/hoeren: Ein Satellit will den Ton abspielen,
+            # nicht eine JSON-Zeichenkette auspacken.
+            ton, fehler, motor = sprache_rendern(
+                str(koerper.get("text", "")),
+                str(koerper.get("stimme", "")))
+            if fehler:
+                self._json(400, {"fehler": fehler})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(ton)))
+            self.send_header("Cache-Control", "no-store")
+            # Wer gesprochen hat, steht in der Antwort - im Koerper geht
+            # es nicht, der ist Ton. Ein stiller Rueckfall auf `say` hat
+            # Piper 16 Tage lang unbemerkt brachliegen lassen.
+            self.send_header("X-Sprachausgabe", motor or "unbekannt")
+            self.end_headers()
+            try:
+                self.wfile.write(ton)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass          # Gegenstelle hat aufgelegt - kein Fehlerfall
+            return
+
         if pfad == "/api/chat":
             modell = str(koerper.get("modell", ""))
             nachrichten = koerper.get("nachrichten") or []
@@ -4887,12 +5123,29 @@ def _selbsttest() -> int:
            "Modellgrenzen greifen mit :latest-Anhang")
     pruefe(modell_grenzen("nemotron-3.5-lightning")["num_ctx"] == 32768,
            "Modellgrenzen greifen ohne Anhang")
-    # --- Chat-Koerper an einer Stelle; think bewusst NICHT gesetzt (AP1b, 05.09.2026) ---
+    # --- Chat-Koerper an einer Stelle; Denken steht in MODELL_DENKEN (05.09.2026) ---
     _kt = chat_koerper("laguna-xs-2.1", [{"role": "user", "content": "x"}], "text")
     _ks = chat_koerper("laguna-xs-2.1", [], "sprache")
     pruefe("think" not in _kt and "think" not in _ks,
-           "Chat-Koerper setzt kein think-Feld (nachgemessen wirkungslos - wer es "
-           "setzt, misst vorher/nachher)")
+           "Ohne Eintrag in MODELL_DENKEN kein think-Feld (laguna: nachgemessen "
+           "wirkungslos - wer es setzt, misst vorher/nachher)")
+    # gemma4 ist der gemessene Gegenfall: 212 s mit Denken, 29 s ohne.
+    _kg = chat_koerper("gemma4:26b-a4b-it-qat", [], "text")
+    _kgl = chat_koerper("gemma4:26b-a4b-it-qat:latest", [], "text")
+    _kgs = chat_koerper("gemma4:26b-a4b-it-qat", [], "sprache")
+    pruefe(_kg.get("think") is False and _kgl.get("think") is False,
+           "gemma4 bekommt think=False, auch mit :latest-Anhang",
+           f"{_kg.get('think')!r}/{_kgl.get('think')!r}")
+    pruefe(_kgs.get("think") is False,
+           "auch der Sprachweg denkt bei gemma4 nicht - dort zaehlt Tempo doppelt")
+    # Drei Zustaende, nicht zwei: None heisst "nicht einmischen". Ein
+    # blosses get(...) mit Standard False haette allen Modellen das
+    # Denken abgeschaltet, auch den ungemessenen.
+    pruefe(modell_denken("gemma4:26b-a4b-it-qat") is False
+           and modell_denken("laguna-xs-2.1") is None
+           and modell_denken("voellig-unbekannt:7b") is None
+           and modell_denken("") is None,
+           "modell_denken trennt 'aus' (False) von 'nicht einmischen' (None)")
     pruefe(_kt["stream"] is False
            and _kt["messages"] == [{"role": "user", "content": "x"}]
            and _kt["model"] == "laguna-xs-2.1",
@@ -6950,6 +7203,87 @@ def _selbsttest() -> int:
             pruefe("fehler" in roh, "Nicht-WAV wird abgewiesen", str(roh)[:60])
         except (urllib.error.URLError, OSError, ValueError) as e:
             pruefe(False, "Nicht-WAV wird abgewiesen", str(e))
+
+        # --- Sprechen: die Gegenrichtung zu hoeren (05.09.2026) ---
+        # Ohne diesen Endpunkt kann ein Satellit in einem anderen Raum
+        # Tims Antwort nicht ausgeben - er hoert nur.
+        _ton, _f, _motor = sprache_rendern("Hallo Mexla, dies ist eine Probe.")
+        pruefe(_ton.startswith(b"RIFF") and not _f,
+               "Sprechen liefert eine WAV-Datei", _f or "%d Bytes" % len(_ton))
+        # Der Rueckfall muss SICHTBAR sein - das ist der ganze Punkt.
+        pruefe(_motor.startswith("piper") or _motor.startswith("say-rueckfall"),
+               "Sprechen nennt den Motor (piper oder lauter Rueckfall)", _motor)
+        if piper_bereit():
+            pruefe(_motor == "piper",
+                   "wenn Piper bereit ist, spricht auch Piper", _motor)
+        _ton2, _f2, _ = sprache_rendern("")
+        pruefe(not _ton2 and _f2, "leerer Text wird abgewiesen", _f2)
+        _ton3, _f3, _ = sprache_rendern("a" * (SPRECHEN_GRENZE + 1))
+        pruefe(not _ton3 and "zu lang" in _f3,
+               "zu langer Text wird abgewiesen", _f3)
+        _ton4, _f4, _ = sprache_rendern("Probe", "Anna; rm -rf /")
+        pruefe(not _ton4 and "Stimmenname" in _f4,
+               "unzulaessiger Stimmenname wird abgewiesen", _f4)
+        # Ausdrueckliche macOS-Stimme muss weiterhin gehen und als solche
+        # gemeldet werden - sonst koennte man den Rueckfall nicht von der
+        # bewussten Wahl unterscheiden.
+        _ton6, _f6, _motor6 = sprache_rendern("Kurze Probe", "Anna")
+        pruefe(_ton6.startswith(b"RIFF") and not _f6 and _motor6 == "say",
+               "ausdrueckliche macOS-Stimme wird als 'say' gemeldet",
+               f"{_motor6!r} {_f6}")
+        # Der Text geht als DATEI an say. Beginnt er mit "-", wuerde er
+        # als Argument zur Option - hier muss er Text bleiben.
+        _ton5, _f5, _ = sprache_rendern("-v Boris und weiter", "Anna")
+        pruefe(_ton5.startswith(b"RIFF") and not _f5,
+               "Text mit fuehrendem Bindestrich bleibt Text", _f5)
+        # DER eigentliche Test dieser Aenderung: Piper faellt aus - hoert
+        # man es? Alle Pruefungen oben laufen bei funktionierendem Piper
+        # und wuerden einen stillen Rueckfall NICHT bemerken. Genau so
+        # blieb der Defekt vom 20.08. sechzehn Tage unentdeckt. Deshalb
+        # wird der Ausfall hier erzwungen (mit dem echten alten Pfad, dem
+        # Verzeichnis) und die Lautstaerke geprueft.
+        _alt_bin = PIPER_BIN
+        try:
+            globals()["PIPER_BIN"] = Path("/opt/ki-server/piper/piper")
+            pruefe(not piper_bereit(),
+                   "ein Verzeichnis statt einer Datei gilt nicht als bereit")
+            _ton7, _f7, _motor7 = sprache_rendern("Probe bei kaputtem Piper")
+            pruefe(_ton7.startswith(b"RIFF") and not _f7,
+                   "bei kaputtem Piper kommt trotzdem Ton - der Rueckfall traegt",
+                   _f7)
+            pruefe(_motor7.startswith("say-rueckfall"),
+                   "und der Rueckfall ist LAUT (motor nennt ihn) - genau das "
+                   "fehlte 16 Tage lang", _motor7 or "(leer)")
+            pruefe("nicht bereit" in _motor7 or "Piper" in _motor7,
+                   "der Rueckfall nennt auch den GRUND", _motor7)
+        finally:
+            globals()["PIPER_BIN"] = _alt_bin
+        pruefe(PIPER_BIN == _alt_bin, "Pfad nach dem Test wiederhergestellt")
+        code, _ = anfrage("/api/sprechen", token=None, methode="POST",
+                          koerper={"text": "Probe"})
+        pruefe(code == 401, "Sprechen ohne Token abgewiesen", f"HTTP {code}")
+        code, _ = anfrage("/api/sprechen", methode="POST", koerper={"text": ""})
+        pruefe(code == 400, "Sprechen ohne Text abgewiesen", f"HTTP {code}")
+        _a = urllib.request.Request(
+            basis + "/api/sprechen",
+            data=json.dumps({"text": "Kurze Probe"}).encode("utf-8"),
+            method="POST")
+        _a.add_header("X-M1-Token", TOKEN)
+        _a.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(_a, timeout=120) as antwort:
+                _kopf = antwort.headers.get("Content-Type", "")
+                _motorkopf = antwort.headers.get("X-Sprachausgabe", "")
+                _roh = antwort.read()
+            pruefe(_kopf == "audio/wav" and _roh.startswith(b"RIFF"),
+                   "Sprechen liefert audio/wav ueber HTTP",
+                   f"{_kopf}, {len(_roh)} Bytes")
+            pruefe(_motorkopf.startswith("piper")
+                   or _motorkopf.startswith("say"),
+                   "Antwort nennt den Sprachmotor im Kopf X-Sprachausgabe",
+                   _motorkopf or "(Kopfzeile fehlt)")
+        except (urllib.error.URLError, OSError) as e:
+            pruefe(False, "Sprechen liefert audio/wav ueber HTTP", str(e))
 
         # --- Unterhaltungen ueber HTTP ---
         code, _ = anfrage("/api/verlauf?chat=../geheim")
