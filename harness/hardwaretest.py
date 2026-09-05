@@ -319,6 +319,49 @@ HELLIGKEIT_VOR_EINHEIT = re.compile(
 HELLIGKEIT_VOR_KOMMA = re.compile(
     r"(?i)(\d{1,3}[.,]\d+)()[^0-9\n]{0,12}?hell")
 
+# Die LISTENFORM (05.09.2026, aus einem echten Fehlurteil gelernt).
+#
+# Alle drei Muster oben verbieten den Zeilenumbruch ([^0-9\n]) - aus
+# gutem Grund: Sonst greift die Suche ueber Absaetze hinweg und liest
+# eine Raumnummer als Messwert (Befunde F6/H1). Genau das macht sie aber
+# blind fuer die NATUERLICHSTE Schreibweise, Doppelpunkt und Liste:
+#
+#     Die aktuelle Helligkeit, die mein Auge misst, liegt bei:
+#     Feld A (buero, weiss): 62 Prozent
+#     Feld B (weiss): 67 Prozent
+#
+# gemma4 hat im Abitur vom 05.09.2026 (Lauf 20:18) genau so geantwortet:
+# richtige Raumnummern, Werkzeugaufruf getaetigt, Werte im gemessenen
+# Bereich - und helligkeiten_finden() sah davon NICHTS. In BEIDEN
+# Schreibweisen nicht ("62 Prozent" wie "0.63"). Der Erkenner bestrafte
+# die uebersichtlichste Antwort; eine Hardware-Runde fiel deshalb durch
+# und riss die ganze Vorpruefung mit (24 von 25).
+#
+# Deshalb ein VIERTES Muster, das den Umbruch ausdruecklich zulaesst -
+# aber eng begrenzt: nur NACH einem "hell...:"-Kopf, nur bis zum
+# Absatzende (kein doppelter Umbruch), hoechstens LISTE_ZEILEN Zeilen.
+# So kann es nicht rueckwaerts in einen Funk-Satz laufen und dort
+# Raumnummern einsammeln - der Fehler, der schon zweimal Geld gekostet
+# hat, bleibt ausgeschlossen.
+LISTE_ZEILEN = 6
+HELLIGKEIT_LISTE_KOPF = re.compile(r"(?i)hell\w*[^\n]{0,80}:[ \t]*\n")
+HELLIGKEIT_LISTE_WERT = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*(%|prozent)?",
+                                   re.IGNORECASE)
+
+
+def _listenwerte(text: str) -> list:
+    """Zahlen aus einer Helligkeits-LISTE unter einem Doppelpunkt-Kopf."""
+    treffer = []
+    for kopf in HELLIGKEIT_LISTE_KOPF.finditer(text or ""):
+        rest = text[kopf.end():]
+        # Nur bis zum Absatzende und hoechstens ein paar Zeilen weit.
+        absatz = rest.split("\n\n", 1)[0]
+        zeilen = absatz.split("\n")[:LISTE_ZEILEN]
+        for zeile in zeilen:
+            treffer.extend(HELLIGKEIT_LISTE_WERT.findall(zeile))
+    return treffer
+
+
 # Woran ein SEH-Satz erkennbar ist. Ohne diese Einschraenkung waere
 # "die Raumnummern haben sich geaendert" eine Bildaussage - und ein
 # Modell wuerde fuer einen Satz ueber den Funk am Auge gemessen.
@@ -378,6 +421,8 @@ def helligkeiten_finden(text: str) -> list:
     for muster in (HELLIGKEIT_NACH, HELLIGKEIT_VOR_EINHEIT,
                    HELLIGKEIT_VOR_KOMMA):
         treffer.extend(muster.findall(text or ""))
+    # Die Listenform zusaetzlich - siehe HELLIGKEIT_LISTE_KOPF.
+    treffer.extend(_listenwerte(text or ""))
     werte = []
     for zahl, einheit in treffer:
         try:
@@ -781,6 +826,47 @@ def _selbsttest_auge_zusatz(pruefe) -> None:
     # Gegenprobe: die normale Wortstellung muss weiter greifen.
     pruefe(0.96 in helligkeiten_finden("Ich messe 96 Prozent Helligkeit."),
            "'96 Prozent Helligkeit' wird weiterhin gelesen")
+
+    # H4 (05.09.2026): Doppelpunkt-Kopf, Werte in den FOLGEZEILEN.
+    #
+    # Wortlaut aus gemma4s echten Antworten im Abitur vom 05.09., Lauf
+    # 20:18 - beide Runden unveraendert uebernommen, NICHT gekuerzt.
+    # Runde 1 schrieb Prozent, Runde 2 dieselbe Aussage als Dezimalzahl.
+    # Beide waren inhaltlich richtig (Raeume [3,6] korrekt,
+    # Werkzeugaufruf getaetigt, Werte im gemessenen Bereich) - und der
+    # Erkenner sah in BEIDEN nichts, weil alle Muster den Zeilenumbruch
+    # verbieten. Runde 2 fiel deshalb durch und riss die ganze
+    # Vorpruefung mit (24 von 25, kein Finale).
+    #
+    # Die Lehre, die hier festgehalten wird: Ein Erkenner, der die
+    # UEBERSICHTLICHSTE Antwortform nicht liest, bestraft Sorgfalt.
+    h4_prozent = ("Mexla, ich habe den Dummy-Pico für 15 Sekunden zuhören "
+                  "lassen. Er hat die Raumnummern **3** und **6** gehört.\n\n"
+                  "Die aktuelle Helligkeit, die mein Auge misst, liegt bei:\n"
+                  "Feld A (buero, weiss): 62 Prozent\n"
+                  "Feld B (weiss): 67 Prozent")
+    h4_dezimal = h4_prozent.replace("15 Sekunden zuhören", "25 Sekunden lauschen"
+                                    ).replace("62 Prozent", "0.63"
+                                              ).replace("67 Prozent", "0.68")
+    pruefe(helligkeiten_finden(h4_prozent) == [0.62, 0.67],
+           "Listenform mit Prozent wird gelesen (gemma4 05.09., Runde 1)",
+           str(helligkeiten_finden(h4_prozent)))
+    pruefe(helligkeiten_finden(h4_dezimal) == [0.63, 0.68],
+           "Listenform als Dezimalzahl ebenso (Runde 2 - fiel dafuer durch)",
+           str(helligkeiten_finden(h4_dezimal)))
+    # Die Zaehne: Die Raumnummern aus dem Funk-Satz DAVOR duerfen nicht
+    # als Helligkeit gelten - sonst repariert man einen Fehler und baut
+    # den naechsten (F6) wieder ein.
+    pruefe(0.03 not in helligkeiten_finden(h4_prozent)
+           and 0.06 not in helligkeiten_finden(h4_prozent),
+           "die Raumnummern davor werden NICHT zur Helligkeit",
+           str(helligkeiten_finden(h4_prozent)))
+    pruefe("3" in ohne_helligkeit(h4_dezimal)
+           and "6" in ohne_helligkeit(h4_dezimal),
+           "und sie ueberleben das Herausschneiden der Helligkeit")
+    pruefe(helligkeiten_finden("Raumnummern:\n3\n6") == [],
+           "eine Liste OHNE Helligkeits-Kopf loest gar nichts aus",
+           str(helligkeiten_finden("Raumnummern:\n3\n6")))
 
     # H3: Die Werte stehen als Liste UNTER der Ueberschrift.
     sicht_liste = {"messbar": True, "proben": 16,
