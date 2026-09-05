@@ -72,6 +72,19 @@ pre{background:#0e1013;border:1px solid var(--rand);border-radius:8px;padding:12
 .chatloeschen:hover{color:var(--schlecht)}
 #chatliste{max-height:70vh;overflow-y:auto}
 @media (max-width:700px){#chatliste{max-height:150px}}
+#chatraster{display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px}
+@media (max-width:700px){
+  /* Am Handy nachgemessen (05.09.2026, 375 px breit): die feste
+     200-px-Spalte der Chat-Liste liess dem Chat 133 px und dem
+     Eingabefeld 26 px - "ein Buchstabe gross", die Seite scrollte
+     seitwaerts. Untereinander statt nebeneinander; die Liste behaelt
+     ihre 150 px Hoehe von oben. */
+  #chatraster{grid-template-columns:minmax(0,1fr)}
+  /* iOS zoomt beim Tippen in Felder unter 16 px in die Seite hinein
+     und laesst sie so stehen - Eingabefeld und Modellwahl bleiben
+     deshalb bei 16 px. */
+  #eingabezeile #frage,#modellwahl{font-size:16px}
+}
 .fehler{color:var(--schlecht)}
 /* ---- Autonomie-Schalter ---- */
 .schalter{position:relative;display:inline-block;width:34px;height:20px;flex:0 0 auto}
@@ -1314,7 +1327,7 @@ async function zeigeChat(ziel) {
   ziel.innerHTML = `<h1>Chat</h1>
     <div class="unterzeile">Spricht mit Ollama. Ausführen kann Tim nur
       Aktionen der Positivliste.</div>
-    <div style="display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px">
+    <div id="chatraster">
     <div id="chatliste">
       <button class="knopf" style="width:100%;margin-bottom:8px"
         onclick="chatWaehlen(neueChatKennung())">+ Neuer Chat</button>

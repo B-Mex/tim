@@ -633,6 +633,31 @@ nachziehen(); messen(); setInterval(nachziehen, 2000); setInterval(messen, 700);
 </script></body></html>"""
 
 
+# Ab diesem Bildalter gilt das Auge als eingefroren. Der Kamera-Waechter
+# (harness/kamera_waechter.py) misst im Normalbetrieb 0,00 bis 0,10 s;
+# 30 s liegen weit ausserhalb jeder Erkennungspause, aber unter dem, was
+# ein kurzer Aussetzer beim Modellwechsel braucht.
+AUGE_EINGEFROREN_S = 30
+
+
+def _bildalter(zustand: dict):
+    """bildalter_s als Zahl - None, wenn der Dienst keins liefert."""
+    try:
+        wert = zustand.get("bildalter_s")
+        return None if wert is None else float(wert)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dauer_worte(sekunden: float) -> str:
+    sekunden = int(sekunden)
+    if sekunden >= 3600:
+        return "%d Stunden %d Minuten" % (sekunden // 3600, (sekunden % 3600) // 60)
+    if sekunden >= 60:
+        return "%d Minuten" % (sekunden // 60)
+    return "%d Sekunden" % sekunden
+
+
 def auge_fuer_chat(zustand=None) -> str:
     """Der Auge-Stand als Klartext fuer die Rollenanweisung des Chats.
 
@@ -657,6 +682,20 @@ def auge_fuer_chat(zustand=None) -> str:
         return ("TIMS AUGE: Du hast ein Auge (Webcam am Mac, Reiter "
                 "'Auge'), aber es ist gerade AUSGESCHALTET - du siehst "
                 "im Moment nichts. Einschalten kann Mexla im Reiter 'Auge'.")
+    # Ein stehendes Bild ist kein Blick. In der Nacht auf den 05.09.2026
+    # war das Bild 31 547 s alt (Kamera-Waechter 04:14), der Dienst
+    # antwortete aber weiter - und dieser Block nannte es "dein echter,
+    # aktueller Blick". Tim beschrieb daraufhin neunmal denselben Stuhl
+    # samt Gymnastikball, waehrend Mexla fragte, warum im Buero noch
+    # Licht brennt. Das Alter kommt vom Dienst selbst (bildalter_s).
+    alter = _bildalter(zustand)
+    if alter is not None and alter > AUGE_EINGEFROREN_S:
+        return ("TIMS AUGE: Du hast ein Auge (Webcam am Mac, Reiter "
+                "'Auge'). Es ist AN, aber das Bild ist EINGEFROREN: das "
+                "letzte Bild ist %s alt. Verlass dich NICHT darauf, was "
+                "darin zu sehen ist, und sag Mexla, dass die Kamera "
+                "haengt (Neustart: launchctl kickstart -k "
+                "gui/501/com.ki-server.kamera)." % _dauer_worte(alter))
     funde = zustand.get("gesehen") or []
     if funde:
         was = ", ".join("%s (%d%%)" % (f.get("deutsch") or f.get("name"),
@@ -730,6 +769,80 @@ _AUSFUEHRUNGS_BEHAUPTUNG = re.compile(
 _TERMINAL_ZEILE = re.compile(
     r"(?m)^\s*(\$ \S|[a-z_]+@[\w-]+[:%$#]|Usage: |usage: |-rw-r|drwx|total \d+$|"
     r"PID\s+|Session started|Remote Login: |[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d\d:\d\d:\d\d [A-Z]{3,4} \d{4}$)")
+
+
+# --- Wiederholungsschutz (05.09.2026) ------------------------------------
+# In der Nacht auf den 05.09.2026 gab laguna sechsmal dieselben 401 Zeichen
+# zurueck - auf sechs verschiedene Fragen ("Suche nach", eine HA-Meldung,
+# "Wieso sehe ich noch Licht im Buero?"). Laut Ollama-Log waren das echte
+# Laeufe von 40 s bis 5 min, kein Cache: Das Modell papageite seine eigene
+# Vorantwort, und jede Wiederholung im Kontext machte die naechste
+# wahrscheinlicher. Die Zentrale reicht so etwas nicht mehr stumm durch.
+WIEDERHOLUNGS_MINDESTLAENGE = 40
+WIEDERHOLUNGS_HINWEIS = (
+    "\n\n_Hinweis der Zentrale: Diese Antwort ist wortgleich mit Tims voriger "
+    "Antwort - auch nach einer Nachfrage. Das Modell haengt in einer "
+    "Wiederholung; ein neuer Chat hilft meist._")
+
+
+def _antwort_kern(text) -> str:
+    """Antworttext ohne Anhaenge der Zentrale/Oberflaeche, Leerraum geglaettet.
+
+    Weg damit: der Werkzeug-Anhang "_(werkzeug, ...)_" der Oberflaeche und
+    alle Fussnoten ab "Hinweis der Zentrale" - beides steht nur in der
+    GESPEICHERTEN Fassung, nie in der frischen Modellantwort.
+    """
+    t = str(text or "")
+    t = re.split(r"\n\s*_?\*{0,2}Hinweis der Zentrale", t)[0]
+    t = re.sub(r"\n\s*_\([^)]*\)_\s*$", "", t)
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+def wiederholung_erkannt(text, verlauf) -> bool:
+    """Ist die neue Antwort wortgleich mit Tims LETZTER Antwort im Verlauf?
+
+    Verglichen wird ohne Leerraum- und Gross/Klein-Unterschiede. Die
+    gespeicherte Antwort darf laenger sein: Die Oberflaeche haengt an
+    Antworten mit Werkzeugeinsatz "_(werkzeug, ...)_" an. Ein blosser
+    Anfang der alten Antwort (unter 80 % ihrer Laenge) zaehlt nicht.
+    """
+    kern = _antwort_kern(text)
+    if len(kern) < WIEDERHOLUNGS_MINDESTLAENGE:
+        return False
+    for n in reversed(verlauf or []):
+        if isinstance(n, dict) and n.get("role") == "assistant":
+            alt = _antwort_kern(n.get("content"))
+            return alt == kern or (alt.startswith(kern)
+                                   and len(kern) >= 0.8 * len(alt))
+    return False
+
+
+def _nochmal_fragen(modell: str, mit_rolle: list, erste_antwort: str,
+                    frage: str, stil: str) -> str:
+    """Einmal neu fragen, wenn die Antwort eine Wiederholung war.
+
+    Mit hoeherer Temperatur (0.7) und dem ausdruecklichen Hinweis, dass
+    die Antwort schon einmal kam. Liefert "" bei Fehler oder Stille -
+    der Aufrufer behaelt dann die erste Antwort und kennzeichnet sie.
+    """
+    nachfrage = mit_rolle + [
+        {"role": "assistant", "content": erste_antwort},
+        {"role": "user", "content": (
+            "Diese Antwort hast du vorhin schon wortgleich gegeben. Sie "
+            "passt nicht zu meiner letzten Nachricht. Antworte jetzt NEU "
+            "und nur auf diese Nachricht: " + str(frage or ""))}]
+    koerper = chat_koerper(modell, nachfrage, stil)
+    koerper["options"]["temperature"] = 0.7
+    try:
+        a = urllib.request.Request(
+            OLLAMA + "/api/chat",
+            data=json.dumps(koerper).encode("utf-8"), method="POST")
+        a.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(a, timeout=modell_zeitgrenze(modell)) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        return str((d.get("message") or {}).get("content") or "").strip()
+    except (urllib.error.URLError, OSError, ValueError):
+        return ""
 
 
 def unbelegte_ausgaben(text: str, benutzte: list) -> str:
@@ -3930,6 +4043,32 @@ DIESE ANTWORT WIRD VORGELESEN:
 - Beginne NICHT mit "Mexla," - die Ankerphrase gilt nur im Textchat."""
 
 
+def chat_koerper(modell: str, nachrichten: list, stil: str = "text") -> dict:
+    """Der Anfragekoerper an Ollama fuer den Chat - an EINER Stelle gebaut.
+
+    Bewusst OHNE think-Feld (AP1b, nachgemessen 05.09.2026): think=True
+    aendert im Chat nichts. Direkte Ollama-Proben mit laguna-xs-2.1:
+    nur eine Frage -> 553-957 Zeichen thinking, auch ohne Flag; mit dem
+    vollen SYSTEM_PROMPT (20 900 Zeichen) -> 0; mit EINEM Werkzeug in
+    der Liste -> 0; mit Mini-Systemprompt "Du bist Tim." -> 882. Der
+    lange Systemprompt und jede Werkzeugliste schalten das Denken ab
+    (Renderer poolside-v1, Ollama 0.33.0) - das Flag kann daran nichts
+    aendern. Zwei Chat-Antworten nach dem Setzen: 0 und 0 Zeichen.
+    Wer es wieder setzt, muss den Anteil sichtbarer Denkwege vorher und
+    nachher messen (Regel aus AP1b: sonst wieder raus).
+
+    Weniger Zufall in der Wortwahl (temperature 0.3): das senkt die
+    Neigung, Ergebnisse und Links zu erfinden. Der Sprachweg (stil
+    'sprache') bekommt denselben Koerper.
+    """
+    return {
+        "model": modell,
+        "messages": nachrichten,
+        "stream": False,
+        "options": dict(modell_grenzen(modell), temperature=0.3),
+    }
+
+
 def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                   chat: str = "") -> dict:
     """Eine Chat-Anfrage an Ollama weiterreichen.
@@ -4002,14 +4141,7 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
                                 "hast. Hat kein Werkzeug etwas Brauchbares "
                                 "geliefert, sag genau das und nenne, was du "
                                 "versucht hast.")}]
-            koerper = {
-                "model": modell,
-                "messages": mit_rolle,
-                "stream": False,
-                # Weniger Zufall in der Wortwahl: das senkt die Neigung,
-                # Ergebnisse und Links zu erfinden.
-                "options": dict(modell_grenzen(modell), temperature=0.3),
-            }
+            koerper = chat_koerper(modell, mit_rolle, stil)
             if not letzte:
                 # Das Modell mitgeben: Die Shell haengt an SEINEN
                 # Zeugnissen, nicht an denen der Anlage. Wer den Namen
@@ -4121,12 +4253,8 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
             try:
                 a2 = urllib.request.Request(
                     OLLAMA + "/api/chat",
-                    data=json.dumps({
-                        "model": modell, "messages": nachfassen,
-                        "stream": False,
-                        "options": {"temperature": 0.3,
-                                    **modell_grenzen(modell)},
-                    }).encode("utf-8"), method="POST")
+                    data=json.dumps(chat_koerper(modell, nachfassen, stil)
+                                    ).encode("utf-8"), method="POST")
                 a2.add_header("Content-Type", "application/json")
                 with urllib.request.urlopen(a2, timeout=modell_zeitgrenze(modell)) as r2:
                     d2 = json.loads(r2.read().decode("utf-8"))
@@ -4155,6 +4283,16 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
         # das soll man sehen. Kommt sie leer zurueck, ist alles
         # gelandet und es steht nichts da.
         # Zweite Messung neben AP13: Ausgaben ohne Werkzeug (05.09.2026).
+        # Wiederholungsschutz: wortgleich mit der vorigen Antwort -> einmal
+        # neu fragen; bleibt es dabei, wird die Antwort gekennzeichnet.
+        if wiederholung_erkannt(text, verlauf):
+            neu = _nochmal_fragen(modell, mit_rolle, text, letzte_frage(verlauf), stil)
+            if neu and not wiederholung_erkannt(neu, verlauf):
+                gedanken.append("Wiederholung erkannt: Die erste Antwort war "
+                                "wortgleich mit der vorigen - einmal neu gefragt.")
+                text = neu
+            else:
+                _fussnote = (_fussnote or "") + WIEDERHOLUNGS_HINWEIS
         _fussnote = (_fussnote or "") + unbelegte_ausgaben(text, benutzte)
         ergebnis = antwort_mit_vollzug(text, _fussnote)
         if "kamerabild" in benutzte:
@@ -4749,6 +4887,53 @@ def _selbsttest() -> int:
            "Modellgrenzen greifen mit :latest-Anhang")
     pruefe(modell_grenzen("nemotron-3.5-lightning")["num_ctx"] == 32768,
            "Modellgrenzen greifen ohne Anhang")
+    # --- Chat-Koerper an einer Stelle; think bewusst NICHT gesetzt (AP1b, 05.09.2026) ---
+    _kt = chat_koerper("laguna-xs-2.1", [{"role": "user", "content": "x"}], "text")
+    _ks = chat_koerper("laguna-xs-2.1", [], "sprache")
+    pruefe("think" not in _kt and "think" not in _ks,
+           "Chat-Koerper setzt kein think-Feld (nachgemessen wirkungslos - wer es "
+           "setzt, misst vorher/nachher)")
+    pruefe(_kt["stream"] is False
+           and _kt["messages"] == [{"role": "user", "content": "x"}]
+           and _kt["model"] == "laguna-xs-2.1",
+           "Chat-Koerper traegt Modell, Nachrichten und stream=False")
+    pruefe(_kt["options"].get("temperature") == 0.3
+           and _kt["options"].get("num_ctx") == modell_grenzen("laguna-xs-2.1")["num_ctx"],
+           "Chat-Koerper behaelt Modellgrenzen und Temperatur 0.3")
+    pruefe("tools" not in _kt and "tools" not in _ks,
+           "Werkzeuge haengt erst die Schleife an, nie der Koerper selbst")
+    # --- Wiederholungsschutz (05.09.2026) ---
+    _vl = [{"role": "user", "content": "Fehlermeldung?"},
+           {"role": "assistant", "content": "Mexla, das ist dein aktueller Blick. Ich sehe "
+            "deinen Stuhl und den Gymnastikball. Bezueglich der Fehlermeldung muss ich pruefen."},
+           {"role": "user", "content": "Suche nach"}]
+    pruefe(wiederholung_erkannt("Mexla, das ist dein aktueller Blick.  Ich sehe deinen Stuhl "
+                                "und den Gymnastikball.\nBezueglich der Fehlermeldung muss ich "
+                                "pruefen.", _vl),
+           "wortgleiche Antwort (bis auf Leerraum) wird als Wiederholung erkannt")
+    pruefe(not wiederholung_erkannt("Mexla, ich habe das Licht im Buero ausgeschaltet.", _vl),
+           "andere Antwort ist keine Wiederholung")
+    pruefe(not wiederholung_erkannt("Ja.", [{"role": "assistant", "content": "Ja."}]),
+           "Kurzantworten unter der Mindestlaenge zaehlen nicht als Wiederholung")
+    pruefe(not wiederholung_erkannt("x" * 80, []) and not wiederholung_erkannt("", _vl),
+           "ohne vorige Tim-Antwort oder ohne Text keine Wiederholung")
+    _vl2 = _vl + [{"role": "assistant", "content": "Mexla, ich habe das Licht im Buero "
+                   "ausgeschaltet, wie gewuenscht."}, {"role": "user", "content": "und?"}]
+    pruefe(not wiederholung_erkannt(_vl[1]["content"], _vl2),
+           "nur die LETZTE Tim-Antwort zaehlt, nicht aeltere")
+    _vl3 = [{"role": "assistant", "content": "Mexla, hier die Liste der Raeume: Buero, Flur, "
+             "Kueche und Wohnzimmer.\n\n_(aktion_starten)_"}]
+    pruefe(wiederholung_erkannt("Mexla, hier die Liste der Raeume: Buero, Flur, Kueche und "
+                                "Wohnzimmer.", _vl3),
+           "Werkzeug-Anhang der Oberflaeche verhindert die Erkennung nicht")
+    pruefe(not wiederholung_erkannt("Mexla, hier die Liste der Raeume: Buero, Flur", _vl3),
+           "ein blosser Anfang der alten Antwort ist keine Wiederholung")
+    _vl4 = [{"role": "assistant", "content": "Mexla, das Licht im Buero ist jetzt aus, "
+             "die Lampe meldet den Befehl.\n\n_Hinweis der Zentrale: In dieser Antwort "
+             "wurde KEIN Werkzeug ausgefuehrt._"}]
+    pruefe(wiederholung_erkannt("Mexla, das Licht im Buero ist jetzt aus, die Lampe meldet "
+                                "den Befehl.", _vl4),
+           "Fussnote der Zentrale verhindert die Erkennung nicht")
     # --- Werkzeugergebnisse: Kappung sagt Bescheid; Dateien in Abschnitten (04.09.2026) ---
     _lang = "\n".join("Zeile %d" % i for i in range(1, 3001))
     _k = werkzeugergebnis_kappen(_lang, grenze=200)
@@ -5874,6 +6059,20 @@ def _selbsttest() -> int:
     pruefe("AUSGESCHALTET" in text_aus and "Auge" in text_aus,
            "bei ausgeschaltetem Auge steht das ehrlich drin")
     text_leer = auge_fuer_chat({"an": True, "gesehen": []})
+    # Eingefrorenes Bild (05.09.2026): 31 547 s wie in der Nacht gemessen.
+    text_alt = auge_fuer_chat({"an": True, "bildalter_s": 31547,
+                               "gesehen": [{"name": "person", "deutsch": "Mensch",
+                                            "vertrauen": 0.9}]})
+    pruefe("EINGEFROREN" in text_alt and "8 Stunden" in text_alt,
+           "Auge-Text nennt ein 31547 s altes Bild EINGEFROREN mit Alter")
+    pruefe("aktueller Blick" not in text_alt and "Mensch" not in text_alt,
+           "eingefrorenes Bild wird nicht als aktueller Blick verkauft")
+    text_frisch = auge_fuer_chat({"an": True, "bildalter_s": 0.4, "gesehen": []})
+    pruefe("aktueller Blick" in text_frisch and "EINGEFROREN" not in text_frisch,
+           "0,4 s altes Bild bleibt der aktuelle Blick")
+    pruefe(_bildalter({"bildalter_s": "kaputt"}) is None
+           and _bildalter({}) is None and _bildalter({"bildalter_s": "12"}) == 12.0,
+           "Bildalter: Zahl aus Text, None bei Muell oder Fehlen")
     pruefe("noch nichts Bestaendiges" in text_leer,
            "ohne Funde wird nichts erfunden")
 
