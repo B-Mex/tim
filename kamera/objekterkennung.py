@@ -75,6 +75,13 @@ BEGRIFFE_DATEI = HIER / "begriffe.json"
 # ab, was eine niedrigere Rohschwelle an Rauschen durchlaesst.
 SCHWELLE_MELDEN = 0.32
 SCHWELLE_AUSBLENDEN = 0.25
+# Zwei gleichnamige Funde gelten als DASSELBE Ding, solange ihre
+# Kastenmittelpunkte naeher als dies beieinander liegen (anteilig zur
+# Bildbreite/-hoehe). Weiter auseinander sind es zwei Dinge - genau das
+# war der Ball-Fehler: der Sitzball erbte Mexlas Meldung, weil der Name
+# allein der Schluessel war (Tims Werkstatt-Aufgabe ball_zuordnung,
+# behoben 05.09.2026).
+DISTANZ_SCHWELLE = 0.3
 
 # Bildgroesse fuer die Erkennung. 640 war im Vergleich nicht nur doppelt
 # so schnell wie 960, sondern beim Hauptmotiv auch treffsicherer
@@ -263,7 +270,30 @@ class Gedaechtnis:
         self.noetig = noetig                # so oft muss ein Ding vorkommen
         self.haltbar_s = haltbar_s          # so lange gilt ein Fund nach
         self.bilder = deque(maxlen=fenster)
-        self.zuletzt = {}                   # Name -> (Zeit, bester Fund)
+        # Name -> Liste von (Zeit, bester Fund). Bis zum 05.09.2026 stand
+        # hier EIN Eintrag je Name - damit erbte ein zweites Ding gleichen
+        # Namens (der Sitzball neben Mexla) die Meldung des ersten. Jetzt
+        # haelt jeder Name so viele Eintraege, wie es raeumlich getrennte
+        # Exemplare gibt (Ball-Fehler, Tims Werkstatt-Aufgabe).
+        self.zuletzt = {}                   # Name -> [(Zeit, Fund), ...]
+
+    @staticmethod
+    def _mitte(kasten):
+        x, y, breite, hoehe = kasten
+        return (x + breite / 2.0, y + hoehe / 2.0)
+
+    def _distanz(self, fund_a, fund_b):
+        (ax, ay), (bx, by) = (self._mitte(fund_a["kasten"]),
+                              self._mitte(fund_b["kasten"]))
+        return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+    def _passender(self, fund):
+        """Der bereits gemerkte Fund gleichen Namens, dessen Kasten nah
+        genug ist - oder None fuer ein neues Exemplar."""
+        for _t, alt in self.zuletzt.get(fund["name"], []):
+            if self._distanz(fund, alt) < DISTANZ_SCHWELLE:
+                return alt
+        return None
 
     def aufnehmen(self, funde, jetzt=None):
         """Ein neues Bild einsortieren und die vorzeigbare Liste liefern."""
@@ -271,39 +301,44 @@ class Gedaechtnis:
         vorzeigbar = [f for f in funde if f["vertrauen"] >= SCHWELLE_MELDEN]
         self.bilder.append({f["name"] for f in vorzeigbar})
 
-        haeufig = {}
+        haeufig = set()
         for name in set().union(*self.bilder) if self.bilder else set():
             if sum(1 for b in self.bilder if name in b) >= self.noetig:
-                haeufig[name] = True
+                haeufig.add(name)
 
         for fund in vorzeigbar:
-            if fund["name"] in haeufig:
-                # Immer der NEUESTE Fund: Der Kasten muss dem Ding
-                # folgen, wenn es sich bewegt. Anfangs wurde der Fund
-                # mit dem besten Vertrauen behalten - dann klebte der
-                # Rahmen an der Stelle, wo jemand mal stand, statt an
-                # ihm dranzubleiben (Mexla hat es am eigenen Bild
-                # gesehen). Nur das Vertrauen darf sich das Beste aus
-                # der juengsten Vergangenheit merken, sonst zappelt
-                # die Prozentzahl mit jedem verrauschten Bild.
-                alt = self.zuletzt.get(fund["name"])
-                frisch = dict(fund)
-                if alt is not None:
-                    # Der alte Wert klingt ab - so bleibt die Anzeige
-                    # ruhig, ohne dass ein einmaliger Spitzenwert
-                    # ewig stehen bleibt.
-                    frisch["vertrauen"] = round(
-                        max(frisch["vertrauen"],
-                            alt[1]["vertrauen"] * 0.95), 3)
-                self.zuletzt[fund["name"]] = (jetzt, frisch)
+            name = fund["name"]
+            if name not in haeufig:
+                continue
+            eintraege = self.zuletzt.setdefault(name, [])
+            passender = self._passender(fund)
+            frisch = dict(fund)
+            if passender is not None:
+                # Bekanntes Exemplar: Der Kasten folgt dem NEUESTEN Fund
+                # (sonst klebt der Rahmen an der alten Stelle), nur das
+                # Vertrauen laesst sich das Beste aus der juengsten
+                # Vergangenheit und klingt ab, statt zu zappeln.
+                frisch["vertrauen"] = round(
+                    max(frisch["vertrauen"], passender["vertrauen"] * 0.95), 3)
+                self.zuletzt[name] = [
+                    (jetzt, frisch) if alt is passender else (t, alt)
+                    for t, alt in eintraege]
+            else:
+                # Neues Exemplar gleichen Namens an anderer Stelle.
+                frisch["vertrauen"] = round(frisch["vertrauen"], 3)
+                eintraege.append((jetzt, frisch))
 
-        # Verfallenes wegwerfen, damit Tim nicht von gestern erzaehlt.
-        for name in [n for n, (t, _) in self.zuletzt.items()
-                     if jetzt - t > self.haltbar_s]:
-            del self.zuletzt[name]
+        # Verfallenes wegwerfen, damit Tim nicht von gestern erzaehlt -
+        # jetzt eintragsweise, nicht mehr namensweise.
+        for name in list(self.zuletzt):
+            self.zuletzt[name] = [(t, f) for t, f in self.zuletzt[name]
+                                  if jetzt - t <= self.haltbar_s]
+            if not self.zuletzt[name]:
+                del self.zuletzt[name]
 
         raus = [dict(f, alter_s=round(jetzt - t, 1))
-                for t, f in self.zuletzt.values()]
+                for eintraege in self.zuletzt.values()
+                for t, f in eintraege]
         raus.sort(key=lambda f: -f["vertrauen"])
         return raus
 
@@ -522,13 +557,18 @@ def selbsttest():
     # Rahmen darf nicht an der alten Stelle kleben bleiben (genau so
     # war es zuerst - Mexla stand ohne Rahmen im Bild, weil sein
     # 97-Prozent-Kasten noch an der Position von vorher hing).
+    # Seit dem Ball-Fix (05.09.2026) gilt ein Fund nur dann als DASSELBE
+    # Ding, wenn er nah genug beim gemerkten liegt (< DISTANZ_SCHWELLE);
+    # die Bewegung hier bleibt bewusst innerhalb dieser Schwelle - ein
+    # echter Schritt, kein Sprung auf die andere Bildhaelfte (das waere
+    # ein zweites Exemplar, siehe g6 unten).
     g5 = Gedaechtnis(fenster=5, noetig=3)
     links = dict(stuhl, kasten=(0.1, 0.1, 0.2, 0.2), vertrauen=0.9)
-    rechts = dict(stuhl, kasten=(0.6, 0.1, 0.2, 0.2), vertrauen=0.5)
+    rechts = dict(stuhl, kasten=(0.3, 0.1, 0.2, 0.2), vertrauen=0.5)
     for i in range(3):
         g5.aufnehmen([links], t + i)
     raus5 = g5.aufnehmen([rechts], t + 3)
-    pruefe(raus5 and raus5[0]["kasten"] == (0.6, 0.1, 0.2, 0.2),
+    pruefe(len(raus5) == 1 and raus5[0]["kasten"] == (0.3, 0.1, 0.2, 0.2),
            "der Kasten folgt dem neuesten Fund, nicht dem besten",
            str(raus5 and raus5[0]["kasten"]))
     pruefe(raus5 and raus5[0]["vertrauen"] > 0.5,
@@ -538,6 +578,30 @@ def selbsttest():
     pruefe(raus5 and abs(raus5[0]["vertrauen"] - 0.5) < 0.1,
            "ein alter Spitzenwert klingt ab, statt ewig zu kleben",
            str(raus5 and raus5[0]["vertrauen"]))
+
+    # Der Ball-Fehler: zwei gleichnamige Dinge an klar verschiedenen
+    # Stellen sind ZWEI Meldungen, nicht eine. Am alten Code (ein Eintrag
+    # je Name) war dieser Test rot - der Sitzball erbte Mexlas Meldung.
+    g6 = Gedaechtnis(fenster=5, noetig=3)
+    mensch = {"name": "person", "deutsch": "Mensch", "vertrauen": 0.9,
+              "kasten": (0.1, 0.1, 0.2, 0.2)}
+    ball = {"name": "person", "deutsch": "Mensch", "vertrauen": 0.9,
+            "kasten": (0.8, 0.8, 0.2, 0.2)}
+    for i in range(4):
+        raus6 = g6.aufnehmen([mensch, ball], t + i)
+    pruefe(len([f for f in raus6 if f["name"] == "person"]) == 2,
+           "zwei Personen an zwei Stellen -> zwei Meldungen (Ball-Fehler)",
+           str([f["kasten"] for f in raus6]))
+
+    # ... aber eine WANDERNDE Person bleibt eine Meldung (Schritte
+    # innerhalb der Schwelle werden demselben Exemplar zugeordnet).
+    g7 = Gedaechtnis(fenster=5, noetig=3)
+    for i in range(4):
+        g7.aufnehmen([dict(mensch, kasten=(0.1 + i * 0.05, 0.1, 0.2, 0.2))],
+                     t + i)
+    raus7 = g7.aufnehmen([], t + 4)
+    pruefe(len([f for f in raus7 if f["name"] == "person"]) == 1,
+           "eine wandernde Person bleibt eine Meldung", str(raus7))
 
     # Einmal gemeldet, kurz verfehlt: soll nicht sofort verschwinden -
     # sonst blinkt die Anzeige bei jedem verrauschten Bild.

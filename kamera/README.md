@@ -40,3 +40,28 @@ Beim ersten Start fragt macOS nach der Kamera-Freigabe für Python; einmal
 erlauben, danach läuft er ohne Nachfrage. Nicht mitgeliefert werden die
 Modelldateien (`tim_auge.pt`, `yolo26n.pt`) — sie entstehen bzw. werden
 lokal abgelegt, siehe `objekterkennung.py`.
+
+## Mehrere Messfelder und die Raum-Zuordnung (seit 31.08.2026)
+
+Das Auge kann mehrere Leuchten **einzeln** messen. Vorher sah es zwar
+mehrere Lampen, hatte aber nur ein Messfeld — und damit war die Frage
+„welche Lampe gehört zum Büro, welche zum Flur?" nicht zu beantworten.
+
+* `kamera_dienst.py` hält jetzt eine Liste `messfelder`. `messfeld` ist
+  weiterhin da und **ist** das erste Feld (dasselbe Objekt): Alles, was
+  nur ein Messfeld kennt — `kamera_cli.py`, der Sprachassistent, die
+  Zentrale, `/messfeld` — arbeitet unverändert weiter. `/messung` liefert
+  die gewohnten Werte fürs Hauptfeld und zusätzlich `felder` mit einer
+  Messung je Leuchte. `messfeld.json` wird als Liste geschrieben, das
+  alte Einzelobjekt aber weiterhin gelesen.
+* `zuordnung.py` ist die Auswertung: Was ändert sich, wenn ein Raum
+  geschaltet wird? Die Regeln stammen von **Tim selbst** (Werkstatt-
+  Aufgabe `lampen_zuordnen`, 24.08.2026); neu sind die Auswertung je Feld
+  und die Farbe als zweiter Hinweis neben der Helligkeit.
+* `zuordnungslauf.py` führt das Experiment durch: Raum schalten, vorher
+  und nachher jedes Feld messen, auswerten. Es schaltet **echtes Licht**
+  und tut deshalb ohne `--schalten` gar nichts.
+
+Der Kameradienst schaltet dabei selbst **nichts** — er misst nur. Das
+Schalten übernimmt `lampen_steuern.py` über den Zuordnungslauf, damit
+Kamera und Funkbrücke nicht aneinandergekettet sind.

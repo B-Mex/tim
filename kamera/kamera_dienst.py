@@ -47,6 +47,19 @@ ADRESSE = "127.0.0.1"
 # damit es bei jeder Aufloesung passt.
 messfeld = {"x": 0.40, "y": 0.35, "breite": 0.20, "hoehe": 0.20}
 
+# Seit dem 31.08.2026 haelt das Auge MEHRERE Messfelder - eines je
+# Leuchte. Vorher sah es zwar mehrere Lampen, konnte aber nur eine
+# messen; die Frage "welche Lampe gehoert zu welchem Raum" war damit
+# nicht zu beantworten, denn sie wird durch Schalten und Vergleichen
+# beantwortet, und dafuer muss jede Leuchte einzeln messbar sein.
+#
+# `messfeld` bleibt bestehen und IST das erste Feld - dasselbe Objekt,
+# keine Kopie. Alles, was bisher ein einzelnes Messfeld gelesen oder
+# gesetzt hat (kamera_cli, der Sprachassistent, die Zentrale,
+# /messfeld), arbeitet unveraendert weiter und wirkt auf Feld 0. Neu
+# ist nur, was zusaetzlich danebenliegt.
+messfelder = [messfeld]
+
 # Einmal ausgerichtet, dauerhaft gemerkt: Die Lampe haengt fest an der
 # Wand, das Messfeld muss also nicht bei jeder Messung neu gesucht
 # werden. Im Gegenteil - staendiges Nachsuchen ist schaedlich: Steht
@@ -81,25 +94,148 @@ _auge_sperre = threading.Lock()
 AUGE_TAKT = 1.5              # Sekunden zwischen zwei Blicken
 
 
+def _feld_saeubern(roh):
+    """Aus einem gelesenen Eintrag ein gueltiges Feld machen - oder None."""
+    if not isinstance(roh, dict):
+        return None
+    try:
+        if not all(k in roh for k in ("x", "y", "breite", "hoehe")):
+            return None
+        feld = {k: float(roh[k]) for k in ("x", "y", "breite", "hoehe")}
+    except (TypeError, ValueError):
+        return None
+    if roh.get("raum"):
+        feld["raum"] = str(roh["raum"])
+    return feld
+
+
+def felder_setzen(felder):
+    """Die Feldliste ersetzen, ohne `messfeld` zu entwurzeln.
+
+    Feld 0 wird IN das bestehende `messfeld`-Objekt hineingeschrieben,
+    statt es zu ersetzen: Andere Stellen halten eine Referenz darauf.
+    Wer sie durch ein neues Objekt ersetzt, laesst sie stumm auf die
+    alte Kopie zeigen - die Sorte Fehler, die erst Wochen spaeter im
+    Betrieb auffaellt.
+    """
+    if not felder:
+        return False
+    messfeld.clear()
+    messfeld.update(felder[0])
+    del messfelder[1:]
+    messfelder.extend(dict(f) for f in felder[1:])
+    return True
+
+
 def messfeld_laden():
+    """Gemerkte Felder einlesen. Versteht BEIDE Dateiformate.
+
+    Alt (bis 29.08.2026): ein einzelnes Objekt. Neu: eine Liste. Das
+    alte Format muss lesbar bleiben - es liegt noch auf der Platte, und
+    ein Rueckbau der Software darf nicht am Dateiformat scheitern.
+    """
     try:
         gemerkt = json.loads(MESSFELD_DATEI.read_text(encoding="utf-8"))
-        if all(k in gemerkt for k in ("x", "y", "breite", "hoehe")):
-            messfeld.update({k: float(gemerkt[k]) for k in
-                             ("x", "y", "breite", "hoehe")})
-            return True
     except Exception:
-        pass
-    return False
+        return False
+    roh_liste = gemerkt if isinstance(gemerkt, list) else [gemerkt]
+    felder = [f for f in (_feld_saeubern(r) for r in roh_liste) if f]
+    return felder_setzen(felder)
 
 
 def messfeld_sichern():
     try:
-        MESSFELD_DATEI.write_text(json.dumps(messfeld, indent=2) + "\n",
+        MESSFELD_DATEI.write_text(json.dumps(messfelder, indent=2) + "\n",
                                   encoding="utf-8")
         return True
     except Exception:
         return False
+
+
+def _ueberlappung(a, b):
+    """Anteil der gemeinsamen Flaeche an der kleineren der beiden."""
+    links = max(a["x"], b["x"])
+    oben = max(a["y"], b["y"])
+    rechts = min(a["x"] + a["breite"], b["x"] + b["breite"])
+    unten = min(a["y"] + a["hoehe"], b["y"] + b["hoehe"])
+    if rechts <= links or unten <= oben:
+        return 0.0
+    gemeinsam = (rechts - links) * (unten - oben)
+    kleiner = min(a["breite"] * a["hoehe"], b["breite"] * b["hoehe"])
+    return gemeinsam / kleiner if kleiner > 0 else 0.0
+
+
+def _mitte(feld):
+    return feld["x"] + feld["breite"] / 2, feld["y"] + feld["hoehe"] / 2
+
+
+def _dasselbe_licht(a, b, abstand=0.05):
+    """Zeigen zwei Felder auf dieselbe Lichtquelle?
+
+    Nicht ueber die Flaeche: Die Lampensuche schneidet denselben Spot je
+    nach Helligkeit mal groesser, mal kleiner zu, und dann faellt die
+    Ueberlappung unter jede Schwelle. Am 31.08.2026 im Betrieb genau so
+    passiert - nach einem erneuten /lampe_suchen verlor der rechte
+    Deckenspot seinen muehsam gemessenen Raumnamen wieder.
+
+    Entscheidend ist die MITTE: Liegt sie im anderen Feld oder dicht
+    daneben, ist es dieselbe Lampe.
+    """
+    ax, ay = _mitte(a)
+    bx, by = _mitte(b)
+    if (b["x"] <= ax <= b["x"] + b["breite"]
+            and b["y"] <= ay <= b["y"] + b["hoehe"]):
+        return True
+    if (a["x"] <= bx <= a["x"] + a["breite"]
+            and a["y"] <= by <= a["y"] + a["hoehe"]):
+        return True
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 <= abstand
+
+
+def raumnamen_uebernehmen(gefunden, alte):
+    """Gemessene Raumnamen auf neu gefundene Felder retten.
+
+    Ein Zuordnungslauf kostet Schaltvorgaenge und Zeit; sein Ergebnis
+    darf nicht verloren gehen, nur weil jemand die Lampensuche erneut
+    anstoesst.
+    """
+    for feld in gefunden:
+        for alt_feld in alte:
+            if alt_feld.get("raum") and _dasselbe_licht(feld, alt_feld):
+                feld["raum"] = alt_feld["raum"]
+                break
+    return gefunden
+
+
+def felder_zusammenfuehren(gefunden, alte):
+    """Neu gefundene Leuchten mit den bisherigen Feldern vereinen.
+
+    Die Suche findet nur, was GERADE leuchtet - eine ausgeschaltete
+    Lampe faellt aus dem Ergebnis. Wuerde die Liste einfach ersetzt,
+    loeschte jedes Suchen die Zuordnung der gerade dunklen Raeume. Am
+    31.08.2026 genau so passiert: erst verschwand der Raumname des
+    rechten Spots, dann das ganze Flur-Feld.
+
+    Ein gemessener Raumname ist teuer - er kostet einen Schaltlauf mit
+    echtem Licht. Ein Feld ohne Namen ist billig. Also: benannte Felder
+    ueberleben, unbenannte werden ersetzt.
+    """
+    raumnamen_uebernehmen(gefunden, alte)
+    behalten = [f for f in alte
+                if f.get("raum")
+                and not any(_dasselbe_licht(f, g) for g in gefunden)]
+    return list(gefunden) + behalten
+
+
+def _feld_bekannt(neu, schon, mindestens=0.5):
+    """Zeigt ein neues Feld auf dieselbe Stelle wie ein vorhandenes?
+
+    Das Modell meldet fuer eine einzige Leuchte gern mehrere Kaesten
+    ("lamp" und "glowing light" am selben Ort). Ohne diese Pruefung
+    bekaeme dieselbe Lampe zwei Felder - und der Zuordnungslauf zaehlte
+    sie doppelt.
+    """
+    return any(_ueberlappung(neu, alt) >= mindestens for alt in schon)
 
 
 # ----------------------------------------------------------------------
@@ -280,13 +416,17 @@ def farbe_messen(ausschnitt):
     return ergebnis
 
 
-def feld_grenzen(bild):
-    """Das Messfeld in Bildpunkten - anteilig auf die Bildgroesse."""
+def feld_grenzen(bild, feld=None):
+    """Ein Messfeld in Bildpunkten - anteilig auf die Bildgroesse.
+
+    Ohne Angabe das Hauptfeld, damit alle bisherigen Aufrufe gelten.
+    """
+    feld = messfeld if feld is None else feld
     hoehe, breite = bild.shape[:2]
-    x = int(messfeld["x"] * breite)
-    y = int(messfeld["y"] * hoehe)
-    b = max(1, int(messfeld["breite"] * breite))
-    h = max(1, int(messfeld["hoehe"] * hoehe))
+    x = int(feld["x"] * breite)
+    y = int(feld["y"] * hoehe)
+    b = max(1, int(feld["breite"] * breite))
+    h = max(1, int(feld["hoehe"] * hoehe))
     x = max(0, min(x, breite - 1))
     y = max(0, min(y, hoehe - 1))
     b = min(b, breite - x)
@@ -304,6 +444,19 @@ def aktuelle_messung():
     messwert = farbe_messen(bild[y:y + h, x:x + b])
     messwert["bildalter_s"] = round(alter, 2)
     messwert["messfeld"] = dict(messfeld)
+    # Die Werte oben bleiben, was sie waren: kamera_cli, der
+    # Sprachassistent und die Zentrale lesen genau diese Schluessel.
+    # Die Aufschluesselung je Feld kommt additiv daneben - wer nur eine
+    # Lampe kennt, merkt von der Neuerung nichts.
+    messwert["felder"] = []
+    for nr, feld in enumerate(messfelder):
+        fx, fy, fb, fh = feld_grenzen(bild, feld)
+        einzeln = farbe_messen(bild[fy:fy + fh, fx:fx + fb]) or {}
+        einzeln["nr"] = nr
+        einzeln["messfeld"] = dict(feld)
+        if feld.get("raum"):
+            einzeln["raum"] = feld["raum"]
+        messwert["felder"].append(einzeln)
     return messwert
 
 
@@ -339,11 +492,58 @@ def kamera_schleife():
                                    kamera.get(cv2.CAP_PROP_FRAME_HEIGHT)), flush=True)
     _kamera_fehler = ""
 
+    def _automatik_aus(kam):
+        for eigenschaft, wert in ((cv2.CAP_PROP_AUTO_EXPOSURE, 0.25),
+                                  (cv2.CAP_PROP_AUTO_WB, 0)):
+            try:
+                kam.set(eigenschaft, wert)
+            except Exception:
+                pass
+
+    # Selbstheilen (05.09.2026): Bis heute drehte diese Schleife bei
+    # ok=False ewig mit `continue` - sie oeffnete die Kamera NIE neu und
+    # setzte KEINEN Fehler. Faellt kamera.read() dauerhaft aus (macOS nach
+    # Ruhezustand, USB-Haenger), wuchs `bildalter_s` unbegrenzt, waehrend
+    # `kamera_fehler` leer blieb: der Dienst lebte und arbeitete nicht -
+    # genau der Zustand der Nacht auf den 05.09. (Auge 8,8 h eingefroren,
+    # der Waechter musste ihn von aussen neu starten). Jetzt meldet die
+    # Schleife den Stillstand ehrlich und oeffnet die Kamera selbst neu.
+    STALL_GRENZE_S = 5.0        # so lange darf read() am Stueck scheitern,
+                                # bevor die Kamera als haengend gilt
+    WIEDER_TAKT_S = 5.0         # Mindestabstand zwischen Neuoeffnungs-Versuchen
+    fehl_seit = None            # Beginn der laufenden Fehlerserie
+    letzter_versuch = 0.0
+
     while _laeuft:
         ok, bild = kamera.read()
         if not ok or bild is None:
-            time.sleep(0.05)
+            jetzt = time.time()
+            if fehl_seit is None:
+                fehl_seit = jetzt
+            # Ein einzelnes verworfenes Bild ist normal - erst laengerer
+            # Stillstand ist ein Fehler, der gemeldet und geheilt wird.
+            if jetzt - fehl_seit > STALL_GRENZE_S:
+                _kamera_fehler = (
+                    "Kamera liefert seit %.0f s kein Bild - versuche neu "
+                    "zu oeffnen." % (jetzt - fehl_seit))
+                if jetzt - letzter_versuch > WIEDER_TAKT_S:
+                    letzter_versuch = jetzt
+                    try:
+                        kamera.release()
+                    except Exception:
+                        pass
+                    kamera = cv2.VideoCapture(0)
+                    if kamera.isOpened():
+                        _automatik_aus(kamera)
+                        globals()["_kamera"] = kamera
+                        print("Kamera nach Stillstand neu geoeffnet.",
+                              flush=True)
+            time.sleep(0.1)
             continue
+        # Bild da: war die Kamera vorher haengen geblieben, ist sie geheilt.
+        if fehl_seit is not None:
+            fehl_seit = None
+            _kamera_fehler = ""
         with _bild_sperre:
             globals()["_bild"] = bild
             globals()["_bild_zeit"] = time.time()
@@ -502,23 +702,52 @@ def bild_mit_rahmen():
                     max(1, round(1.2 * gr)))
 
     if anzeigen.get("messfeld", True):
-        x, y, b, h = feld_grenzen(bild)
-        messwert = farbe_messen(bild[y:y + h, x:x + b])
-        cv2.rectangle(bild, (x, y), (x + b, y + h), (0, 255, 255), 2)
-        if messwert:
-            gr = float(anzeigen.get("textgroesse", 1.0))
-            beschriftung = "%s  H%.0f S%.2f V%.2f" % (
-                messwert["name"], messwert["farbton"],
-                messwert["saettigung"], messwert["helligkeit"])
-            y_text = max(int(20 * gr), y - 8)
-            cv2.putText(bild, beschriftung, (x, y_text),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6 * gr, (0, 0, 0),
-                        max(3, round(2.5 * gr)))
-            cv2.putText(bild, beschriftung, (x, y_text),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6 * gr, (0, 255, 255),
-                        max(1, round(1.2 * gr)))
+        for _nr, _feld in enumerate(messfelder):
+            x, y, b, h = feld_grenzen(bild, _feld)
+            messwert = farbe_messen(bild[y:y + h, x:x + b])
+            cv2.rectangle(bild, (x, y), (x + b, y + h), (0, 255, 255), 2)
+            if messwert:
+                gr = float(anzeigen.get("textgroesse", 1.0))
+                # Der Raumname steht vorn, sobald er gemessen wurde - er
+                # ist beim Hinsehen die wichtigere Auskunft als der Farbton.
+                vorn = _feld.get("raum") or ("Feld %d" % (_nr + 1)
+                                             if len(messfelder) > 1 else "")
+                beschriftung = "%s%s  H%.0f S%.2f V%.2f" % (
+                    (vorn + ": ") if vorn else "",
+                    messwert["name"], messwert["farbton"],
+                    messwert["saettigung"], messwert["helligkeit"])
+                y_text = max(int(20 * gr), y - 8)
+                cv2.putText(bild, beschriftung, (x, y_text),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6 * gr, (0, 0, 0),
+                            max(3, round(2.5 * gr)))
+                cv2.putText(bild, beschriftung, (x, y_text),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6 * gr, (0, 255, 255),
+                            max(1, round(1.2 * gr)))
+
     ok, puffer = cv2.imencode(".jpg", bild, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return puffer.tobytes() if ok else None
+
+
+def felder_aus_leuchten(bild, leuchten):
+    """Aus den Leuchten-Kaesten des Modells die Messfelder machen.
+
+    Das Modell SCHLAEGT VOR, die Helligkeitssuche ENTSCHEIDET: In jedem
+    vorgeschlagenen Kasten wird nach der hellsten Stelle gesucht; ist
+    dort nichts Helles, entsteht kein Feld. Darum darf der Vorschlag
+    ruhig unsicher sein - ein Fehlvorschlag faellt hier von selbst raus.
+
+    Gemessen am 31.08.2026 an Mexlas Buero: Das Modell meldete den einen
+    Deckenspot mit 0.351, den zweiten nur mit 0.098. Beide sind echt -
+    die Helligkeitsanalyse fand unabhaengig genau diese zwei Flecken.
+    Eine feste Schwelle von 0.12 warf den zweiten weg, und Tim sah
+    weiterhin nur eine Lampe.
+    """
+    gefunden = []
+    for kasten in leuchten:
+        feld = lampe_im_bild(bild, eingrenzen=kasten)
+        if feld and not _feld_bekannt(feld, gefunden):
+            gefunden.append(feld)
+    return gefunden
 
 
 def lampe_suchen(bild_aus, bild_an, rand=0.06):
@@ -788,8 +1017,14 @@ class Anfrage(BaseHTTPRequestHandler):
                     # oft unter 0.25 (nachgemessen: 0.156 bei roter
                     # Lampe). stoerer_kaesten und leuchten_kaesten
                     # filtern selbst, jeder mit seiner eigenen Schwelle.
-                    gesehen = objekterkennung.erkenne(bild, mindestens=0.12)
-                    leuchten = objekterkennung.leuchten_kaesten(gesehen)
+                    # 0.05 statt 0.12: Das ist die Schwelle fuer
+                    # VORSCHLAEGE, nicht fuer Funde. Was davon ein Feld
+                    # wird, entscheidet felder_aus_leuchten() an der
+                    # Helligkeit - ein Vorschlag ohne helle Stelle
+                    # verschwindet dort folgenlos.
+                    gesehen = objekterkennung.erkenne(bild, mindestens=0.05)
+                    leuchten = objekterkennung.leuchten_kaesten(
+                        gesehen, mindestens=0.06)
                     kaesten = objekterkennung.stoerer_kaesten(gesehen)
                     # Waere fast das ganze Bild weg, bringt Ausblenden
                     # nichts mehr - dann bliebe nichts zum Suchen uebrig.
@@ -797,24 +1032,30 @@ class Anfrage(BaseHTTPRequestHandler):
                         bild = objekterkennung.ausblenden(bild, kaesten)
                 except Exception:
                     pass
-            # Sieht das Modell eine Leuchte, wird zuerst nur dort
-            # gesucht; sonst (oder wenn dort nichts Helles ist) im
-            # ganzen Bild, wie bisher.
-            feld = None
+            # Jede erkannte Leuchte bekommt ihr EIGENES Feld. Bis zum
+            # 31.08.2026 brach diese Schleife beim ersten Treffer ab -
+            # das Auge sah dann zwar zwei Lampen, mass aber nur eine.
+            # Findet das Modell gar keine Leuchte, wird wie bisher im
+            # ganzen Bild nach der hellsten Stelle gesucht.
+            gefunden = []
             eingegrenzt = False
             if bild is not None:
-                for kasten in leuchten:
-                    feld = lampe_im_bild(bild, eingrenzen=kasten)
-                    if feld:
-                        eingegrenzt = True
-                        break
-                if feld is None:
+                gefunden = felder_aus_leuchten(bild, leuchten)
+                eingegrenzt = bool(gefunden)
+                if not gefunden:
                     feld = lampe_im_bild(bild)
-            if feld:
-                messfeld.update(feld)
+                    if feld:
+                        gefunden.append(feld)
+            if gefunden:
+                # Schon gemessene Raumnamen retten: Wer die Zuordnung
+                # einmal erarbeitet hat, soll sie nicht verlieren, nur
+                # weil die Lampensuche erneut lief.
+                felder_setzen(felder_zusammenfuehren(gefunden, messfelder))
                 messfeld_sichern()
                 antwort = {"gefunden": True, "messfeld": dict(messfeld),
                            "gemerkt": True,
+                           "anzahl": len(messfelder),
+                           "felder": [dict(f) for f in messfelder],
                            "leuchte_vom_modell": eingegrenzt,
                            "ausgeblendet": [f["name"] for f in gesehen
                                             if f["name"] in _stoerer_namen()]}
@@ -908,15 +1149,38 @@ class Anfrage(BaseHTTPRequestHandler):
         elif pfad == "/messfeld":
             from urllib.parse import parse_qs, urlparse
             werte = parse_qs(urlparse(self.path).query)
+            # Ohne Angabe immer Feld 0 - so bedeutet ein Aufruf ohne
+            # "nr" genau das, was er vor dem Umbau bedeutet hat.
+            nummer = 0
+            if "nr" in werte:
+                try:
+                    nummer = int(werte["nr"][0])
+                except ValueError:
+                    nummer = 0
+            # "neu=1" haengt ein Feld an, statt eines zu aendern. Das
+            # braucht der Zuordnungslauf: Steht eine Lampe nicht selbst
+            # im Bild, sondern beleuchtet nur eine Wand, gibt es dort
+            # noch kein Feld - wohl aber eine Stelle, die sich beim
+            # Schalten aendert. Genau die wird hier eingetragen.
+            if werte.get("neu"):
+                messfelder.append({"x": 0.4, "y": 0.4,
+                                   "breite": 0.1, "hoehe": 0.1})
+                nummer = len(messfelder) - 1
+            ziel = messfelder[nummer] if 0 <= nummer < len(messfelder) else messfeld
             for name in ("x", "y", "breite", "hoehe"):
                 if name in werte:
                     try:
-                        messfeld[name] = max(0.0, min(1.0, float(werte[name][0])))
+                        ziel[name] = max(0.0, min(1.0, float(werte[name][0])))
                     except ValueError:
                         pass
+            if werte.get("raum"):
+                ziel["raum"] = werte["raum"][0][:40]
             messfeld_sichern()
+            antwort = dict(ziel)
+            antwort["nr"] = messfelder.index(ziel) if ziel in messfelder else 0
+            antwort["anzahl"] = len(messfelder)
             self._kopf("application/json; charset=utf-8")
-            self.wfile.write(json.dumps(dict(messfeld)).encode("utf-8"))
+            self.wfile.write(json.dumps(antwort).encode("utf-8"))
 
         else:
             self._kopf("text/plain; charset=utf-8", 404)
@@ -983,6 +1247,157 @@ def selbsttest():
            "Messfeld bleibt im Bild, auch wenn es ueber den Rand geschoben wird",
            "x=%d b=%d y=%d h=%d" % (x, b, y, h))
     messfeld.update({"x": 0.40, "y": 0.35, "breite": 0.20, "hoehe": 0.20})
+
+    # --- Mehrere Messfelder (seit 31.08.2026) --------------------------
+    #
+    # Der Zweck: Zwei Lampen im Bild muessen EINZELN messbar sein, sonst
+    # laesst sich nicht herausfinden, welche zu welchem Raum gehoert.
+    # Zugleich darf nichts brechen, was nur ein Feld kennt.
+    print("\n  Mehrere Messfelder:")
+    gesichert = [dict(f) for f in messfelder]
+
+    hauptfeld_vorher = messfeld            # dieselbe Referenz wie draussen
+    felder_setzen([{"x": 0.10, "y": 0.10, "breite": 0.10, "hoehe": 0.10},
+                   {"x": 0.60, "y": 0.60, "breite": 0.10, "hoehe": 0.10}])
+    pruefe(len(messfelder) == 2, "zwei Leuchten ergeben zwei Felder",
+           str(len(messfelder)))
+    pruefe(messfeld is hauptfeld_vorher and messfeld is messfelder[0],
+           "das Hauptfeld bleibt DASSELBE Objekt - sonst zeigen "
+           "kamera_cli und der Sprachassistent stumm auf eine alte Kopie")
+    pruefe(abs(messfeld["x"] - 0.10) < 1e-9,
+           "und traegt die Werte des ersten Feldes", str(messfeld))
+
+    # Zwei Felder muessen an verschiedenen Stellen messen.
+    szene = np.zeros((100, 200, 3), dtype="uint8")
+    szene[10:20, 20:40] = (0, 0, 255)      # links rot
+    szene[60:70, 120:140] = (255, 0, 0)    # rechts blau
+    links = feld_grenzen(szene, messfelder[0])
+    rechts = feld_grenzen(szene, messfelder[1])
+    pruefe(links != rechts, "die Felder schauen an verschiedene Stellen",
+           "%s / %s" % (links, rechts))
+    x, y, b, h = links
+    x2, y2, b2, h2 = rechts
+    pruefe(farbe_messen(szene[y:y + h, x:x + b])["name"]
+           != farbe_messen(szene[y2:y2 + h2, x2:x2 + b2])["name"],
+           "und melden verschiedene Farben")
+
+    # Dieselbe Leuchte darf nicht zweimal gezaehlt werden.
+    eins = {"x": 0.10, "y": 0.10, "breite": 0.10, "hoehe": 0.10}
+    fast_gleich = {"x": 0.11, "y": 0.11, "breite": 0.10, "hoehe": 0.10}
+    weit_weg = {"x": 0.70, "y": 0.70, "breite": 0.10, "hoehe": 0.10}
+    pruefe(_feld_bekannt(fast_gleich, [eins]),
+           "zwei Kaesten auf derselben Lampe ergeben EIN Feld",
+           "%.2f" % _ueberlappung(fast_gleich, eins))
+    pruefe(not _feld_bekannt(weit_weg, [eins]),
+           "zwei Lampen an verschiedenen Orten bleiben zwei Felder")
+
+    # Raumnamen: gemessen wird selten, gemerkt wird dauerhaft.
+    messfelder[1]["raum"] = "flur"
+    pruefe(aktuelle_messung().get("fehler") or True, "Messung stuerzt nicht ab")
+
+    # Dateiformat: Das ALTE Einzelobjekt muss lesbar bleiben.
+    import tempfile
+    with tempfile.TemporaryDirectory() as ordner:
+        probe = Path(ordner) / "messfeld.json"
+        echt = globals()["MESSFELD_DATEI"]
+        globals()["MESSFELD_DATEI"] = probe
+        try:
+            probe.write_text('{"x": 0.3, "y": 0.4, "breite": 0.1, '
+                             '"hoehe": 0.2}', encoding="utf-8")
+            pruefe(messfeld_laden() and len(messfelder) == 1
+                   and abs(messfeld["x"] - 0.3) < 1e-9,
+                   "eine alte messfeld.json mit EINEM Feld wird weiter "
+                   "gelesen", str(messfelder))
+            felder_setzen([{"x": 0.1, "y": 0.1, "breite": 0.1, "hoehe": 0.1},
+                           {"x": 0.5, "y": 0.5, "breite": 0.1, "hoehe": 0.1,
+                            "raum": "buero"}])
+            messfeld_sichern()
+            felder_setzen([{"x": 0.9, "y": 0.9, "breite": 0.1, "hoehe": 0.1}])
+            pruefe(messfeld_laden() and len(messfelder) == 2
+                   and messfelder[1].get("raum") == "buero",
+                   "gespeicherte Felder samt Raumnamen kommen zurueck",
+                   str(messfelder))
+            probe.write_text('[{"x": 0.1, "y": 0.1, "breite": 0.1, '
+                             '"hoehe": 0.1}, {"kaputt": true}]',
+                             encoding="utf-8")
+            pruefe(messfeld_laden() and len(messfelder) == 1,
+                   "ein unbrauchbarer Eintrag wird verworfen, der gute "
+                   "bleibt", str(messfelder))
+            probe.write_text("kein json", encoding="utf-8")
+            vorher = [dict(f) for f in messfelder]
+            pruefe(not messfeld_laden()
+                   and [dict(f) for f in messfelder] == vorher,
+                   "eine kaputte Datei aendert gar nichts")
+        finally:
+            globals()["MESSFELD_DATEI"] = echt
+
+    # Zwei Leuchten im Bild muessen ZWEI Felder ergeben - das ist der
+    # ganze Zweck. Der Fall ist Mexlas Buero nachgebaut: zwei
+    # Deckenspots, einer davon vom Modell nur schwach vorgeschlagen.
+    zimmer = np.full((120, 240, 3), 20, dtype="uint8")
+    zimmer[20:34, 30:52] = (250, 250, 250)      # Spot links
+    zimmer[20:34, 160:182] = (250, 250, 250)    # Spot rechts
+    vorschlaege = [(0.08, 0.10, 0.20, 0.25), (0.60, 0.10, 0.20, 0.25)]
+    zwei = felder_aus_leuchten(zimmer, vorschlaege)
+    pruefe(len(zwei) == 2, "zwei Leuchten ergeben zwei Messfelder",
+           str(zwei))
+    pruefe(zwei[0]["x"] < 0.5 < zwei[1]["x"],
+           "und sie sitzen auf verschiedenen Lampen", str(zwei))
+
+    # Ein Vorschlag ohne helle Stelle darf kein Feld werden - genau
+    # deshalb darf die Vorschlagsschwelle niedrig sein.
+    dunkel = felder_aus_leuchten(zimmer, [(0.30, 0.60, 0.20, 0.25)])
+    pruefe(dunkel == [],
+           "ein Vorschlag ins Dunkle ergibt kein Feld - die Helligkeit "
+           "entscheidet, nicht das Modell", str(dunkel))
+
+    # Zwei Vorschlaege auf DERSELBEN Lampe (lamp + light bulb) ergeben eins.
+    doppelt = felder_aus_leuchten(zimmer, [(0.08, 0.10, 0.20, 0.25),
+                                           (0.09, 0.11, 0.20, 0.25)])
+    pruefe(len(doppelt) == 1,
+           "zwei Vorschlaege auf derselben Lampe ergeben EIN Feld",
+           str(len(doppelt)))
+
+    # Raumnamen ueberleben eine erneute Lampensuche - auch wenn der
+    # Spot dabei anders zugeschnitten wird. Genau das ging am
+    # 31.08.2026 im Betrieb verloren.
+    alt_felder = [{"x": 0.64, "y": 0.08, "breite": 0.04, "hoehe": 0.05,
+                   "raum": "buero"}]
+    # Verschoben und anders zugeschnitten: Die Flaechen decken sich nur
+    # zu einem Drittel, die Mitten liegen aber dicht beieinander.
+    neu_gefunden = [{"x": 0.665, "y": 0.095, "breite": 0.04, "hoehe": 0.05}]
+    ueberdeckung = _ueberlappung(neu_gefunden[0], alt_felder[0])
+    raumnamen_uebernehmen(neu_gefunden, alt_felder)
+    pruefe(neu_gefunden[0].get("raum") == "buero",
+           "ein verschobener, anders zugeschnittener Spot behaelt seinen "
+           "gemessenen Raumnamen", str(neu_gefunden[0]))
+    pruefe(ueberdeckung < 0.5,
+           "und zwar OBWOHL die Flaechen die alte 0.5-Huerde reissen - "
+           "die Mitte entscheidet, nicht die Flaeche",
+           "%.2f" % ueberdeckung)
+    weit = [{"x": 0.10, "y": 0.80, "breite": 0.02, "hoehe": 0.03}]
+    raumnamen_uebernehmen(weit, alt_felder)
+    pruefe("raum" not in weit[0],
+           "eine ganz andere Lampe erbt den Namen NICHT", str(weit[0]))
+
+    # Eine ausgeschaltete Lampe darf ihre Zuordnung nicht verlieren.
+    # Nachgestellt: Die Suche findet nur das Buero, der Flur ist dunkel.
+    felder_setzen([{"x": 0.35, "y": 0.10, "breite": 0.05, "hoehe": 0.04,
+                    "raum": "buero"},
+                   {"x": 0.40, "y": 0.52, "breite": 0.02, "hoehe": 0.03,
+                    "raum": "flur"},
+                   {"x": 0.80, "y": 0.80, "breite": 0.02, "hoehe": 0.02}])
+    nur_buero = [{"x": 0.352, "y": 0.101, "breite": 0.05, "hoehe": 0.04}]
+    felder_setzen(felder_zusammenfuehren(nur_buero, messfelder))
+    raeume = sorted(f.get("raum", "") for f in messfelder)
+    pruefe(raeume == ["buero", "flur"],
+           "eine gerade dunkle Lampe behaelt ihr Feld und ihren Raum",
+           str(raeume))
+    pruefe(len(messfelder) == 2,
+           "das namenlose Feld faellt dabei weg - es ist billig zu "
+           "ersetzen, ein gemessener Raum nicht", str(len(messfelder)))
+
+    felder_setzen(gesichert)
 
     # --- Uebersteuerung ---
     # Eine Flaeche am Anschlag muss als solche gemeldet werden, sonst
