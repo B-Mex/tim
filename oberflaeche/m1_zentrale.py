@@ -714,6 +714,60 @@ def kappung_melden(rufe: list, grenze: int) -> str:
             % (len(rufe), grenze, ", ".join(namen)))
 
 
+# Woran man eine Antwort erkennt, die Befehlsausgaben ZEIGT, obwohl in
+# dieser Runde kein Werkzeug lief. Nacht auf den 05.09.2026, Mexla am
+# Handy: laguna schrieb in 6 von 32 Antworten Befehle UND deren Ausgaben
+# als Text - "date" -> "Wed Aug 28 10:25:47 CEST 2024", stat im
+# GNU-Format, eine Remote-Control-Sitzung auf localhost:8787, eine
+# --help-Seite mit erfundenem Flag. Alle sechs: Werkzeuge = []. Das
+# Shell-Protokoll war jedes Mal sauber - die Werkzeugausgabe wurde nie
+# gefaelscht, sie wurde gar nicht erst geholt. Von aussen war das nicht
+# zu unterscheiden; Mexla debuggte eine Stunde lang gegen Erfundenes.
+_AUSFUEHRUNGS_BEHAUPTUNG = re.compile(
+    r"(?i)\b(ich habe (die|den|folgende[n]?) befehl|ich f[uü]hre .{0,40}aus\b|"
+    r"ausgef[uü]hrt|rohausgabe|rohdaten|ausgabe (der|des|von)|"
+    r"ergebnis (der|des) befehls|liefert:|zeigt:)")
+_TERMINAL_ZEILE = re.compile(
+    r"(?m)^\s*(\$ \S|[a-z_]+@[\w-]+[:%$#]|Usage: |usage: |-rw-r|drwx|total \d+$|"
+    r"PID\s+|Session started|Remote Login: |[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d\d:\d\d:\d\d [A-Z]{3,4} \d{4}$)")
+
+
+def unbelegte_ausgaben(text: str, benutzte: list) -> str:
+    """Fussnote, wenn die Antwort Befehlsausgaben zeigt, aber kein Werkzeug lief.
+
+    Bewusst nur dann, wenn in der Runde GAR KEIN Werkzeug gelaufen ist:
+    Lief eines, koennte die gezeigte Ausgabe echt sein, und das steht
+    dann ohnehin im Werkzeugprotokoll. Und bewusst zweistufig: Ein
+    Codebeispiel in einer Erklaerung ist keine Ausfuehrungsbehauptung.
+    Es braucht (a) den Anschein von Terminalausgabe UND (b) entweder die
+    Behauptung, ausgefuehrt zu haben, oder mehrere Ausgabebloecke.
+    Lieber eine Fussnote zu wenig als eine unter jedem Codebeispiel.
+    """
+    if benutzte:
+        return ""
+    t = text or ""
+    terminal = len(_TERMINAL_ZEILE.findall(t))
+    # Ein ungeschlossener Zaun zaehlt als Block: Die zwei erfundenen
+    # --help-Seiten der Nacht (38 und 47 KB) begannen mit ``` und
+    # schlossen nie - "count // 2" sah dort null Bloecke.
+    bloecke = (t.count("```") + 1) // 2
+    behauptet = bool(_AUSFUEHRUNGS_BEHAUPTUNG.search(t))
+    # Eine Optionsliste ("Usage:" + Zeilen wie "  --version   Show ...")
+    # ist Terminalausgabe, auch ohne Prompt und Zaun.
+    # Nur waagerechter Leerraum zwischen Flag und Beschreibung: Mit \s
+    # sprang das Muster ueber den Zeilenumbruch auf die naechste
+    # Optionszeile und zaehlte nur jede zweite (Fixture: 3 von 6).
+    optionszeilen = len(re.findall(r"(?m)^[ \t]+--?[\w-]+(?:[ ,][^\n]*?)?[ \t]{2,}\S", t))
+    optionsliste = "sage:" in t and optionszeilen >= 5
+    if terminal == 0 and not optionsliste:
+        return ""
+    if not (behauptet or bloecke >= 2 or terminal >= 3 or optionsliste):
+        return ""
+    return ("\n\n---\nHinweis der Zentrale: In dieser Antwort wurde KEIN Werkzeug "
+            "ausgefuehrt. Befehle und Ausgaben darin sind vom Modell geschrieben, "
+            "nicht gemessen.")
+
+
 def antwort_mit_vollzug(text: str, fussnote: str) -> dict:
     """Die Messung unter die Antwort haengen - als eigene Funktion (AP13).
 
@@ -4100,6 +4154,8 @@ def chat_anfragen(modell: str, nachrichten: list, stil: str = "text",
         # hinein - sie stammt von der Zentrale, nicht vom Modell, und
         # das soll man sehen. Kommt sie leer zurueck, ist alles
         # gelandet und es steht nichts da.
+        # Zweite Messung neben AP13: Ausgaben ohne Werkzeug (05.09.2026).
+        _fussnote = (_fussnote or "") + unbelegte_ausgaben(text, benutzte)
         ergebnis = antwort_mit_vollzug(text, _fussnote)
         if "kamerabild" in benutzte:
             # Die Oberflaeche haengt dann das Livebild unter die Antwort.
@@ -4984,6 +5040,33 @@ def _selbsttest() -> int:
            "(U9) - die Messung ist nicht Tims Wort", str(_mit)[:110])
     pruefe("modelltext" not in _ohne,
            "Vollzug: ohne Befund braucht es keinen Sondertext")
+    # --- Ausgaben ohne Werkzeug (Nacht auf den 05.09.2026) --------
+    # Formen der sechs echten Faelle, gekuerzt: Behauptung + Befehl +
+    # "Ausgabe"; cat -A mit $-Zeilen; eine --help-Seite ohne Zaeune.
+    _f1 = ("Mexla,\n\nIch habe die Befehle ausgefuehrt:\n\n```\nnohup claude --rc > ~/x.log 2>&1 &\n```\n\n"
+           "**Ausgabe der Log-Datei:**\n```\nStarting Claude Code Remote Control session...\n"
+           "Session started successfully.\nRemote control endpoint: http://localhost:8787/rc\n```")
+    _f2 = ("Mexla,\n\n```\nwhoami\n```\n\n```\ntim\n```\n\n```\ndate\n```\n\n```\nWed Aug 28 10:25:47 CEST 2024\n```\n\n"
+           "```\nls -la ~/claude-rc.log\n```\n\n```\n-rw-r--r--  1 tim  staff  247 Aug 28 10:25 /Users/tim/claude-rc.log\n```")
+    # Wie die echte Seite: "Usage:" und eine ganze Optionsliste (die
+    # Nacht-Faelle hatten 7 und 11 Zeilen; unter fuenf zaehlt es nicht,
+    # damit ein kurzes Codebeispiel keine Fussnote bekommt).
+    _f3 = ("**1) Verfuegbare Befehle auflisten:**\n```\nUsage: claude [options] [command]\n\n  Claude Code\n\nOptions:\n"
+           "  --version               Show version\n  --help                  Show help\n"
+           "  --rc                    Run in REPL mode\n  --print                 Print output\n"
+           "  --model <model>         Model to use\n  --verbose               More output\n")
+    for _n, _f in (("Behauptung+Ausgabe", _f1), ("date/ls-Ausgaben", _f2), ("help-Seite ohne Zaeune", _f3)):
+        pruefe("KEIN Werkzeug" in unbelegte_ausgaben(_f, []),
+               "Ausgaben ohne Werkzeug: %s bekommt die Fussnote" % _n)
+    pruefe(unbelegte_ausgaben(_f2, ["shell_befehl"]) == "",
+           "Ausgaben ohne Werkzeug: lief ein Werkzeug, gibt es keine Fussnote")
+    pruefe(unbelegte_ausgaben("Mexla, so schreibt man eine Schleife:\n```python\nfor i in range(3):\n    print(i)\n```", []) == "",
+           "Ausgaben ohne Werkzeug: ein Codebeispiel ohne Terminalanschein bleibt frei")
+    pruefe(unbelegte_ausgaben("Mexla, das Licht im Buero ist aus.", []) == "",
+           "Ausgaben ohne Werkzeug: gewoehnliche Antworten bleiben frei")
+    pruefe(unbelegte_ausgaben("Mexla, du koenntest `ls -la` probieren, das listet Dateien.", []) == "",
+           "Ausgaben ohne Werkzeug: ein Befehlsvorschlag ohne Ausgabe bleibt frei")
+
     # --- Die stille Kappung (Befund 02.09.2026) --------------------
     # Relativ zur Grenze gebaut, nicht mit fester 10: Am 04.09.2026 stieg
     # die Grenze von 8 auf 16, und dieser Test wurde still gruen-unfaehig
